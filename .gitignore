@@ -1,0 +1,26 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/
+
+# Local secrets
+*.env
+.env.*
+!*.env.example
+Config/Secrets.xcconfig
+
+# Runtime data
+runtime/
+tmp/
+*.wav
+*.m4a
+*.pcm
+*.sqlite-shm
+*.sqlite-wal
+
+# Downloaded model weights
+Models/Downloaded/
+*.gguf
+*.bin
