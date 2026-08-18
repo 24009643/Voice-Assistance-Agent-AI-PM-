@@ -1,6 +1,8 @@
 .DS_Store
 .build/
 DerivedData/
+artifacts/
+evidence/raw/
 *.xcuserstate
 xcuserdata/
 .swiftpm/
@@ -17,6 +19,7 @@ tmp/
 *.wav
 *.m4a
 *.pcm
+*.caf
 *.sqlite-shm
 *.sqlite-wal
 
@@ -24,3 +27,10 @@ tmp/
 Models/Downloaded/
 *.gguf
 *.bin
+*.onnx
+*.dmg
+
+# Local credentials and signing material
+*.pem
+*.p12
+*.mobileprovision
