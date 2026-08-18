@@ -22,6 +22,7 @@
 - `xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test`: 8 tests passed, 0 failures.
 - `xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build`: passed.
 - Both tasks began with an expected compile failure before their production types existed.
+- The same generation, 8-test suite and unsigned Debug build passed again after WP-02 was fast-forwarded into `codex/repo-foundation` at `024b8a3`.
 
 ## Acceptance criteria and evidence
 

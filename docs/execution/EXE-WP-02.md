@@ -1,11 +1,11 @@
 # EXE-WP-02: Deferred SenseVoice G0 gate
 
 - Plan: `docs/plans/2026-08-19-g0-foundation-and-sensevoice-probe.md`
-- Owner: GPT-5.5
-- Reviewer: Sol
+- Owner: GPT-5.5 probe/bootstrap, Luna evidence, Sol integration
+- Reviewer: independent Sol reviewers
 - Status: blocked
-- Branch: `codex/wp-02-sensevoice`
-- Commits: `b62b7c7` (probe), `e53776b` (bootstrap and ADR), `a93ea05` (initial deferred record), `5475cb0` (fact-review fix); this record points to the final fix head
+- Branch: `codex/repo-foundation`
+- Commits: `cbf0516` through `024b8a3`; final reproducible record head `024b8a3`
 - Started: 2026-08-19
 - Finished: 2026-08-19
 
@@ -22,6 +22,7 @@
 - `scripts/bootstrap-sensevoice-model.sh --self-check`: passed, exit 0.
 - `swift test --package-path probes/sensevoice`: passed, 5 tests and 0 failures.
 - `swift run --package-path probes/sensevoice SenseVoiceProbe --help`: passed, exit 0; usage printed without model files.
+- All package tests, `--help`, shell syntax and bootstrap self-check passed again after WP-02 was fast-forwarded into the integration branch at `024b8a3`.
 - Real model bootstrap, `--verify-only`, audio decode and G0 benchmark commands: not run by explicit user ruling.
 - Read-only environment snapshot: macOS 26.5.2 (build 25F84), Xcode 26.6 (build 17F113), Apple Swift 6.3.3.
 
@@ -44,6 +45,7 @@
 
 - SenseVoice suitability on the target Mac is unverified until the real corpus and model are authorized and available.
 - No performance, memory, installed-size, truncation, resource-release or language-accuracy claim can be made.
+- Integration hygiene found no tracked model, audio, DMG, credential or nested repository. Ignored SwiftPM caches and isolated worktrees are not release inputs.
 
 ## Rollback
 
