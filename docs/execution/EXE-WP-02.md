@@ -5,7 +5,7 @@
 - Reviewer: Sol
 - Status: blocked
 - Branch: `codex/wp-02-sensevoice`
-- Commits: `b62b7c7` (probe), `e53776b` (bootstrap and ADR), `a93ea05` (initial deferred record); the current fix commit is the final record head
+- Commits: `b62b7c7` (probe), `e53776b` (bootstrap and ADR), `a93ea05` (initial deferred record), `5475cb0` (fact-review fix); this record points to the final fix head
 - Started: 2026-08-19
 - Finished: 2026-08-19
 
