@@ -124,10 +124,10 @@ PROBE_BYTES="$(stat -f %z "$PROBE_BIN")"
 MODEL_BYTES="$(find "$MODEL_DIR" -type f -exec stat -f %z {} + | awk '{total += $1} END {print total + 0}')"
 TOTAL_BYTES=$((PROBE_BYTES + MODEL_BYTES))
 printf 'probe_bytes=%s model_bytes=%s runtime_model_total_bytes=%s\n' "$PROBE_BYTES" "$MODEL_BYTES" "$TOTAL_BYTES"
-test "$TOTAL_BYTES" -le 524288000
 otool -L "$PROBE_BIN"
 NON_SYSTEM_DEPS="$(otool -L "$PROBE_BIN" | tail -n +2 | awk '$1 !~ /^\/System\// && $1 !~ /^\/usr\/lib\// {print $1}')"
 test -z "$NON_SYSTEM_DEPS"
+test "$TOTAL_BYTES" -le 524288000
 ```
 
 The model files are validated by `manifest.sha256`; the probe executable is hashed separately. The hard installed-size check is the integer sum of the probe executable bytes and every regular file under the model directory, compared with `524288000` bytes. The whole `.build` directory and `du -sh` are not used for this gate. `otool -L` confirms that the current sherpa runtime is statically included and that only `/System` or `/usr/lib` dynamic dependencies remain. If a future `otool` result includes a non-system dependency, stop the gate, resolve the actual delivered file, record its `stat -f %z` bytes and `shasum -a 256` hash, add those bytes to the total, and only then evaluate the limit.
