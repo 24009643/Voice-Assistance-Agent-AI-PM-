@@ -1,0 +1,46 @@
+name: TSB
+
+options:
+  deploymentTarget:
+    macOS: "14.0"
+
+targets:
+  TSB:
+    type: application
+    platform: macOS
+    sources:
+      - TSB
+    configFiles:
+      Debug: Config/Shared.xcconfig
+      Release: Config/Shared.xcconfig
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_NAME: TSB
+        SWIFT_VERSION: 6.0
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.zhuohengchi.tsb.dev
+        Release:
+          PRODUCT_BUNDLE_IDENTIFIER: com.zhuohengchi.tsb
+
+  TSBTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - TSBTests
+    dependencies:
+      - target: TSB
+    settings:
+      base:
+        SWIFT_VERSION: 6.0
+
+schemes:
+  TSB:
+    build:
+      targets:
+        TSB: all
+        TSBTests: [test]
+    test:
+      targets:
+        - TSBTests
