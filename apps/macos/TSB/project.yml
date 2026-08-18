@@ -33,6 +33,7 @@ targets:
       - target: TSB
     settings:
       base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zhuohengchi.tsb.tests
         SWIFT_VERSION: 6.0
 
 schemes:
