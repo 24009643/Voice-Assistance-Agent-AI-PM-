@@ -1,0 +1,3 @@
+{"id":"mandarin-short","path":"/absolute/path/to/mandarin-16k-mono.wav","language":"zh","duration_seconds":12.5}
+{"id":"cantonese-short","path":"/absolute/path/to/cantonese-16k-mono.wav","language":"yue"}
+{"id":"mixed-zh-en-short","path":"/absolute/path/to/mixed-zh-en-16k-mono.wav","language":"zh-en","duration_seconds":18.0}
