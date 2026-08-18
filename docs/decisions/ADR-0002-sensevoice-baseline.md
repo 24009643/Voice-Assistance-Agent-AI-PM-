@@ -42,6 +42,7 @@ This ADR can move to Accepted only after G0 evidence records:
 - ASR active peak memory increase is at most 2GB.
 - sherpa-onnx runtime plus model is at most 500MB.
 - Runtime, model, license and SHA-256 values are recorded in evidence.
+- VAD model, version, license and SHA-256 are recorded if selected; they are currently not frozen or executed for this gate.
 
 Pending record: `evidence/WP-02-AC-ASR-001-sensevoice-probe.md` records the G0 gate as not run because local model/audio execution was explicitly deferred. Status remains Proposed; no G0 pass tag is issued.
 

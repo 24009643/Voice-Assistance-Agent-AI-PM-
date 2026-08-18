@@ -33,6 +33,19 @@ swift run --package-path probes/sensevoice SenseVoiceProbe --help
                                                             exit 0; usage printed, no model required
 ```
 
+Current toolchain snapshot (read-only commands, not a G0 runtime run):
+
+```text
+sw_vers
+ProductVersion: 26.5.2
+BuildVersion: 25F84
+swift --version
+Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
+xcodebuild -version
+Xcode 26.6
+Build version 17F113
+```
+
 ## Deferred hard gates
 
 The following values are intentionally unexecuted and unreported:
@@ -44,28 +57,75 @@ The following values are intentionally unexecuted and unreported:
 - Truncation and resource release for three-to-five-minute and ten-minute samples: not observed.
 - Mandarin, Cantonese and mixed Chinese-English language accuracy observations: not made.
 - Model, runtime, license and SHA-256 evidence: not recorded because no real model was downloaded.
+- VAD model, version, license and SHA-256: not frozen, not executed and not recorded.
 
 The current probe's `peakRSSBytes` is an absolute process peak RSS, not an active ASR memory delta. A future G0 run must measure a pre-load baseline and report the delta; otherwise absolute RSS may be reported only as an upper bound, not as proof of the 2 GiB active-memory gate.
 
 ## Future reproduction commands
 
-These commands are recorded for the authorized future run and were **not run for this record**:
+These commands are recorded for the authorized future run and were **not run for this record**. They are ordered so a clean worktree can bootstrap the ignored model, verify it, create the result directory, build the probe, and run the binary directly:
 
 ```bash
-scripts/bootstrap-sensevoice-model.sh --verify-only
+MODEL_DIR=artifacts/models/sensevoice-2024-07-17-int8
+RESULT_DIR=artifacts/results
 
-swift run --package-path probes/sensevoice SenseVoiceProbe \
-  --model-dir artifacts/models/sensevoice-2024-07-17-int8 \
+# Requires explicit authorization for the real model download.
+scripts/bootstrap-sensevoice-model.sh --target "$MODEL_DIR"
+scripts/bootstrap-sensevoice-model.sh --verify-only --target "$MODEL_DIR"
+(cd "$MODEL_DIR" && shasum -a 256 -c manifest.sha256)
+mkdir -p "$RESULT_DIR"
+
+swift build --package-path probes/sensevoice --configuration release
+BUILD_DIR="$(swift build --package-path probes/sensevoice --configuration release --show-bin-path)"
+PROBE_BIN="$BUILD_DIR/SenseVoiceProbe"
+test -x "$PROBE_BIN"
+
+/usr/bin/time -l "$PROBE_BIN" \
+  --model-dir "$MODEL_DIR" \
   --manifest artifacts/fixtures/g0-short.jsonl \
-  > artifacts/results/g0-short.json
-
-swift run --package-path probes/sensevoice SenseVoiceProbe \
-  --model-dir artifacts/models/sensevoice-2024-07-17-int8 \
-  --manifest artifacts/fixtures/g0-target.jsonl \
-  > artifacts/results/g0-target.json
+  > "$RESULT_DIR/g0-short.json" \
+  2> "$RESULT_DIR/g0-short.time.txt"
+test "$?" -eq 0
+if pgrep -x SenseVoiceProbe >/dev/null; then exit 1; fi
 ```
 
-`g0-target.jsonl` must be the target-Mac manifest containing Mandarin, Cantonese, mixed Chinese-English, three-to-five-minute and ten-minute WAV samples. The future report must add the model/runtime/license SHA-256 values, pre-load memory baseline and delta, RTF, installed-size measurement, truncation/resource-release observations and per-language accuracy observations. It must not copy model weights, audio or raw transcripts into Git.
+For the target corpus, `g0-target.jsonl` must contain Mandarin, Cantonese, mixed Chinese-English, three-to-five-minute and ten-minute WAV samples. Each long sample must be represented by a one-sample manifest and run as its own process; these are exact future invocations, not executed now:
+
+```bash
+run_one() {
+  manifest="$1"
+  output="$2"
+  /usr/bin/time -l "$PROBE_BIN" \
+    --model-dir "$MODEL_DIR" \
+    --manifest "$manifest" \
+    > "$RESULT_DIR/$output.json" \
+    2> "$RESULT_DIR/$output.time.txt"
+  status=$?
+  test "$status" -eq 0
+  if pgrep -x SenseVoiceProbe >/dev/null; then exit 1; fi
+}
+
+run_one artifacts/fixtures/mandarin-3-5.jsonl mandarin-3-5
+run_one artifacts/fixtures/cantonese-3-5.jsonl cantonese-3-5
+run_one artifacts/fixtures/mixed-zh-en-3-5.jsonl mixed-zh-en-3-5
+run_one artifacts/fixtures/ten-minute.jsonl ten-minute
+```
+
+Collect the environment, model manifest/hash, actual probe/runtime deliverable size and dynamic dependencies without committing them:
+
+```bash
+sw_vers
+swift --version
+xcodebuild -version
+(cd "$MODEL_DIR" && shasum -a 256 -c manifest.sha256)
+(cd "$MODEL_DIR" && shasum -a 256 manifest.sha256)
+du -sh "$MODEL_DIR" "$PROBE_BIN" "$BUILD_DIR"
+otool -L "$PROBE_BIN"
+```
+
+The JSON `peakRSSBytes` and each `*.time.txt` maximum-resident-set-size line are absolute process peak RSS, not active ASR memory delta. Record the absolute value in bytes. If an absolute value is at most `2147483648`, it is a conservative upper bound proving the active delta cannot exceed 2 GiB for that process, but it is still not by itself a G0 pass. If it exceeds 2 GiB, add pre-load RSS instrumentation to the probe before measuring or claiming the active delta; never call that run Passed. Compute RTF from each sample's `latencyMilliseconds` and `audioDurationSeconds`. Check every process exit and absence of a residual `SenseVoiceProbe` process before interpreting any result.
+
+The future report must add model/runtime/license SHA-256 values, VAD model/version/license/hash if selected, the memory interpretation, RTF, installed-size measurement, truncation/resource-release observations and per-language accuracy observations. It must not copy model weights, audio or raw transcripts into Git.
 
 ## Hygiene result
 

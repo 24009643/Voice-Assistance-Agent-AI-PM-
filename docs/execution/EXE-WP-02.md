@@ -5,7 +5,7 @@
 - Reviewer: Sol
 - Status: blocked
 - Branch: `codex/wp-02-sensevoice`
-- Commits: `b62b7c7` (probe), `e53776b` (bootstrap and ADR); this record is the sanitized gate record
+- Commits: `b62b7c7` (probe), `e53776b` (bootstrap and ADR), `a93ea05` (initial deferred record); the current fix commit is the final record head
 - Started: 2026-08-19
 - Finished: 2026-08-19
 
@@ -23,6 +23,7 @@
 - `swift test --package-path probes/sensevoice`: passed, 5 tests and 0 failures.
 - `swift run --package-path probes/sensevoice SenseVoiceProbe --help`: passed, exit 0; usage printed without model files.
 - Real model bootstrap, `--verify-only`, audio decode and G0 benchmark commands: not run by explicit user ruling.
+- Read-only environment snapshot: macOS 26.5.2 (build 25F84), Xcode 26.6 (build 17F113), Apple Swift 6.3.3.
 
 ## Acceptance criteria and evidence
 
@@ -30,6 +31,8 @@
 - Tooling checks pass, but G0 is **not run**.
 - Real decode, RTF, active memory delta, installed-size, truncation/resource-release and language-accuracy gates remain unmeasured.
 - Absolute process peak RSS is not treated as active ASR memory delta; a future run requires a pre-load baseline or must label absolute RSS only as an upper bound.
+- Future commands now bootstrap before verify, create `artifacts/results`, build with SwiftPM, run the resolved binary directly, collect `sw_vers`, Swift/Xcode versions, manifest checksums, `du` sizes, `otool -L` dependencies and `/usr/bin/time -l` peak RSS, with each long sample in a separate process and exit/no-residual checks.
+- VAD model, version, license and SHA-256 are not frozen, not executed and not recorded.
 - ADR-0002 remains Proposed and no G0 pass tag is issued.
 
 ## Deviations from plan
