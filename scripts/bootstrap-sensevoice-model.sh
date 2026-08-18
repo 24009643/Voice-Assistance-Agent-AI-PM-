@@ -79,7 +79,7 @@ write_manifest() {
 bootstrap_model() {
   target=$1
 
-  if [ -e "$target" ]; then
+  if [ -e "$target" ] || [ -L "$target" ]; then
     if verify_model "$target"; then
       echo "Verified existing SenseVoice model at $target"
       return 0
@@ -151,6 +151,19 @@ self_check() {
   fi
   if [ "$(cat "$invalid_dir/model.int8.onnx")" != "stale" ]; then
     die "self-check expected invalid existing target to remain untouched"
+  fi
+
+  broken_link="$tmp_dir/broken-target"
+  missing_target="$tmp_dir/missing-target"
+  ln -s "$missing_target" "$broken_link"
+  if sh "$0" --target "$broken_link" >/dev/null 2>&1; then
+    die "self-check expected dangling symlink target to fail"
+  fi
+  if [ ! -L "$broken_link" ]; then
+    die "self-check expected dangling symlink to remain a symlink"
+  fi
+  if [ "$(readlink "$broken_link")" != "$missing_target" ]; then
+    die "self-check expected dangling symlink destination to remain untouched"
   fi
 
   echo "self-check passed"
