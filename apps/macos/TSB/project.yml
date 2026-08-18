@@ -16,6 +16,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: TSB requests microphone access only when dictation starts.
         PRODUCT_NAME: TSB
         SWIFT_VERSION: 6.0
       configs:
