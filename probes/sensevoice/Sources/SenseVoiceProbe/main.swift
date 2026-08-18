@@ -51,7 +51,7 @@ func run(arguments: [String]) throws -> Int {
             events: splitEvents(result.event),
             emotion: emptyToNil(result.emotion),
             latencyMilliseconds: elapsed,
-            audioDurationSeconds: sample.durationSeconds ?? audio.durationSeconds
+            audioDurationSeconds: audio.durationSeconds
         )
         try writeJSONLine(output)
     }
