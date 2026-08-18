@@ -17,3 +17,5 @@ Search anchors use stable IDs:
 - Execution records: `EXE-xx`
 
 Each execution record links one work package, its commits, acceptance criteria and evidence paths. This provides traceability without introducing a separate project-management system.
+
+Agent work is additionally governed by `standards/weekly-budget-guard.md`.

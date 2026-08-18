@@ -80,3 +80,7 @@ Before merging a stage:
 ## 8. Definition of done
 
 A task is done only when its required behavior and critical failure path are tested, privacy boundaries hold, documentation matches behavior, evidence is indexed, and the change can be reverted without deleting unrelated user work.
+
+## 9. Weekly usage guard
+
+All agent execution follows `docs/standards/weekly-budget-guard.md`. The user red line is 50% weekly allowance remaining; new work stops at 55% to preserve a refresh and in-flight-call buffer.
