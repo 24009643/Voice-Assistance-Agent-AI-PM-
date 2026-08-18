@@ -39,6 +39,8 @@ final class HotkeyService {
     }
 
     func stop() {
+        eventSource.onKeyDown = nil
+        eventSource.onKeyUp = nil
         eventSource.stop()
         isKeyDown = false
     }
@@ -49,13 +51,13 @@ final class LocalHotkeyEventSource: HotkeyEventSource {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
 
-    private var monitors: [Any] = []
+    private let monitorStorage = MonitorStorage()
 
     func start() {
-        guard monitors.isEmpty else { return }
+        guard monitorStorage.monitors.isEmpty else { return }
 
         guard let keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            if event.keyCode == 49, event.modifierFlags.contains(.option) {
+            if Self.matchesHotkey(event) {
                 self?.onKeyDown?()
             }
             return event
@@ -71,11 +73,29 @@ final class LocalHotkeyEventSource: HotkeyEventSource {
             return
         }
 
-        monitors = [keyDownMonitor, keyUpMonitor]
+        monitorStorage.monitors = [keyDownMonitor, keyUpMonitor]
+    }
+
+    static func matchesHotkey(_ event: NSEvent) -> Bool {
+        event.keyCode == 49 && event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .option
     }
 
     func stop() {
-        monitors.forEach(NSEvent.removeMonitor)
-        monitors.removeAll()
+        monitorStorage.removeAll()
+        onKeyDown = nil
+        onKeyUp = nil
+    }
+
+    private final class MonitorStorage {
+        var monitors: [Any] = []
+
+        func removeAll() {
+            monitors.forEach(NSEvent.removeMonitor)
+            monitors.removeAll()
+        }
+
+        deinit {
+            removeAll()
+        }
     }
 }

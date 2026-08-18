@@ -6,21 +6,37 @@ import AppKit
 final class EscapeKeyMonitor {
     var onEscapePressed: (() -> Void)?
 
-    private var monitor: Any?
+    private let monitorStorage = MonitorStorage()
 
     func start() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53 else { return event }
-            self?.onEscapePressed?()
-            return nil
-        }
+        guard monitorStorage.monitors.isEmpty else { return }
+        guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            guard let self else { return event }
+            return self.handle(event)
+        }) else { return }
+        monitorStorage.monitors = [monitor]
     }
 
     func stop() {
-        if let monitor {
-            NSEvent.removeMonitor(monitor)
-            self.monitor = nil
+        monitorStorage.removeAll()
+    }
+
+    func handle(_ event: NSEvent) -> NSEvent? {
+        guard event.keyCode == 53, let onEscapePressed else { return event }
+        onEscapePressed()
+        return nil
+    }
+
+    private final class MonitorStorage {
+        var monitors: [Any] = []
+
+        func removeAll() {
+            monitors.forEach(NSEvent.removeMonitor)
+            monitors.removeAll()
+        }
+
+        deinit {
+            removeAll()
         }
     }
 }
