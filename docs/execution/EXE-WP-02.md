@@ -31,7 +31,7 @@
 - Tooling checks pass, but G0 is **not run**.
 - Real decode, RTF, active memory delta, installed-size, truncation/resource-release and language-accuracy gates remain unmeasured.
 - Absolute process peak RSS is not treated as active ASR memory delta; a future run requires a pre-load baseline or must label absolute RSS only as an upper bound.
-- Future commands now bootstrap before verify, create `artifacts/results`, build with SwiftPM, run the resolved binary directly, collect `sw_vers`, Swift/Xcode versions, manifest checksums, `du` sizes, `otool -L` dependencies and `/usr/bin/time -l` peak RSS, with each long sample in a separate process and exit/no-residual checks.
+- Future commands now bootstrap before verify, create `artifacts/results`, build with SwiftPM, run the resolved binary directly, collect `sw_vers`, Swift/Xcode versions, manifest checksums, probe hash, exact `stat -f %z` probe/model bytes and `otool -L` dependencies, with each long sample in a separate process and exit/no-residual checks. The runtime+model hard gate sums probe bytes plus every regular model file and compares the integer total with `524288000`; neither the whole `.build` directory nor `du -sh` is used.
 - VAD model, version, license and SHA-256 are not frozen, not executed and not recorded.
 - ADR-0002 remains Proposed and no G0 pass tag is issued.
 

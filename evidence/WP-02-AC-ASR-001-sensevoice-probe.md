@@ -75,8 +75,8 @@ scripts/bootstrap-sensevoice-model.sh --verify-only --target "$MODEL_DIR"
 (cd "$MODEL_DIR" && shasum -a 256 -c manifest.sha256)
 mkdir -p "$RESULT_DIR"
 
-swift build --package-path probes/sensevoice --configuration release
-BUILD_DIR="$(swift build --package-path probes/sensevoice --configuration release --show-bin-path)"
+swift build --package-path probes/sensevoice -c release
+BUILD_DIR="$(swift build --package-path probes/sensevoice -c release --show-bin-path)"
 PROBE_BIN="$BUILD_DIR/SenseVoiceProbe"
 test -x "$PROBE_BIN"
 
@@ -119,9 +119,18 @@ swift --version
 xcodebuild -version
 (cd "$MODEL_DIR" && shasum -a 256 -c manifest.sha256)
 (cd "$MODEL_DIR" && shasum -a 256 manifest.sha256)
-du -sh "$MODEL_DIR" "$PROBE_BIN" "$BUILD_DIR"
+shasum -a 256 "$PROBE_BIN"
+PROBE_BYTES="$(stat -f %z "$PROBE_BIN")"
+MODEL_BYTES="$(find "$MODEL_DIR" -type f -exec stat -f %z {} + | awk '{total += $1} END {print total + 0}')"
+TOTAL_BYTES=$((PROBE_BYTES + MODEL_BYTES))
+printf 'probe_bytes=%s model_bytes=%s runtime_model_total_bytes=%s\n' "$PROBE_BYTES" "$MODEL_BYTES" "$TOTAL_BYTES"
+test "$TOTAL_BYTES" -le 524288000
 otool -L "$PROBE_BIN"
+NON_SYSTEM_DEPS="$(otool -L "$PROBE_BIN" | tail -n +2 | awk '$1 !~ /^\/System\// && $1 !~ /^\/usr\/lib\// {print $1}')"
+test -z "$NON_SYSTEM_DEPS"
 ```
+
+The model files are validated by `manifest.sha256`; the probe executable is hashed separately. The hard installed-size check is the integer sum of the probe executable bytes and every regular file under the model directory, compared with `524288000` bytes. The whole `.build` directory and `du -sh` are not used for this gate. `otool -L` confirms that the current sherpa runtime is statically included and that only `/System` or `/usr/lib` dynamic dependencies remain. If a future `otool` result includes a non-system dependency, stop the gate, resolve the actual delivered file, record its `stat -f %z` bytes and `shasum -a 256` hash, add those bytes to the total, and only then evaluate the limit.
 
 The JSON `peakRSSBytes` and each `*.time.txt` maximum-resident-set-size line are absolute process peak RSS, not active ASR memory delta. Record the absolute value in bytes. If an absolute value is at most `2147483648`, it is a conservative upper bound proving the active delta cannot exceed 2 GiB for that process, but it is still not by itself a G0 pass. If it exceeds 2 GiB, add pre-load RSS instrumentation to the probe before measuring or claiming the active delta; never call that run Passed. Compute RTF from each sample's `latencyMilliseconds` and `audioDurationSeconds`. Check every process exit and absence of a residual `SenseVoiceProbe` process before interpreting any result.
 
