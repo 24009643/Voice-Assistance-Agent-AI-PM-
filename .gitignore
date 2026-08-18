@@ -1,6 +1,8 @@
 .DS_Store
 .build/
 DerivedData/
+.worktrees/
+.superpowers/
 artifacts/
 evidence/raw/
 *.xcuserstate
