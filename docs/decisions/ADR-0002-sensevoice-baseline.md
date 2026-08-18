@@ -43,6 +43,8 @@ This ADR can move to Accepted only after G0 evidence records:
 - sherpa-onnx runtime plus model is at most 500MB.
 - Runtime, model, license and SHA-256 values are recorded in evidence.
 
+Pending record: `evidence/WP-02-AC-ASR-001-sensevoice-probe.md` records the G0 gate as not run because local model/audio execution was explicitly deferred. Status remains Proposed; no G0 pass tag is issued.
+
 ## Rollback
 
 Remove the local `artifacts/models/sensevoice-2024-07-17-int8/` directory and revert the bootstrap commit. Product code must not depend on this baseline until the G0 gate accepts it.
