@@ -1,12 +1,12 @@
 # WP-03 Alpha Local Dictation Chain Implementation Plan
 
-**Status:** Blocked by G0. Planning and review may continue; Tasks 1–6 must not start until the preflight below passes.
+**Status:** Approved for execution. G0 passed in `evidence/WP-02-AC-ASR-001-sensevoice-probe.md`; Tasks 1–6 remain sequentially gated by their tests.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the smallest end-to-end macOS Alpha chain: toggle hotkey, local WAV recording, whole-file SenseVoice transcription, conservative deterministic cleanup, atomic original/result save, and exactly one clipboard delivery.
 
-**Architecture:** One `SessionCoordinator` owns lifecycle and delivery. Native AVFoundation records a whole 16 kHz mono WAV; one fixed sherpa-onnx/SenseVoice adapter transcribes it after stop. Pure cleanup and storage run before a single `NSPasteboard` write. The existing notch/window foundation only reflects immutable state; VAD, push-to-talk, history, retention, API profiles and multi-session overlap remain later work packages.
+**Architecture:** One `SessionCoordinator` owns lifecycle and delivery. Native AVFoundation records a whole 16 kHz mono WAV; one fixed sherpa-onnx/SenseVoice adapter preserves every frame and transcribes sequential non-overlapping 30-second chunks after stop. Pure cleanup and storage run before a single `NSPasteboard` write. The existing notch/window foundation only reflects immutable state; VAD, push-to-talk, history, retention, API profiles and multi-session overlap remain later work packages.
 
 **Tech Stack:** macOS 14+, Swift 6, SwiftUI, AppKit, AVFoundation, XCTest, XcodeGen, sherpa-onnx 1.13.6, SenseVoiceSmall int8 2024-07-17.
 
@@ -273,7 +273,7 @@ actor SenseVoiceTranscriber {
 }
 ```
 
-For development Alpha, `TSB_SENSEVOICE_MODEL_DIR` must point to the exact G0-approved artifact directory. `SenseVoiceModelLocation` requires `model.int8.onnx`, `tokens.txt`, `LICENSE` and `manifest.sha256`, verifies the manifest before constructing the recognizer, and rejects any digest mismatch. Model installation and distribution remain WP-04 work. The recognizer uses `language="auto"`, `useITN=true`, CPU, one thread and `greedy_search`. WAV validation remains 16 kHz mono. The adapter returns user text separately from normalized language/event tags and never logs transcript text.
+For development Alpha, `TSB_SENSEVOICE_MODEL_DIR` must point to the exact G0-approved artifact directory. `SenseVoiceModelLocation` requires `model.int8.onnx`, `tokens.txt`, `LICENSE` and `manifest.sha256`, verifies the manifest before constructing the recognizer, and rejects any digest mismatch. Model installation and distribution remain WP-04 work. The recognizer uses `language="auto"`, `useITN=true`, CPU, one thread and `greedy_search`. WAV validation remains 16 kHz mono. Inputs longer than 30 seconds are split without overlap or dropped frames, decoded sequentially, and joined with newline boundaries; this is not VAD or stable preview. The adapter returns user text separately from normalized language/event tags and never logs transcript text.
 
 Add a digest-mismatch test and, after G0 acceptance, one target-Mac adapter smoke using the approved model and a non-sensitive 16 kHz mono WAV. After adding the package dependency, run `xcodegen generate` followed immediately by a clean app build before proceeding:
 

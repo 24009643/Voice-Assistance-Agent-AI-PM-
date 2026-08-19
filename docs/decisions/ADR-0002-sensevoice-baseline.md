@@ -1,6 +1,6 @@
 # ADR-0002: Pin SenseVoiceSmall baseline inputs
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-19
 - Owners: GPT-5.5, Sol
 
@@ -23,6 +23,7 @@ Choose option 2 for the G0 candidate.
 - Local model directory: `artifacts/models/sensevoice-2024-07-17-int8/`.
 - Required files: `model.int8.onnx`, `tokens.txt`, `LICENSE`, and generated `manifest.sha256`.
 - Probe configuration: SenseVoice language `auto`, inverse text normalization enabled, CPU provider, greedy search.
+- Long-input handling: preserve every frame, decode sequential non-overlapping 30-second chunks, and join chunk transcripts with a newline. This is bounded whole-file processing, not VAD or streaming preview.
 
 The bootstrap script downloads to ignored local artifacts, validates the required model inputs and license, writes SHA-256 values, and refuses to overwrite an invalid existing target.
 
@@ -34,7 +35,7 @@ The bootstrap script downloads to ignored local artifacts, validates the require
 
 ## Verification
 
-This ADR can move to Accepted only after G0 evidence records:
+Acceptance evidence records:
 
 - Mandarin, Cantonese and mixed Chinese-English decode without crash or truncation.
 - 3-5 minute and 10 minute samples release all resources.
@@ -44,7 +45,9 @@ This ADR can move to Accepted only after G0 evidence records:
 - Runtime, model, license and SHA-256 values are recorded in evidence.
 - VAD model, version, license and SHA-256 are recorded if selected; they are currently not frozen or executed for this gate.
 
-Pending record: `evidence/WP-02-AC-ASR-001-sensevoice-probe.md` records a partial smoke with the pinned model and official short sample WAV files. The required user Mandarin, Cantonese, mixed Chinese-English and long-audio corpus is still absent, so status remains Proposed; no G0 pass tag is issued.
+`evidence/WP-02-AC-ASR-001-sensevoice-probe.md` records the passed public-corpus G0 on the target Mac. It covers 20 Mandarin, 20 Cantonese, 20 real Chinese-English mixed clips, three 3–5 minute composites and one 10 minute composite. The long composites are stability-only and do not claim natural long-dictation accuracy.
+
+The baseline passes technical feasibility, not product-quality acceptance. Raw normalized CER was 4.6% Mandarin, 38.2% Cantonese and 21.2% mixed. The Cantonese number is partly inflated by traditional references versus simplified output, but remains an explicit RC/Golden Set risk rather than being hidden by this acceptance.
 
 ## Rollback
 
