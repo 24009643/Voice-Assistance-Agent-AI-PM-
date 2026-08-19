@@ -20,7 +20,8 @@ struct PlaceholderView: View {
                     .lineLimit(6)
             }
 
-            Button(state.snapshot.status == .recording ? "Stop recording" : "Start recording", action: onToggle)
+            Button(actionTitle, action: onToggle)
+                .disabled(!allowsToggle)
             Text("Option-Space toggles recording. Escape cancels while recording.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -37,6 +38,22 @@ struct PlaceholderView: View {
         case .delivered: "Copied"
         case .failed: "Needs attention"
         case .cancelled: "Cancelled"
+        }
+    }
+
+    private var actionTitle: String {
+        switch state.snapshot.status {
+        case .recording: "Stop recording"
+        case .transcribing, .saving: "Processing…"
+        case .failed: "Unavailable"
+        default: "Start recording"
+        }
+    }
+
+    private var allowsToggle: Bool {
+        switch state.snapshot.status {
+        case .transcribing, .saving, .failed: false
+        default: true
         }
     }
 }

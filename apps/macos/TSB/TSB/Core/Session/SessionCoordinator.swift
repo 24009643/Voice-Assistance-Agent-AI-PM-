@@ -27,6 +27,7 @@ final class SessionCoordinator {
     private var nextOrdinal: UInt64 = 1
     private var deliveredSessionIDs = Set<SessionID>()
     private var processingTask: Task<Void, Never>?
+    private var completedAudioURL: URL?
 
     private(set) var snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil) {
         didSet { onSnapshot(snapshot) }
@@ -77,6 +78,7 @@ final class SessionCoordinator {
     private func receiveFinishedAudio(_ audio: RecordedAudio, for sessionID: SessionID) {
         guard activeSession?.id == sessionID, processingTask == nil else { return }
 
+        completedAudioURL = audio.url
         snapshot = AppSnapshot(status: .transcribing, elapsedMilliseconds: audio.durationMilliseconds, previewText: "", message: "Transcribing")
         processingTask = Task { @MainActor [weak self] in
             await self?.process(audio, for: sessionID)
@@ -106,7 +108,9 @@ final class SessionCoordinator {
         }
 
         guard !cleaned.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            try? dependencies.removeAudio(audio.url)
+            if (try? dependencies.removeAudio(audio.url)) != nil {
+                completedAudioURL = nil
+            }
             activeSession = nil
             snapshot = AppSnapshot(status: .cancelled, elapsedMilliseconds: audio.durationMilliseconds, previewText: "", message: "No speech detected.")
             return
@@ -133,7 +137,14 @@ final class SessionCoordinator {
             return
         }
 
-        try? dependencies.removeAudio(audio.url)
+        do {
+            try dependencies.removeAudio(audio.url)
+            completedAudioURL = nil
+        } catch {
+            activeSession = nil
+            snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: audio.durationMilliseconds, previewText: cleaned.text, message: "Could not remove recording.")
+            return
+        }
         activeSession = nil
 
         guard deliveredSessionIDs.insert(session.id).inserted else { return }
@@ -159,6 +170,10 @@ final class SessionCoordinator {
         processingTask?.cancel()
         processingTask = nil
         dependencies.cancelRecording()
+        if let completedAudioURL {
+            try? dependencies.removeAudio(completedAudioURL)
+            self.completedAudioURL = nil
+        }
         activeSession = nil
         stopRequested = false
         snapshot = AppSnapshot(status: .cancelled, elapsedMilliseconds: 0, previewText: "", message: "Recording cancelled.")

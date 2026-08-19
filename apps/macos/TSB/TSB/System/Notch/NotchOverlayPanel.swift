@@ -17,6 +17,13 @@ struct OverlayGeneration: Equatable, Sendable {
     }
 }
 
+enum NotchPresentation {
+    static func text(for snapshot: AppSnapshot) -> String? {
+        guard snapshot.status != .idle else { return nil }
+        return snapshot.message ?? snapshot.previewText
+    }
+}
+
 /// Adapted from OpenDictation/Views/Notch/NotchOverlayPanel.swift (MIT, Copyright (c) 2025 Kenny).
 @MainActor
 final class NotchOverlayPanel {
@@ -32,13 +39,21 @@ final class NotchOverlayPanel {
         window?.isVisible == true
     }
 
-    func show() {
+    func update(_ snapshot: AppSnapshot) {
+        guard let text = NotchPresentation.text(for: snapshot) else {
+            hide()
+            return
+        }
+        show(text)
+    }
+
+    private func show(_ text: String) {
         generation = generation.next()
         if window == nil {
             let window = NotchWindow(screen: screen)
-            window.contentView = NSHostingView(rootView: NotchOverlayView(notchSize: screen.notchSize))
             self.window = window
         }
+        window?.contentView = NSHostingView(rootView: NotchOverlayView(notchSize: screen.notchSize, text: text))
         window?.orderFrontRegardless()
     }
 
@@ -53,11 +68,20 @@ final class NotchOverlayPanel {
 
 private struct NotchOverlayView: View {
     let notchSize: CGSize
+    let text: String
 
     var body: some View {
         NotchShape()
             .fill(.black)
-            .overlay(NotchWaveformView(audioLevel: 0))
+            .overlay {
+                VStack(spacing: 2) {
+                    Text(text)
+                        .font(.caption2)
+                        .lineLimit(1)
+                    NotchWaveformView(audioLevel: 0)
+                }
+                .foregroundStyle(.white)
+            }
             .frame(width: max(notchSize.width, 180), height: max(notchSize.height, 32))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }

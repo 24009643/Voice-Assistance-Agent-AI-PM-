@@ -1,5 +1,19 @@
 import AVFoundation
 
+struct MicrophoneRequestLatch {
+    private var isInFlight = false
+
+    mutating func begin() -> Bool {
+        guard !isInFlight else { return false }
+        isInFlight = true
+        return true
+    }
+
+    mutating func finish() {
+        isInFlight = false
+    }
+}
+
 /// Adapted from the microphone-only branch of OpenDictation/Core/Services/PermissionsManager.swift (MIT, Copyright (c) 2025 Kenny).
 @MainActor
 enum MicrophonePermission {

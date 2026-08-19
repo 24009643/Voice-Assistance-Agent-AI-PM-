@@ -46,6 +46,17 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
     }
 
+    func testAudioCleanupFailureAfterSaveDoesNotCopyOrDeliver() async throws {
+        let harness = CoordinatorHarness(transcript: "原始文本", removeAudioError: TestError.cleanup)
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.count, 1)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertTrue(harness.deliveryStatuses.isEmpty)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
+    }
+
     func testCleanupFailureFallsBackToOriginalAfterSave() async throws {
         let harness = CoordinatorHarness(transcript: "原始文本", cleanupError: TestError.cleanup)
 
@@ -98,6 +109,22 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
     }
+
+    func testCancelAfterFinishedAudioBeforeTranscriptionCompletesDeletesWAVWithoutSavingOrCopying() async throws {
+        let harness = CoordinatorHarness(transcript: "原始文本", suspendsTranscription: true)
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitUntilTranscriptionStarts()
+        await harness.coordinator.handle(.cancelRecording)
+        harness.completeTranscription()
+        await Task.yield()
+
+        XCTAssertTrue(harness.audioWasDeleted)
+        XCTAssertTrue(harness.savedRecords.isEmpty)
+        XCTAssertEqual(harness.copyCount, 0)
+    }
 }
 
 @MainActor
@@ -114,7 +141,11 @@ private final class CoordinatorHarness {
     private let transcript: String
     private let saveError: Error?
     private let cleanupError: Error?
+    private let removeAudioError: Error?
+    private let suspendsTranscription: Bool
     private var onFinished: ((RecordedAudio) -> Void)?
+    private var transcriptionContinuation: CheckedContinuation<TranscriptionResult, Error>?
+    private var didStartTranscription = false
     private let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
     private(set) var events: [Event] = []
@@ -128,10 +159,18 @@ private final class CoordinatorHarness {
 
     private(set) lazy var coordinator = makeCoordinator()
 
-    init(transcript: String, saveError: Error? = nil, cleanupError: Error? = nil) {
+    init(
+        transcript: String,
+        saveError: Error? = nil,
+        cleanupError: Error? = nil,
+        removeAudioError: Error? = nil,
+        suspendsTranscription: Bool = false
+    ) {
         self.transcript = transcript
         self.saveError = saveError
         self.cleanupError = cleanupError
+        self.removeAudioError = removeAudioError
+        self.suspendsTranscription = suspendsTranscription
     }
 
     private func makeCoordinator() -> SessionCoordinator {
@@ -151,6 +190,12 @@ private final class CoordinatorHarness {
                 transcribe: { [weak self] _ in
                     guard let self else { throw TestError.deallocated }
                     self.events.append(.transcribed)
+                    self.didStartTranscription = true
+                    if self.suspendsTranscription {
+                        return try await withCheckedThrowingContinuation { continuation in
+                            self.transcriptionContinuation = continuation
+                        }
+                    }
                     return TranscriptionResult(text: self.transcript, detectedLanguage: "zh", eventTags: [], latencyMilliseconds: 12)
                 },
                 clean: { [weak self] source in
@@ -175,6 +220,7 @@ private final class CoordinatorHarness {
                     return true
                 },
                 removeAudio: { [weak self] _ in
+                    if let error = self?.removeAudioError { throw error }
                     self?.audioWasDeleted = true
                 }
             ),
@@ -186,10 +232,10 @@ private final class CoordinatorHarness {
         await coordinator.handle(.toggleRecording)
         await coordinator.handle(.toggleRecording)
         await finishRecording()
-        if saveError == nil, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if saveError == nil, removeAudioError == nil, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             await waitForDelivery()
         } else {
-            await Task.yield()
+            await waitForTerminalState()
         }
     }
 
@@ -207,6 +253,31 @@ private final class CoordinatorHarness {
             await Task.yield()
         }
         XCTFail("Timed out waiting for delivery status")
+    }
+
+    func waitUntilTranscriptionStarts() async {
+        for _ in 0..<100 {
+            if didStartTranscription {
+                return
+            }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for transcription")
+    }
+
+    func waitForTerminalState() async {
+        for _ in 0..<100 {
+            if coordinator.snapshot.status != .recording, coordinator.snapshot.status != .transcribing, coordinator.snapshot.status != .saving {
+                return
+            }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for terminal state")
+    }
+
+    func completeTranscription() {
+        transcriptionContinuation?.resume(returning: TranscriptionResult(text: transcript, detectedLanguage: "zh", eventTags: [], latencyMilliseconds: 12))
+        transcriptionContinuation = nil
     }
 }
 

@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import Carbon
@@ -14,7 +15,9 @@ final class AppController: ObservableObject {
     private let coordinator: SessionCoordinator
     private let escapeMonitor: EscapeKeyMonitor
     private let modelError: String?
+    private let notchOverlay: NotchOverlayPanel?
     private var intentTask: Task<Void, Never>?
+    private var microphoneRequestLatch = MicrophoneRequestLatch()
 
     private lazy var hotkey = HotkeyService(
         eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey)),
@@ -28,6 +31,7 @@ final class AppController: ObservableObject {
         let recorder = AudioRecordingService()
         let store = TranscriptStore()
         let clipboard = ClipboardService.system
+        let notchOverlay = NSScreen.findScreenForNotch().map(NotchOverlayPanel.init)
         let escapeMonitor = EscapeKeyMonitor(
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
         )
@@ -75,6 +79,7 @@ final class AppController: ObservableObject {
             ),
             onSnapshot: { snapshot in
                 state.snapshot = snapshot
+                notchOverlay?.update(snapshot)
                 if snapshot.status == .recording {
                     escapeMonitor.start()
                 } else {
@@ -87,15 +92,21 @@ final class AppController: ObservableObject {
         self.coordinator = coordinator
         self.escapeMonitor = escapeMonitor
         self.modelError = modelError
+        self.notchOverlay = notchOverlay
         escapeMonitor.onEscapePressed = { [weak self] in
             self?.dispatch(.cancelRecording)
         }
     }
 
     func start() {
-        hotkey.start()
+        if let error = hotkey.start() {
+            state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: error.message)
+            notchOverlay?.update(state.snapshot)
+            return
+        }
         if let modelError {
             state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: modelError)
+            notchOverlay?.update(state.snapshot)
         }
     }
 
@@ -117,12 +128,15 @@ final class AppController: ObservableObject {
         }
 
         guard intent != .toggleRecording || MicrophonePermission.isGranted else {
+            guard microphoneRequestLatch.begin() else { return }
             MicrophonePermission.request { [weak self] granted in
                 guard let self else { return }
+                self.microphoneRequestLatch.finish()
                 if granted {
                     self.dispatch(.toggleRecording)
                 } else {
                     self.state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: "Microphone access is required to record.")
+                    self.notchOverlay?.update(self.state.snapshot)
                 }
             }
             return

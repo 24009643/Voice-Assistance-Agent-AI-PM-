@@ -8,4 +8,16 @@ final class OverlayGenerationTests: XCTestCase {
 
         XCTAssertFalse(currentGeneration.accepts(staleGeneration))
     }
+
+    func testSnapshotRoutingHidesOnlyIdleState() {
+        XCTAssertNil(NotchPresentation.text(for: AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil)))
+        XCTAssertEqual(
+            NotchPresentation.text(for: AppSnapshot(status: .recording, elapsedMilliseconds: 0, previewText: "", message: "Recording")),
+            "Recording"
+        )
+        XCTAssertEqual(
+            NotchPresentation.text(for: AppSnapshot(status: .delivered, elapsedMilliseconds: 0, previewText: "", message: "Copied to clipboard.")),
+            "Copied to clipboard."
+        )
+    }
 }

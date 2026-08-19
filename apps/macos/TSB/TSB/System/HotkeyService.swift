@@ -8,12 +8,26 @@ enum UserIntent: Equatable {
     case cancelRecording
 }
 
+enum HotkeyStartError: Equatable {
+    case handlerInstallationFailed(Int32)
+    case registrationFailed(Int32)
+
+    var message: String {
+        switch self {
+        case .handlerInstallationFailed:
+            "Could not install global hotkey handler."
+        case .registrationFailed:
+            "Could not register the global Option-Space hotkey."
+        }
+    }
+}
+
 @MainActor
 protocol HotkeyEventSource: AnyObject {
     var onKeyDown: (() -> Void)? { get set }
     var onKeyUp: (() -> Void)? { get set }
 
-    func start()
+    func start() -> HotkeyStartError?
     func stop()
 }
 
@@ -28,7 +42,7 @@ final class HotkeyService {
         self.onIntent = onIntent
     }
 
-    func start() {
+    func start() -> HotkeyStartError? {
         eventSource.onKeyDown = { [weak self] in
             guard let self, !self.isKeyDown else { return }
             self.isKeyDown = true
@@ -37,7 +51,13 @@ final class HotkeyService {
         eventSource.onKeyUp = { [weak self] in
             self?.isKeyDown = false
         }
-        eventSource.start()
+        if let error = eventSource.start() {
+            eventSource.onKeyDown = nil
+            eventSource.onKeyUp = nil
+            isKeyDown = false
+            return error
+        }
+        return nil
     }
 
     func stop() {
@@ -55,15 +75,15 @@ final class LocalHotkeyEventSource: HotkeyEventSource {
 
     private let monitorStorage = MonitorStorage()
 
-    func start() {
-        guard monitorStorage.monitors.isEmpty else { return }
+    func start() -> HotkeyStartError? {
+        guard monitorStorage.monitors.isEmpty else { return nil }
 
         guard let keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             if Self.matchesHotkey(event) {
                 self?.onKeyDown?()
             }
             return event
-        }) else { return }
+        }) else { return .registrationFailed(-1) }
 
         guard let keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp, handler: { [weak self] event in
             if event.keyCode == 49 {
@@ -72,10 +92,11 @@ final class LocalHotkeyEventSource: HotkeyEventSource {
             return event
         }) else {
             NSEvent.removeMonitor(keyDownMonitor)
-            return
+            return .registrationFailed(-1)
         }
 
         monitorStorage.monitors = [keyDownMonitor, keyUpMonitor]
+        return nil
     }
 
     static func matchesHotkey(_ event: NSEvent) -> Bool {
@@ -118,9 +139,11 @@ final class CarbonHotkeyEventSource: HotkeyEventSource {
         self.modifiers = modifiers
     }
 
-    func start() {
-        guard hotkey == nil else { return }
-        installHandlerIfNeeded()
+    func start() -> HotkeyStartError? {
+        guard hotkey == nil else { return nil }
+        if let error = installHandlerIfNeeded() {
+            return error
+        }
 
         var registeredHotkey: EventHotKeyRef?
         let status = RegisterEventHotKey(
@@ -131,8 +154,12 @@ final class CarbonHotkeyEventSource: HotkeyEventSource {
             0,
             &registeredHotkey
         )
-        guard status == noErr else { return }
+        guard status == noErr else {
+            removeHandler()
+            return .registrationFailed(Int32(status))
+        }
         hotkey = registeredHotkey
+        return nil
     }
 
     func stop() {
@@ -140,6 +167,7 @@ final class CarbonHotkeyEventSource: HotkeyEventSource {
             UnregisterEventHotKey(hotkey)
             self.hotkey = nil
         }
+        removeHandler()
         onKeyDown = nil
         onKeyUp = nil
     }
@@ -152,13 +180,13 @@ final class CarbonHotkeyEventSource: HotkeyEventSource {
         }
     }
 
-    private func installHandlerIfNeeded() {
-        guard handler == nil else { return }
+    private func installHandlerIfNeeded() -> HotkeyStartError? {
+        guard handler == nil else { return nil }
         var eventTypes = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
         ]
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetApplicationEventTarget(),
             { _, event, userData in
                 guard let event, let userData else { return noErr }
@@ -184,6 +212,27 @@ final class CarbonHotkeyEventSource: HotkeyEventSource {
             Unmanaged.passUnretained(self).toOpaque(),
             &handler
         )
+        guard status == noErr else {
+            handler = nil
+            return .handlerInstallationFailed(Int32(status))
+        }
+        return nil
+    }
+
+    private func removeHandler() {
+        if let handler {
+            RemoveEventHandler(handler)
+            self.handler = nil
+        }
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            if let hotkey {
+                UnregisterEventHotKey(hotkey)
+            }
+            removeHandler()
+        }
     }
 
 }

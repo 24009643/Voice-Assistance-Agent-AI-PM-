@@ -8,7 +8,6 @@ struct TSBApp: App {
         WindowGroup {
             PlaceholderView(state: controller.state, onToggle: controller.toggleForDevelopment)
                 .onAppear(perform: controller.start)
-                .onDisappear(perform: controller.stop)
         }
     }
 }
