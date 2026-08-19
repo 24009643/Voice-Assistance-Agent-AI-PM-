@@ -1,5 +1,4 @@
 import AVFoundation
-import CryptoKit
 import Foundation
 import SherpaOnnx
 
@@ -25,10 +24,15 @@ struct SenseVoiceModelLocation: Sendable {
         license = directory.appendingPathComponent("LICENSE")
         manifest = directory.appendingPathComponent("manifest.sha256")
 
-        for url in [model, tokens, license, manifest] where !FileManager.default.fileExists(atPath: url.path) {
-            throw SenseVoiceTranscriberError.missingModelFile(url.lastPathComponent)
+        do {
+            try ModelManifestValidator.validate(directory: directory, requiredFileNames: Self.requiredFileNames)
+        } catch let error as ModelManifestValidationError {
+            switch error {
+            case let .missingFile(file): throw SenseVoiceTranscriberError.missingModelFile(file)
+            case .manifestTooLarge: throw SenseVoiceTranscriberError.modelManifestTooLarge
+            case .invalidManifest, .checksumMismatch: throw SenseVoiceTranscriberError.invalidModelManifest
+            }
         }
-        try Self.verifyManifest(at: manifest, in: directory)
     }
 
     static func developmentLocation(
@@ -40,43 +44,6 @@ struct SenseVoiceModelLocation: Sendable {
         return try SenseVoiceModelLocation(directory: URL(fileURLWithPath: path, isDirectory: true))
     }
 
-    private static func verifyManifest(at manifest: URL, in directory: URL) throws {
-        let attributes = try FileManager.default.attributesOfItem(atPath: manifest.path)
-        guard let size = attributes[.size] as? NSNumber, size.uint64Value <= 65_536 else {
-            throw SenseVoiceTranscriberError.modelManifestTooLarge
-        }
-        let contents = try String(contentsOf: manifest, encoding: .utf8)
-        var expectedDigests: [String: String] = [:]
-
-        for line in contents.split(whereSeparator: { $0.isNewline }) {
-            let fields = line.split(maxSplits: 1, omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace })
-            guard fields.count == 2,
-                  fields[0].count == 64,
-                  fields[0].allSatisfy({ $0.isHexDigit })
-            else {
-                throw SenseVoiceTranscriberError.invalidModelManifest
-            }
-
-            let fileName = String(fields[1]).trimmingCharacters(in: .whitespaces)
-            guard requiredFileNames.contains(fileName), expectedDigests[fileName] == nil else {
-                throw SenseVoiceTranscriberError.invalidModelManifest
-            }
-            expectedDigests[fileName] = String(fields[0]).lowercased()
-        }
-
-        guard expectedDigests.count == requiredFileNames.count else {
-            throw SenseVoiceTranscriberError.invalidModelManifest
-        }
-
-        for fileName in requiredFileNames {
-            let actualDigest = SHA256.hash(data: try Data(contentsOf: directory.appendingPathComponent(fileName)))
-                .map { String(format: "%02x", $0) }
-                .joined()
-            guard expectedDigests[fileName] == actualDigest else {
-                throw SenseVoiceTranscriberError.invalidModelManifest
-            }
-        }
-    }
 }
 
 struct TranscriptionResult: Equatable, Sendable {
