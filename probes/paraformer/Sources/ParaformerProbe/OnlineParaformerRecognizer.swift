@@ -8,6 +8,7 @@ public enum OnlineRecognizerEvent: Equatable, Sendable {
 
 struct OnlineRecognizerState {
     private var lastPartial = ""
+    private var needsRecognizerReplacement = false
 
     mutating func partial(_ text: String) -> [OnlineRecognizerEvent] {
         guard !text.isEmpty, text != lastPartial else { return [] }
@@ -21,8 +22,16 @@ struct OnlineRecognizerState {
     }
 
     mutating func finish(_ text: String) -> [OnlineRecognizerEvent] {
-        defer { cancel() }
+        defer {
+            cancel()
+            needsRecognizerReplacement = true
+        }
         return text.isEmpty ? [] : [.final(text)]
+    }
+
+    mutating func consumeRecognizerReplacement() -> Bool {
+        defer { needsRecognizerReplacement = false }
+        return needsRecognizerReplacement
     }
 
     mutating func cancel() {
@@ -32,13 +41,21 @@ struct OnlineRecognizerState {
 
 public actor OnlineParaformerRecognizer {
     public static let sampleRate = 16_000
-    public static let finalPaddingSamples = 3_200
+    /// The 1-second guard covers Paraformer's 61-frame (0.61-second) window
+    /// without the upstream final-stream option exposed by this Swift wrapper.
+    public static let finalPaddingSamples = 16_000
 
-    private let recognizer: SherpaOnnxRecognizer
+    private let modelBundle: ModelBundle
+    private var recognizer: SherpaOnnxRecognizer
     private var state = OnlineRecognizerState()
     private var hasInput = false
 
     public init(modelBundle: ModelBundle) {
+        self.modelBundle = modelBundle
+        recognizer = Self.makeRecognizer(modelBundle)
+    }
+
+    private static func makeRecognizer(_ modelBundle: ModelBundle) -> SherpaOnnxRecognizer {
         let model = sherpaOnnxOnlineModelConfig(
             tokens: modelBundle.tokens.path,
             paraformer: sherpaOnnxOnlineParaformerModelConfig(
@@ -56,7 +73,7 @@ public actor OnlineParaformerRecognizer {
             enableEndpoint: true,
             decodingMethod: "greedy_search"
         )
-        recognizer = SherpaOnnxRecognizer(config: &config)
+        return SherpaOnnxRecognizer(config: &config)
     }
 
     /// Accepts a normalized Float32, 16 kHz mono PCM chunk.
@@ -64,7 +81,7 @@ public actor OnlineParaformerRecognizer {
         guard !samples.isEmpty else { return [] }
         hasInput = true
         recognizer.acceptWaveform(samples: samples, sampleRate: Self.sampleRate)
-        return decodeAvailable()
+        return decodeAvailable(resetAtEndpoint: true)
     }
 
     public func finish() -> [OnlineRecognizerEvent] {
@@ -78,9 +95,11 @@ public actor OnlineParaformerRecognizer {
             sampleRate: Self.sampleRate
         )
         recognizer.inputFinished()
-        var events = decodeAvailable()
+        var events = decodeAvailable(resetAtEndpoint: false)
         events += state.finish(recognizer.getResult().text)
-        recognizer.reset()
+        if state.consumeRecognizerReplacement() {
+            recognizer = Self.makeRecognizer(modelBundle)
+        }
         hasInput = false
         return events
     }
@@ -91,12 +110,12 @@ public actor OnlineParaformerRecognizer {
         hasInput = false
     }
 
-    private func decodeAvailable() -> [OnlineRecognizerEvent] {
+    private func decodeAvailable(resetAtEndpoint: Bool) -> [OnlineRecognizerEvent] {
         var events: [OnlineRecognizerEvent] = []
         while recognizer.isReady() {
             recognizer.decode()
             let text = recognizer.getResult().text
-            if recognizer.isEndpoint() {
+            if resetAtEndpoint && recognizer.isEndpoint() {
                 events += state.endpoint(text)
                 recognizer.reset()
             } else {

@@ -25,6 +25,18 @@ final class OnlineRecognizerStateTests: XCTestCase {
         XCTAssertEqual(state.finish("开始尾声"), [.final("开始尾声")])
     }
 
+    func testFinalPaddingCoversTheParaformerReadinessWindow() {
+        XCTAssertEqual(OnlineParaformerRecognizer.finalPaddingSamples, 16_000)
+    }
+
+    func testFinishRequestsAFreshRecognizerForTheNextSession() {
+        var state = OnlineRecognizerState()
+
+        _ = state.finish("完成")
+        XCTAssertTrue(state.consumeRecognizerReplacement())
+        XCTAssertFalse(state.consumeRecognizerReplacement())
+    }
+
     func testCancelResetsThePreviousUtterance() {
         var state = OnlineRecognizerState()
 
