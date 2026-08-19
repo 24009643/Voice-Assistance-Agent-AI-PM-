@@ -30,6 +30,7 @@ enum DeliveryStatus: String, Codable, Sendable {
 
 enum TranscriptOutcome: String, Codable, Sendable {
     case success
+    case recordingFailed
     case transcriptionFailed
     case noSpeech
 }

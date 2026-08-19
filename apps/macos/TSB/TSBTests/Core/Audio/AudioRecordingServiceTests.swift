@@ -102,6 +102,18 @@ final class AudioRecordingServiceTests: XCTestCase {
         }
     }
 
+    func testTerminalGatePublishesOnlyTheFirstTerminalSource() {
+        let signals = ThreadSafeSignals()
+        let gate = TerminalGate { signals.append($0) }
+
+        gate.signal(false)
+        gate.signal(false)
+        gate.signal(true)
+
+        XCTAssertEqual(signals.values, [false])
+        XCTAssertFalse(gate.isOpen)
+    }
+
     func testProcessorStopsAtFrameLimitAndSignalsOnce() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
@@ -131,6 +143,87 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertEqual(try AVAudioFile(forReading: outputURL).length, 1_000)
     }
 
+    func testServiceRejectsDuplicateStartAndFailedStartCleansResourcesAndBundle() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+
+        try service.start(sessionID: fixedSessionID, onFinished: { _ in })
+        XCTAssertThrowsError(try service.start(sessionID: SessionID(rawValue: UUID()), onFinished: { _ in }))
+        service.cancel(sessionID: fixedSessionID)
+
+        harness.startError = CaptureTestError.failedStart
+        let failedID = SessionID(rawValue: UUID())
+        XCTAssertThrowsError(try service.start(sessionID: failedID, onFinished: { _ in }))
+        XCTAssertEqual(harness.endCounts, [1, 1])
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: directory.appendingPathComponent(failedID.rawValue.uuidString).path
+        ))
+    }
+
+    func testServiceStopCompletesOnceAndRetainsWAV() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+        var finished: [RecordedAudio] = []
+
+        try service.start(sessionID: fixedSessionID) { finished.append($0) }
+        service.stop()
+        service.stop()
+
+        XCTAssertEqual(finished.count, 1)
+        XCTAssertEqual(finished.single?.durationMilliseconds, 100)
+        XCTAssertEqual(harness.endCounts, [1])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(finished.single).url.path))
+    }
+
+    func testServiceRuntimeFailureRetainsWAVAndCallsFailureOnce() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+        var finished: [RecordedAudio] = []
+        var failed: [RecordedAudio] = []
+
+        try service.start(
+            sessionID: fixedSessionID,
+            onFailed: { failed.append($0) },
+            onFinished: { finished.append($0) }
+        )
+        harness.terminals[0](false)
+        harness.terminals[0](false)
+        await Task.yield()
+
+        XCTAssertTrue(finished.isEmpty)
+        XCTAssertEqual(failed.count, 1)
+        XCTAssertEqual(harness.endCounts, [1])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(failed.single).url.path))
+        XCTAssertNil(service.activeURL)
+    }
+
+    func testStaleFailureAndCancelCannotClearNewerSession() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+        let secondID = SessionID(rawValue: UUID())
+
+        try service.start(sessionID: fixedSessionID, onFinished: { _ in })
+        service.stop()
+        try service.start(sessionID: secondID, onFinished: { _ in })
+        let secondURL = try XCTUnwrap(service.activeURL)
+
+        harness.terminals[0](false)
+        service.cancel(sessionID: fixedSessionID)
+        await Task.yield()
+
+        XCTAssertEqual(service.activeURL, secondURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondURL.path))
+        service.cancel(sessionID: secondID)
+    }
+
     private func makeSineBuffer(format: AVAudioFormat, frameCount: AVAudioFrameCount) throws -> AVAudioPCMBuffer {
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
         buffer.frameLength = frameCount
@@ -142,4 +235,64 @@ final class AudioRecordingServiceTests: XCTestCase {
         }
         return buffer
     }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
+@MainActor
+private final class CaptureHarness {
+    var startError: Error?
+    private(set) var terminals: [@Sendable (Bool) -> Void] = []
+    private(set) var endCounts: [Int] = []
+
+    func makeCapture(
+        outputURL: URL,
+        onPCMChunk: @escaping @Sendable ([Float]) -> Void,
+        onLevel: @escaping @Sendable (Float) -> Void,
+        terminal: @escaping @Sendable (Bool) -> Void
+    ) throws -> AudioCaptureHandle {
+        _ = onPCMChunk
+        _ = onLevel
+        FileManager.default.createFile(atPath: outputURL.path, contents: Data([1]))
+        let index = endCounts.count
+        endCounts.append(0)
+        terminals.append(terminal)
+        return AudioCaptureHandle(
+            start: { [weak self] in
+                if let error = self?.startError { throw error }
+            },
+            end: { [weak self] _ in
+                self?.endCounts[index] += 1
+                return CaptureEndResult(frameCount: 1_600, succeeded: true)
+            }
+        )
+    }
+}
+
+private enum CaptureTestError: Error {
+    case failedStart
+}
+
+private final class ThreadSafeSignals: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Bool] = []
+
+    var values: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ value: Bool) {
+        lock.lock()
+        storage.append(value)
+        lock.unlock()
+    }
+}
+
+private extension Array {
+    var single: Element? { count == 1 ? first : nil }
 }

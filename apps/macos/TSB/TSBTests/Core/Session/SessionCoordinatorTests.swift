@@ -83,6 +83,25 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
     }
 
+    func testRecordingFailureSavesRetainedOutcomeBeforeFailedAndNeverTranscribesOrCopies() async throws {
+        let harness = CoordinatorHarness(transcript: "原始文本")
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.failRecording()
+        await harness.waitForTerminalState()
+
+        XCTAssertEqual(harness.savedRecords.single?.outcome, .recordingFailed)
+        XCTAssertEqual(harness.savedRecords.single?.error, "recording_failed")
+        XCTAssertEqual(harness.events.filter { $0 == .transcribed }.count, 0)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertFalse(harness.audioWasDeleted)
+        XCTAssertLessThan(
+            try XCTUnwrap(harness.timeline.firstIndex(of: "saved")),
+            try XCTUnwrap(harness.timeline.firstIndex(of: "snapshot:failed"))
+        )
+        XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
+    }
+
     func testNoSpeechSavesRetainedOutcomeWithoutCopying() async throws {
         let harness = CoordinatorHarness(transcript: "   ")
 
@@ -238,6 +257,7 @@ private final class CoordinatorHarness {
     private let suspendsTranscription: Bool
     private let copyResult: Bool
     private var onFinished: [((RecordedAudio) -> Void)] = []
+    private var onFailed: [((RecordedAudio) -> Void)] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
     private let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
@@ -276,10 +296,11 @@ private final class CoordinatorHarness {
     private func makeCoordinator() -> SessionCoordinator {
         SessionCoordinator(
             dependencies: .init(
-                startRecording: { [weak self] sessionID, onFinished in
+                startRecording: { [weak self] sessionID, onFinished, onFailed in
                     self?.events.append(.recordingStarted)
                     self?.startedSessionIDs.append(sessionID)
                     self?.onFinished.append(onFinished)
+                    self?.onFailed.append(onFailed)
                 },
                 stopRecording: { [weak self] in
                     self?.stopCount += 1
@@ -348,6 +369,12 @@ private final class CoordinatorHarness {
         events.append(.recordingFinished)
         let callback = index.map { onFinished[$0] } ?? onFinished.last
         callback?(RecordedAudio(url: audioURL, durationMilliseconds: 1_000))
+        await Task.yield()
+    }
+
+    func failRecording(at index: Int? = nil) async {
+        let callback = index.map { onFailed[$0] } ?? onFailed.last
+        callback?(RecordedAudio(url: audioURL, durationMilliseconds: 500))
         await Task.yield()
     }
 

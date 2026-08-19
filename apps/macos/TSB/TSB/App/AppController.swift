@@ -49,8 +49,12 @@ final class AppController: ObservableObject {
 
         let coordinator = SessionCoordinator(
             dependencies: .init(
-                startRecording: { sessionID, onFinished in
-                    try recorder.start(sessionID: sessionID, onFinished: onFinished)
+                startRecording: { sessionID, onFinished, onFailed in
+                    try recorder.start(
+                        sessionID: sessionID,
+                        onFailed: onFailed,
+                        onFinished: onFinished
+                    )
                 },
                 stopRecording: {
                     recorder.stop()

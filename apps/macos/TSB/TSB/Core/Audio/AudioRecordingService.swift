@@ -29,7 +29,7 @@ struct AudioCaptureLifecycle {
     }
 }
 
-final class PCMStreamProcessor {
+final class PCMStreamProcessor: @unchecked Sendable {
     static let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
         sampleRate: 16_000,
@@ -188,18 +188,83 @@ private final class ConverterInput: @unchecked Sendable {
     }
 }
 
-private final class AudioBufferReference: @unchecked Sendable {
+private final class AudioBufferCopy: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
 
-    init(_ buffer: AVAudioPCMBuffer) {
-        self.buffer = buffer
+    init?(_ source: AVAudioPCMBuffer) {
+        guard source.frameLength <= 1_024,
+              let copy = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: source.frameLength) else { return nil }
+        copy.frameLength = source.frameLength
+        let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
+        let destinationBuffers = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
+        guard sourceBuffers.count == destinationBuffers.count else { return nil }
+        for index in sourceBuffers.indices {
+            guard let sourceData = sourceBuffers[index].mData,
+                  let destinationData = destinationBuffers[index].mData else { return nil }
+            let byteCount = Int(sourceBuffers[index].mDataByteSize)
+            memcpy(destinationData, sourceData, byteCount)
+            destinationBuffers[index].mDataByteSize = sourceBuffers[index].mDataByteSize
+        }
+        buffer = copy
     }
 }
 
+final class TerminalGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private let callback: @Sendable (Bool) -> Void
+    private var didSignal = false
+
+    init(callback: @escaping @Sendable (Bool) -> Void) {
+        self.callback = callback
+    }
+
+    var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !didSignal
+    }
+
+    func signal(_ succeeded: Bool) {
+        lock.lock()
+        guard !didSignal else {
+            lock.unlock()
+            return
+        }
+        didSignal = true
+        lock.unlock()
+        callback(succeeded)
+    }
+}
+
+struct CaptureEndResult {
+    let frameCount: Int
+    let succeeded: Bool
+}
+
+@MainActor
+final class AudioCaptureHandle {
+    private let startCapture: () throws -> Void
+    private let endCapture: (AudioCaptureLifecycle.EndReason) -> CaptureEndResult
+
+    init(
+        start: @escaping () throws -> Void,
+        end: @escaping (AudioCaptureLifecycle.EndReason) -> CaptureEndResult
+    ) {
+        startCapture = start
+        endCapture = end
+    }
+
+    func start() throws { try startCapture() }
+    func end(reason: AudioCaptureLifecycle.EndReason) -> CaptureEndResult { endCapture(reason) }
+}
+
 private final class NativeAudioCapture: @unchecked Sendable {
+    private static let pendingBufferCount = 4
+
     private let engine = AVAudioEngine()
     private let queue = DispatchQueue(label: "com.zhuohengchi.tsb.audio.capture")
-    private let terminal: @Sendable (Bool) -> Void
+    private let pendingBuffers = DispatchSemaphore(value: pendingBufferCount)
+    private let terminal: TerminalGate
     private let inputFormat: AVAudioFormat
     private let processor: PCMStreamProcessor
     private var lifecycle = AudioCaptureLifecycle()
@@ -212,14 +277,14 @@ private final class NativeAudioCapture: @unchecked Sendable {
         onLevel: @escaping @Sendable (Float) -> Void,
         terminal: @escaping @Sendable (Bool) -> Void
     ) throws {
-        self.terminal = terminal
+        self.terminal = TerminalGate(callback: terminal)
         inputFormat = engine.inputNode.outputFormat(forBus: 0)
         processor = try PCMStreamProcessor(
             inputFormat: inputFormat,
             outputURL: outputURL,
             onPCMChunk: onPCMChunk,
             onLevel: onLevel,
-            onTerminal: terminal
+            onTerminal: self.terminal.signal
         )
     }
 
@@ -227,32 +292,36 @@ private final class NativeAudioCapture: @unchecked Sendable {
     func start() throws {
         let inputNode = engine.inputNode
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            let reference = AudioBufferReference(buffer)
-            queue.sync {
+            guard let self, terminal.isOpen else { return }
+            guard pendingBuffers.wait(timeout: .now()) == .success else {
+                terminal.signal(false)
+                return
+            }
+            guard let copy = AudioBufferCopy(buffer) else {
+                pendingBuffers.signal()
+                terminal.signal(false)
+                return
+            }
+            queue.async { [processor, pendingBuffers, terminal] in
+                defer { pendingBuffers.signal() }
                 do {
-                    try processor.consume(reference.buffer)
+                    try processor.consume(copy.buffer)
                 } catch {
-                    terminal(false)
+                    terminal.signal(false)
                 }
             }
         }
         engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            inputNode.removeTap(onBus: 0)
-            throw error
-        }
+        try engine.start()
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
             queue: nil
-        ) { [terminal] _ in terminal(false) }
+        ) { [terminal] _ in terminal.signal(false) }
     }
 
     @MainActor
-    func end(reason: AudioCaptureLifecycle.EndReason) throws -> Int {
+    func end(reason: AudioCaptureLifecycle.EndReason) -> CaptureEndResult {
         let didEnd = lifecycle.end(reason: reason) {
             if let configurationObserver {
                 NotificationCenter.default.removeObserver(configurationObserver)
@@ -261,18 +330,33 @@ private final class NativeAudioCapture: @unchecked Sendable {
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
         }
-        guard didEnd else { return processor.totalOutputFrames }
-        return try queue.sync {
-            if reason == .cancel {
-                return processor.cancel()
+        guard didEnd else {
+            return CaptureEndResult(frameCount: processor.totalOutputFrames, succeeded: false)
+        }
+        do {
+            let frameCount = try queue.sync {
+                if reason == .cancel {
+                    return processor.cancel()
+                }
+                return try processor.finish()
             }
-            return try processor.finish()
+            return CaptureEndResult(frameCount: frameCount, succeeded: true)
+        } catch {
+            terminal.signal(false)
+            return CaptureEndResult(frameCount: processor.totalOutputFrames, succeeded: false)
         }
     }
 }
 
 @MainActor
 final class AudioRecordingService {
+    typealias CaptureFactory = @MainActor (
+        URL,
+        @escaping @Sendable ([Float]) -> Void,
+        @escaping @Sendable (Float) -> Void,
+        @escaping @Sendable (Bool) -> Void
+    ) throws -> AudioCaptureHandle
+
     static let maximumDuration: TimeInterval = 600
     nonisolated(unsafe) static let recordingSettings: [String: Any] = [
         AVFormatIDKey: kAudioFormatLinearPCM,
@@ -284,21 +368,28 @@ final class AudioRecordingService {
     ]
 
     private let sessionsDirectory: URL
-    private var capture: NativeAudioCapture?
+    private let makeCapture: CaptureFactory
+    private var capture: AudioCaptureHandle?
     private var completion: ((RecordedAudio) -> Void)?
+    private var failure: ((RecordedAudio) -> Void)?
     private var activeSessionID: SessionID?
     private var activeToken: UUID?
 
     private(set) var activeURL: URL?
 
-    init(sessionsDirectory: URL = TranscriptStore.defaultDirectory) {
+    init(
+        sessionsDirectory: URL = TranscriptStore.defaultDirectory,
+        makeCapture: CaptureFactory? = nil
+    ) {
         self.sessionsDirectory = sessionsDirectory.standardizedFileURL
+        self.makeCapture = makeCapture ?? Self.makeNativeCapture
     }
 
     func start(
         sessionID: SessionID,
         onPCMChunk: @escaping @Sendable ([Float]) -> Void = { _ in },
         onLevel: @escaping @Sendable (Float) -> Void = { _ in },
+        onFailed: @escaping (RecordedAudio) -> Void = { _ in },
         onFinished: @escaping (RecordedAudio) -> Void
     ) throws {
         guard capture == nil else { throw AudioRecordingServiceError.recordingAlreadyActive }
@@ -308,11 +399,11 @@ final class AudioRecordingService {
         let token = UUID()
 
         do {
-            let pendingCapture = try NativeAudioCapture(
-                outputURL: url,
-                onPCMChunk: onPCMChunk,
-                onLevel: onLevel,
-                terminal: { [weak self] succeeded in
+            let pendingCapture = try makeCapture(
+                url,
+                onPCMChunk,
+                onLevel,
+                { [weak self] succeeded in
                     Task { @MainActor [weak self] in
                         self?.finish(
                             token: token,
@@ -327,8 +418,10 @@ final class AudioRecordingService {
             activeSessionID = sessionID
             activeToken = token
             completion = onFinished
+            failure = onFailed
             try pendingCapture.start()
         } catch {
+            _ = capture?.end(reason: .failure)
             clearActiveCapture()
             try? FileManager.default.removeItem(at: directory)
             throw error
@@ -353,20 +446,20 @@ final class AudioRecordingService {
         successfully: Bool
     ) {
         guard token == activeToken, let endingCapture = capture, let url = activeURL else { return }
-        let callback = completion
-        let frameCount: Int
-        do {
-            frameCount = try endingCapture.end(reason: reason)
-        } catch {
-            clearActiveCapture()
-            return
-        }
+        let successCallback = completion
+        let failureCallback = failure
+        let result = endingCapture.end(reason: reason)
         clearActiveCapture()
-        guard successfully else { return }
-        callback?(RecordedAudio(
+        guard reason != .cancel else { return }
+        let audio = RecordedAudio(
             url: url,
-            durationMilliseconds: Int((Double(frameCount) / 16_000 * 1_000).rounded())
-        ))
+            durationMilliseconds: Int((Double(result.frameCount) / 16_000 * 1_000).rounded())
+        )
+        if successfully, result.succeeded {
+            successCallback?(audio)
+        } else {
+            failureCallback?(audio)
+        }
     }
 
     private func clearActiveCapture() {
@@ -375,9 +468,28 @@ final class AudioRecordingService {
         activeSessionID = nil
         activeToken = nil
         completion = nil
+        failure = nil
     }
 
     private func sessionDirectoryURL(for sessionID: SessionID) -> URL {
         sessionsDirectory.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+    }
+
+    private static func makeNativeCapture(
+        outputURL: URL,
+        onPCMChunk: @escaping @Sendable ([Float]) -> Void,
+        onLevel: @escaping @Sendable (Float) -> Void,
+        terminal: @escaping @Sendable (Bool) -> Void
+    ) throws -> AudioCaptureHandle {
+        let capture = try NativeAudioCapture(
+            outputURL: outputURL,
+            onPCMChunk: onPCMChunk,
+            onLevel: onLevel,
+            terminal: terminal
+        )
+        return AudioCaptureHandle(
+            start: { try capture.start() },
+            end: { capture.end(reason: $0) }
+        )
     }
 }

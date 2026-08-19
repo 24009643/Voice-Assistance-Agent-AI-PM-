@@ -3,7 +3,11 @@ import Foundation
 @MainActor
 final class SessionCoordinator {
     struct Dependencies {
-        let startRecording: @MainActor (SessionID, @escaping @Sendable (RecordedAudio) -> Void) throws -> Void
+        let startRecording: @MainActor (
+            SessionID,
+            @escaping @Sendable (RecordedAudio) -> Void,
+            @escaping @Sendable (RecordedAudio) -> Void
+        ) throws -> Void
         let stopRecording: @MainActor () -> Void
         let cancelRecording: @MainActor (SessionID) -> Void
         let transcribe: @MainActor (URL) async throws -> TranscriptionResult
@@ -63,11 +67,19 @@ final class SessionCoordinator {
         activeDeliverySucceeded = nil
 
         do {
-            try dependencies.startRecording(session.id) { [weak self] audio in
-                Task { @MainActor [weak self] in
-                    self?.receiveFinishedAudio(audio, for: session.id)
+            try dependencies.startRecording(
+                session.id,
+                { [weak self] audio in
+                    Task { @MainActor [weak self] in
+                        self?.receiveFinishedAudio(audio, for: session.id)
+                    }
+                },
+                { [weak self] audio in
+                    Task { @MainActor [weak self] in
+                        self?.receiveRecordingFailure(audio, for: session.id)
+                    }
                 }
-            }
+            )
             snapshot = AppSnapshot(status: .recording, elapsedMilliseconds: 0, previewText: "", message: "Recording")
         } catch {
             activeSession = nil
@@ -83,6 +95,32 @@ final class SessionCoordinator {
         processingTask = Task { @MainActor [weak self] in
             await self?.process(audio, for: sessionID)
         }
+    }
+
+    private func receiveRecordingFailure(_ audio: RecordedAudio, for sessionID: SessionID) {
+        guard let session = activeSession, session.id == sessionID, processingSessionID == nil else { return }
+        let record = TranscriptRecord(
+            id: session.id,
+            ordinal: session.ordinal,
+            createdAt: session.createdAt,
+            durationMilliseconds: audio.durationMilliseconds,
+            detectedLanguages: [],
+            originalText: "",
+            localCleanedText: "",
+            edits: [],
+            deliveryStatus: .pending,
+            outcome: .recordingFailed,
+            error: "recording_failed",
+            finalSource: nil
+        )
+        guard save(record, for: sessionID, durationMilliseconds: audio.durationMilliseconds, previewText: "") else { return }
+        finish(
+            sessionID,
+            with: .failed,
+            durationMilliseconds: audio.durationMilliseconds,
+            previewText: "",
+            message: "Recording failed."
+        )
     }
 
     private func process(_ audio: RecordedAudio, for sessionID: SessionID) async {
