@@ -6,6 +6,9 @@
 - [`WP-A2-01-PARAFORMER.md`](WP-A2-01-PARAFORMER.md): bounded online
   Paraformer model provenance and release-probe evidence; it does not pass the
   product acceptance criteria.
+- [`WP-A2-02-SESSION-BUNDLE.md`](WP-A2-02-SESSION-BUNDLE.md): bounded canonical
+  SessionBundle, retained outcome, clipboard-truth and visible confirmation
+  evidence; manual microphone-to-clipboard acceptance remains open.
 
 This directory contains small, reviewable evidence and indexes for acceptance decisions. Generated Xcode output, model files, audio and raw logs remain ignored.
 

@@ -21,12 +21,12 @@ Status values: `not-entered`, `in-progress`, `passed`, `blocked`, `superseded`.
 
 | ID | Requirement | Work package | Required evidence | Status |
 |---|---|---|---|---|
-| AC-A2-001 | Every non-cancelled capture has one readable `audio.wav` + `record.json` bundle; cancel or confirmed user deletion removes only the selected bundle | WP-A2-02, WP-A2-04 | bundle round-trip, cancellation and user-deletion tests | not-entered |
-| AC-A2-002 | Success/ASR failure/no-speech audio remains aligned; legacy flat records remain readable and untouched | WP-A2-02 | retention, legacy precedence and migration audit | not-entered |
+| AC-A2-001 | Every non-cancelled capture has one readable `audio.wav` + `record.json` bundle; cancel or confirmed user deletion removes only the selected bundle | WP-A2-02, WP-A2-04 | bundle round-trip, cancellation and user-deletion tests | in-progress |
+| AC-A2-002 | Success/ASR failure/no-speech audio remains aligned; legacy flat records remain readable and untouched | WP-A2-02 | retention, legacy precedence and migration audit | in-progress |
 | AC-A2-003 | One bounded PCM stream writes the WAV, updates level and feeds live ASR without a full memory copy | WP-A2-01, WP-A2-03 | PCM lifecycle, memory and long-session evidence | not-entered |
 | AC-A2-004 | Paraformer draft is revisable preview only; SenseVoice final or explicit streaming fallback is ordered, sourced and copied once | WP-A2-01, WP-A2-03 | partial/final/fallback/late-event tests and language samples | not-entered |
-| AC-A2-005 | Stop, Escape, device failure and 10-minute limit release every resource once and cannot cross sessions | WP-A2-02, WP-A2-03 | idempotency, interruption and resource evidence | not-entered |
-| AC-A2-006 | Clipboard success is persisted truthfully and visibly confirmed within 100 ms for 1.2 s; failure never shows success | WP-A2-02 | delivery, UI-state, accessibility and stale-timer tests | not-entered |
+| AC-A2-005 | Stop, Escape, device failure and 10-minute limit release every resource once and cannot cross sessions | WP-A2-02, WP-A2-03 | idempotency, interruption and resource evidence | in-progress |
+| AC-A2-006 | Clipboard success is persisted truthfully and visibly confirmed within 100 ms for 1.2 s; failure never shows success | WP-A2-02 | delivery, UI-state, accessibility and stale-timer tests | in-progress |
 | AC-A2-007 | Exact local terminology edits are deterministic, revisioned and traceable; unmatched similar text is unchanged | WP-A2-04 | term CRUD, alias and edit-operation tests | not-entered |
 | AC-A2-008 | Private SessionBundles stay local/Git-ignored and are used only for evaluation/regression | WP-A2-04 | ignore, logging, network and purpose-manifest audit | not-entered |
 | AC-A2-009 | Manual export rejects unreviewed entries and requires selection/preview/confirmation; public audio has a separate confirmation and no automatic publication | WP-A2-04 | review gate, package content and no-network audit | not-entered |
