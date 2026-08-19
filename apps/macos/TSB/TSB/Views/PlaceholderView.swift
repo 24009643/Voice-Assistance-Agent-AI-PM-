@@ -18,16 +18,14 @@ struct PlaceholderView: View {
                 }
                 .foregroundStyle(foregroundColor(for: presentation.tone))
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(presentation.accessibilityLabel ?? presentation.text)
+                .accessibilityLabel(presentation.statusText)
             }
 
             if !state.snapshot.previewText.isEmpty {
-                Text(state.snapshot.status == .recording ? "实时草稿" : "本地结果")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 Text(state.snapshot.previewText)
                     .textSelection(.enabled)
                     .lineLimit(6)
+                    .accessibilityLabel(state.snapshot.previewText)
             }
 
             ForEach(state.snapshot.secondaryProcessing) { item in

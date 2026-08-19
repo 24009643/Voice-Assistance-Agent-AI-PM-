@@ -140,6 +140,21 @@ final class OverlayGenerationTests: XCTestCase {
         XCTAssertEqual(failed.systemImage, "exclamationmark.triangle.fill")
     }
 
+    func testPlaceholderSourceKeepsStatusAndPreviewAsSeparateAccessibleElements() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("TSB/Views/PlaceholderView.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("Text(presentation.statusText)"))
+        XCTAssertTrue(source.contains(".accessibilityLabel(presentation.statusText)"))
+        XCTAssertFalse(source.contains("state.snapshot.status == .recording ? \"实时草稿\" : \"本地结果\""))
+        XCTAssertEqual(source.components(separatedBy: "Text(state.snapshot.previewText)").count - 1, 1)
+        XCTAssertTrue(source.contains(".accessibilityLabel(state.snapshot.previewText)"))
+    }
+
     func testSecondaryDeliveryPresentationUsesSuccessAndFailureTones() throws {
         let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
             status: .recording,
