@@ -28,16 +28,10 @@ final class AppController: ObservableObject {
 
     init() {
         let state = AppState()
-        let recorder = AudioRecordingService()
-        let store = TranscriptStore()
+        let sessionsDirectory = TranscriptStore.defaultDirectory
+        let recorder = AudioRecordingService(sessionsDirectory: sessionsDirectory)
+        let store = TranscriptStore(directory: sessionsDirectory)
         let clipboard = ClipboardService.system
-        let debugAudioFinalizer = DebugAudioFinalizer(
-            isDebugBuild: _isDebugAssertConfiguration(),
-            environment: ProcessInfo.processInfo.environment,
-            archiveDirectory: FileManager.default
-                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("TSB/DebugAudio", isDirectory: true)
-        )
         let notchOverlay = NSScreen.findScreenForNotch().map(NotchOverlayPanel.init)
         let escapeMonitor = EscapeKeyMonitor(
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
@@ -61,8 +55,8 @@ final class AppController: ObservableObject {
                 stopRecording: {
                     recorder.stop()
                 },
-                cancelRecording: {
-                    recorder.cancel()
+                cancelRecording: { sessionID in
+                    recorder.cancel(sessionID: sessionID)
                 },
                 transcribe: { url in
                     guard let transcriber else { throw AppControllerError.modelUnavailable }
@@ -80,12 +74,6 @@ final class AppController: ObservableObject {
                 copy: { text in
                     clipboard.copy(text)
                 },
-                finalizeAudioAfterSave: { url, sessionID in
-                    try debugAudioFinalizer.finalize(url, sessionID: sessionID)
-                },
-                removeAudio: { url in
-                    try FileManager.default.removeItem(at: url)
-                }
             ),
             onSnapshot: { snapshot in
                 state.snapshot = snapshot

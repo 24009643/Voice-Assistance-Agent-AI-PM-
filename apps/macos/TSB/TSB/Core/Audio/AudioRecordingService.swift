@@ -37,21 +37,22 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
         AVLinearPCMIsBigEndianKey: false
     ]
 
-    private let temporaryDirectory: URL
+    private let sessionsDirectory: URL
     private let makeRecorder: RecorderFactory
     private var recorder: AudioRecording?
     private var completion: ((RecordedAudio) -> Void)?
     private var durationBeforeStopMilliseconds: Int?
+    private var activeSessionID: SessionID?
 
     private(set) var activeURL: URL?
 
     init(
-        temporaryDirectory: URL = FileManager.default.temporaryDirectory,
+        sessionsDirectory: URL = TranscriptStore.defaultDirectory,
         makeRecorder: @escaping RecorderFactory = { url, settings in
             try AVAudioRecorder(url: url, settings: settings)
         }
     ) {
-        self.temporaryDirectory = temporaryDirectory
+        self.sessionsDirectory = sessionsDirectory.standardizedFileURL
         self.makeRecorder = makeRecorder
     }
 
@@ -60,20 +61,26 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
             throw AudioRecordingServiceError.recordingAlreadyActive
         }
 
-        let directory = temporaryDirectory.appendingPathComponent("TSB", isDirectory: true)
+        let directory = sessionDirectoryURL(for: sessionID)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent(sessionID.rawValue.uuidString).appendingPathExtension("wav")
-        let recording = try makeRecorder(url, Self.recordingSettings)
+        let url = directory.appendingPathComponent("audio.wav")
 
-        recording.delegate = self
-        recording.isMeteringEnabled = true
-        recorder = recording
-        activeURL = url
-        completion = onFinished
+        do {
+            let recording = try makeRecorder(url, Self.recordingSettings)
+            recording.delegate = self
+            recording.isMeteringEnabled = true
+            recorder = recording
+            activeURL = url
+            activeSessionID = sessionID
+            completion = onFinished
 
-        guard recording.record(forDuration: Self.maximumDuration) else {
-            clearActiveRecording(deleteFile: true)
-            throw AudioRecordingServiceError.failedToStart
+            guard recording.record(forDuration: Self.maximumDuration) else {
+                clearActiveRecording(deleteBundle: true)
+                throw AudioRecordingServiceError.failedToStart
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
         }
     }
 
@@ -84,24 +91,22 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
         finish(recording: recording, successfully: true)
     }
 
-    func cancel() {
-        guard let recording = recorder else { return }
-        let url = activeURL
-
-        recorder = nil
-        activeURL = nil
-        completion = nil
-        durationBeforeStopMilliseconds = nil
-        recording.delegate = nil
-        recording.stop()
-
-        if let url {
-            try? FileManager.default.removeItem(at: url)
+    func cancel(sessionID: SessionID) {
+        if activeSessionID == sessionID, let recording = recorder {
+            recorder = nil
+            activeURL = nil
+            activeSessionID = nil
+            completion = nil
+            durationBeforeStopMilliseconds = nil
+            recording.delegate = nil
+            recording.stop()
         }
+
+        try? FileManager.default.removeItem(at: sessionDirectoryURL(for: sessionID))
     }
 
-    func finishActiveRecording(successfully: Bool) {
-        finish(recording: recorder, successfully: successfully)
+    func finishActiveRecording(_ recording: AudioRecording? = nil, successfully: Bool) {
+        finish(recording: recording ?? recorder, successfully: successfully)
     }
 
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
@@ -116,29 +121,32 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
         let callback = completion
         self.recorder = nil
         activeURL = nil
+        activeSessionID = nil
         completion = nil
         durationBeforeStopMilliseconds = nil
         recording.delegate = nil
 
-        guard successfully else {
-            try? FileManager.default.removeItem(at: url)
-            return
-        }
+        guard successfully else { return }
 
         callback?(RecordedAudio(url: url, durationMilliseconds: durationMilliseconds))
     }
 
-    private func clearActiveRecording(deleteFile: Bool) {
+    private func clearActiveRecording(deleteBundle: Bool) {
         let recording = recorder
-        let url = activeURL
+        let sessionID = activeSessionID
         recorder = nil
         activeURL = nil
+        activeSessionID = nil
         completion = nil
         durationBeforeStopMilliseconds = nil
         recording?.delegate = nil
 
-        if deleteFile, let url {
-            try? FileManager.default.removeItem(at: url)
+        if deleteBundle, let sessionID {
+            try? FileManager.default.removeItem(at: sessionDirectoryURL(for: sessionID))
         }
+    }
+
+    private func sessionDirectoryURL(for sessionID: SessionID) -> URL {
+        sessionsDirectory.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
     }
 }
