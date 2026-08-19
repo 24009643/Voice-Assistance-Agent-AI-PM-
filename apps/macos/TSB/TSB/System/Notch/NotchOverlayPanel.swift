@@ -17,10 +17,50 @@ struct OverlayGeneration: Equatable, Sendable {
     }
 }
 
-enum NotchPresentation {
-    static func text(for snapshot: AppSnapshot) -> String? {
+struct NotchPresentation: Equatable, Sendable {
+    enum Tone: Equatable, Sendable {
+        case neutral
+        case success
+        case warning
+    }
+
+    let text: String
+    let tone: Tone
+    let systemImage: String?
+    let accessibilityLabel: String?
+    let autoHideDelay: TimeInterval?
+
+    static func make(for snapshot: AppSnapshot) -> Self? {
         guard snapshot.status != .idle else { return nil }
-        return snapshot.message ?? snapshot.previewText
+        let text = snapshot.message ?? snapshot.previewText
+
+        if snapshot.status == .delivered, snapshot.message == "已复制 · 按 ⌘V 粘贴" {
+            return Self(
+                text: text,
+                tone: .success,
+                systemImage: "checkmark.circle.fill",
+                accessibilityLabel: "复制成功，按 Command V 粘贴",
+                autoHideDelay: 1.2
+            )
+        }
+
+        if snapshot.status == .failed || snapshot.status == .delivered {
+            return Self(
+                text: text,
+                tone: .warning,
+                systemImage: "exclamationmark.triangle.fill",
+                accessibilityLabel: nil,
+                autoHideDelay: nil
+            )
+        }
+
+        return Self(
+            text: text,
+            tone: .neutral,
+            systemImage: nil,
+            accessibilityLabel: nil,
+            autoHideDelay: nil
+        )
     }
 }
 
@@ -40,26 +80,33 @@ final class NotchOverlayPanel {
     }
 
     func update(_ snapshot: AppSnapshot) {
-        guard let text = NotchPresentation.text(for: snapshot) else {
+        guard let presentation = NotchPresentation.make(for: snapshot) else {
             hide()
             return
         }
-        show(text)
+        show(presentation)
+        if let delay = presentation.autoHideDelay {
+            scheduleHide(after: delay)
+        }
     }
 
-    private func show(_ text: String) {
+    private func show(_ presentation: NotchPresentation) {
         generation = generation.next()
         if window == nil {
             let window = NotchWindow(screen: screen)
             self.window = window
         }
-        window?.contentView = NSHostingView(rootView: NotchOverlayView(notchSize: screen.notchSize, text: text))
+        window?.contentView = NSHostingView(rootView: NotchOverlayView(notchSize: screen.notchSize, presentation: presentation))
         window?.orderFrontRegardless()
     }
 
     func hide() {
+        scheduleHide(after: 0.25)
+    }
+
+    private func scheduleHide(after delay: TimeInterval) {
         let callbackGeneration = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.generation.accepts(callbackGeneration) else { return }
             self.window?.orderOut(nil)
         }
@@ -68,21 +115,36 @@ final class NotchOverlayPanel {
 
 private struct NotchOverlayView: View {
     let notchSize: CGSize
-    let text: String
+    let presentation: NotchPresentation
 
     var body: some View {
         NotchShape()
             .fill(.black)
             .overlay {
                 VStack(spacing: 2) {
-                    Text(text)
-                        .font(.caption2)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if let systemImage = presentation.systemImage {
+                            Image(systemName: systemImage)
+                        }
+                        Text(presentation.text)
+                            .lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(foregroundColor)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(presentation.accessibilityLabel ?? presentation.text)
                     NotchWaveformView(audioLevel: 0)
                 }
-                .foregroundStyle(.white)
             }
             .frame(width: max(notchSize.width, 180), height: max(notchSize.height, 32))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var foregroundColor: Color {
+        switch presentation.tone {
+        case .neutral: .white
+        case .success: .green
+        case .warning: .orange
+        }
     }
 }

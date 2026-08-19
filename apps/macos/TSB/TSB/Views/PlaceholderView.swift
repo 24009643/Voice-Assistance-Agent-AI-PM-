@@ -9,9 +9,17 @@ struct PlaceholderView: View {
             Text(title)
                 .font(.headline)
 
-            if let message = state.snapshot.message {
-                Text(message)
-                    .foregroundStyle(state.snapshot.status == .failed ? .red : .secondary)
+            if state.snapshot.message != nil,
+               let presentation = NotchPresentation.make(for: state.snapshot) {
+                HStack(spacing: 6) {
+                    if let systemImage = presentation.systemImage {
+                        Image(systemName: systemImage)
+                    }
+                    Text(presentation.text)
+                }
+                .foregroundStyle(foregroundColor(for: presentation.tone))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(presentation.accessibilityLabel ?? presentation.text)
             }
 
             if !state.snapshot.previewText.isEmpty {
@@ -54,6 +62,14 @@ struct PlaceholderView: View {
         switch state.snapshot.status {
         case .transcribing, .saving, .failed: false
         default: true
+        }
+    }
+
+    private func foregroundColor(for tone: NotchPresentation.Tone) -> Color {
+        switch tone {
+        case .neutral: .secondary
+        case .success: .green
+        case .warning: .orange
         }
     }
 }
