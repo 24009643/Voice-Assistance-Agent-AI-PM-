@@ -4,12 +4,20 @@ options:
   deploymentTarget:
     macOS: "14.0"
 
+packages:
+  sherpa-onnx:
+    url: https://github.com/k2-fsa/sherpa-onnx
+    exactVersion: 1.13.6
+
 targets:
   TSB:
     type: application
     platform: macOS
     sources:
       - TSB
+    dependencies:
+      - package: sherpa-onnx
+        product: sherpa-onnx
     configFiles:
       Debug: Config/Shared.xcconfig
       Release: Config/Shared.xcconfig
