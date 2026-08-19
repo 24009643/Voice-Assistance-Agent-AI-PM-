@@ -76,6 +76,10 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.savedRecords.single?.error, "transcription_failed")
         XCTAssertEqual(harness.copyCount, 0)
         XCTAssertFalse(harness.audioWasDeleted)
+        XCTAssertLessThan(
+            try XCTUnwrap(harness.timeline.firstIndex(of: "saved")),
+            try XCTUnwrap(harness.timeline.firstIndex(of: "snapshot:failed"))
+        )
         XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
     }
 
@@ -88,6 +92,10 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.savedRecords.single?.localCleanedText, "")
         XCTAssertEqual(harness.copyCount, 0)
         XCTAssertFalse(harness.audioWasDeleted)
+        XCTAssertLessThan(
+            try XCTUnwrap(harness.timeline.firstIndex(of: "saved")),
+            try XCTUnwrap(harness.timeline.firstIndex(of: "snapshot:cancelled"))
+        )
         XCTAssertEqual(harness.coordinator.snapshot.status, .cancelled)
     }
 
