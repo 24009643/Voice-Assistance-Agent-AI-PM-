@@ -9,8 +9,7 @@ struct PlaceholderView: View {
             Text(title)
                 .font(.headline)
 
-            if state.snapshot.message != nil,
-               let presentation = NotchPresentation.make(for: state.snapshot) {
+            if let presentation = NotchPresentation.make(for: state.snapshot) {
                 HStack(spacing: 6) {
                     if let systemImage = presentation.systemImage {
                         Image(systemName: systemImage)

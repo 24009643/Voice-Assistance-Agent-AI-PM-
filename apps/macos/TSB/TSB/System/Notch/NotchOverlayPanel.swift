@@ -68,11 +68,22 @@ struct NotchPresentation: Equatable, Sendable {
 @MainActor
 final class NotchOverlayPanel {
     private let screen: NSScreen
+    private let schedule: (TimeInterval, @escaping @MainActor () -> Void) -> Void
     private var window: NotchWindow?
     private var generation = OverlayGeneration(0)
 
-    init(screen: NSScreen) {
+    convenience init(screen: NSScreen) {
+        self.init(screen: screen) { delay, action in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { action() }
+        }
+    }
+
+    init(
+        screen: NSScreen,
+        schedule: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> Void
+    ) {
         self.screen = screen
+        self.schedule = schedule
     }
 
     var isVisible: Bool {
@@ -106,7 +117,7 @@ final class NotchOverlayPanel {
 
     private func scheduleHide(after delay: TimeInterval) {
         let callbackGeneration = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        schedule(delay) { [weak self] in
             guard let self, self.generation.accepts(callbackGeneration) else { return }
             self.window?.orderOut(nil)
         }

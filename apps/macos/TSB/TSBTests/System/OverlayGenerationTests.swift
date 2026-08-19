@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import TSB
 
 final class OverlayGenerationTests: XCTestCase {
@@ -31,11 +32,37 @@ final class OverlayGenerationTests: XCTestCase {
         }
     }
 
-    func testNewSnapshotRejectsDeliveredSnapshotsStaleHideCallback() {
-        let deliveredGeneration = OverlayGeneration(0).next()
-        let newerSnapshotGeneration = deliveredGeneration.next()
+    @MainActor
+    func testPanelSchedulesDeliveredHideAndRejectsItsCallbackAfterANewerSnapshot() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        var scheduled: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
+        let panel = NotchOverlayPanel(screen: screen) { delay, action in
+            scheduled.append((delay, action))
+        }
 
-        XCTAssertFalse(newerSnapshotGeneration.accepts(deliveredGeneration))
+        panel.update(AppSnapshot(
+            status: .delivered,
+            elapsedMilliseconds: 0,
+            previewText: "Obsidian",
+            message: "已复制 · 按 ⌘V 粘贴"
+        ))
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(scheduled.map(\.delay), [1.2])
+
+        let staleHide = scheduled[0].action
+        panel.update(AppSnapshot(status: .recording, elapsedMilliseconds: 0, previewText: "", message: "Recording"))
+        staleHide()
+        XCTAssertTrue(panel.isVisible)
+
+        panel.update(AppSnapshot(
+            status: .delivered,
+            elapsedMilliseconds: 0,
+            previewText: "Obsidian",
+            message: "已复制 · 按 ⌘V 粘贴"
+        ))
+        scheduled[1].action()
+
+        XCTAssertFalse(panel.isVisible)
     }
 
     func testSnapshotRoutingHidesOnlyIdleState() throws {
