@@ -14,7 +14,7 @@
 | Model | `sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en` |
 | Release archive | [official sherpa-onnx model release](https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2) |
 | Archive SHA-256 | `d479167d8752628d9032d29de1060493865389d1e295a1c2e8e011e7062f1932` |
-| Source card revision | [`e4a00371f24b40f5cd477643edffa7ee55f9f532`](https://huggingface.co/csukuangfj/sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/tree/e4a00371f24b40f5cd477643edffa7ee55f9f532) |
+| Source card revision | [`e4a00371f24b40f5cd477643edffa7ee55f9f532`](https://www.modelscope.cn/models/dengcunqin/speech_paraformer-large_asr_nat-zh-cantonese-en-16k-vocab8501-online/files?version=e4a00371f24b40f5cd477643edffa7ee55f9f532) |
 | License | [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0.txt), SHA-256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` |
 | `encoder.int8.onnx` SHA-256 | `6047a644b41b236d9d8e89e3b94ef39d1b7037daab028131b722ca52e10b0357` |
 | `decoder.int8.onnx` SHA-256 | `545427acf508452b7d89969be082c8128c681e3432ff43aef09f6159f4b61a7e` |
