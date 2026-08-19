@@ -41,6 +41,7 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
     private let makeRecorder: RecorderFactory
     private var recorder: AudioRecording?
     private var completion: ((RecordedAudio) -> Void)?
+    private var durationBeforeStopMilliseconds: Int?
 
     private(set) var activeURL: URL?
 
@@ -78,6 +79,7 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
 
     func stop() {
         guard let recording = recorder else { return }
+        durationBeforeStopMilliseconds = Int((recording.currentTime * 1_000).rounded())
         recording.stop()
         finish(recording: recording, successfully: true)
     }
@@ -89,6 +91,7 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
         recorder = nil
         activeURL = nil
         completion = nil
+        durationBeforeStopMilliseconds = nil
         recording.delegate = nil
         recording.stop()
 
@@ -108,11 +111,13 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
     private func finish(recording: AudioRecording?, successfully: Bool) {
         guard let recording, recorder === recording, let url = activeURL else { return }
 
-        let durationMilliseconds = Int((recording.currentTime * 1_000).rounded())
+        let durationMilliseconds = durationBeforeStopMilliseconds
+            ?? Int((recording.currentTime * 1_000).rounded())
         let callback = completion
         self.recorder = nil
         activeURL = nil
         completion = nil
+        durationBeforeStopMilliseconds = nil
         recording.delegate = nil
 
         guard successfully else {
@@ -129,6 +134,7 @@ final class AudioRecordingService: NSObject, @preconcurrency AVAudioRecorderDele
         recorder = nil
         activeURL = nil
         completion = nil
+        durationBeforeStopMilliseconds = nil
         recording?.delegate = nil
 
         if deleteFile, let url {

@@ -31,6 +31,13 @@ final class AppController: ObservableObject {
         let recorder = AudioRecordingService()
         let store = TranscriptStore()
         let clipboard = ClipboardService.system
+        let debugAudioFinalizer = DebugAudioFinalizer(
+            isDebugBuild: _isDebugAssertConfiguration(),
+            environment: ProcessInfo.processInfo.environment,
+            archiveDirectory: FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("TSB/DebugAudio", isDirectory: true)
+        )
         let notchOverlay = NSScreen.findScreenForNotch().map(NotchOverlayPanel.init)
         let escapeMonitor = EscapeKeyMonitor(
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
@@ -72,6 +79,9 @@ final class AppController: ObservableObject {
                 },
                 copy: { text in
                     clipboard.copy(text)
+                },
+                finalizeAudioAfterSave: { url, sessionID in
+                    try debugAudioFinalizer.finalize(url, sessionID: sessionID)
                 },
                 removeAudio: { url in
                     try FileManager.default.removeItem(at: url)
