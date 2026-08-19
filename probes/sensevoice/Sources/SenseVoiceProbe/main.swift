@@ -34,6 +34,7 @@ func run(arguments: [String]) throws -> Int {
 
     let manifest = try ModelManifest.load(from: options.manifest)
     let totalStart = ContinuousClock.now
+    let baselineRSS = currentResidentSetSize()
     let loadStart = ContinuousClock.now
     let recognizer = makeRecognizer(model: modelFile, tokens: tokensFile)
     let coldLoad = milliseconds(from: loadStart, to: ContinuousClock.now)
@@ -56,11 +57,14 @@ func run(arguments: [String]) throws -> Int {
         try writeJSONLine(output)
     }
 
+    let peakRSS = peakResidentSetSize()
     let metrics = ProcessMetrics(
         sampleCount: manifest.samples.count,
         coldLoadMilliseconds: coldLoad,
         totalElapsedMilliseconds: milliseconds(from: totalStart, to: ContinuousClock.now),
-        peakRSSBytes: peakResidentSetSize()
+        baselineRSSBytes: baselineRSS,
+        peakRSSBytes: peakRSS,
+        activePeakRSSDeltaBytes: activePeakDelta(baselineRSSBytes: baselineRSS, peakRSSBytes: peakRSS)
     )
     try writeJSONLine(metrics)
     _ = recognizer
@@ -188,6 +192,21 @@ private func peakResidentSetSize() -> UInt64 {
     var usage = rusage()
     getrusage(RUSAGE_SELF, &usage)
     return UInt64(max(usage.ru_maxrss, 0))
+}
+
+func activePeakDelta(baselineRSSBytes: UInt64, peakRSSBytes: UInt64) -> UInt64 {
+    peakRSSBytes > baselineRSSBytes ? peakRSSBytes - baselineRSSBytes : 0
+}
+
+private func currentResidentSetSize() -> UInt64 {
+    var info = mach_task_basic_info()
+    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<integer_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) { pointer in
+        pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+            task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+        }
+    }
+    return result == KERN_SUCCESS ? UInt64(info.resident_size) : 0
 }
 
 private func emptyToNil(_ value: String) -> String? {

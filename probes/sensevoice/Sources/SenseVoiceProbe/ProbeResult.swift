@@ -17,5 +17,7 @@ struct ProcessMetrics: Encodable {
     let sampleCount: Int
     let coldLoadMilliseconds: Int
     let totalElapsedMilliseconds: Int
+    let baselineRSSBytes: UInt64
     let peakRSSBytes: UInt64
+    let activePeakRSSDeltaBytes: UInt64
 }
