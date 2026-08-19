@@ -24,8 +24,9 @@ final class SessionCoordinator {
     private var activeSession: ActiveSession?
     private var stopRequested = false
     private var nextOrdinal: UInt64 = 1
-    private var deliveredSessionIDs = Set<SessionID>()
+    private var activeDeliverySucceeded: Bool?
     private var processingTask: Task<Void, Never>?
+    private var processingSessionID: SessionID?
 
     private(set) var snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil) {
         didSet { onSnapshot(snapshot) }
@@ -59,6 +60,7 @@ final class SessionCoordinator {
         nextOrdinal += 1
         activeSession = session
         stopRequested = false
+        activeDeliverySucceeded = nil
 
         do {
             try dependencies.startRecording(session.id) { [weak self] audio in
@@ -74,28 +76,49 @@ final class SessionCoordinator {
     }
 
     private func receiveFinishedAudio(_ audio: RecordedAudio, for sessionID: SessionID) {
-        guard activeSession?.id == sessionID, processingTask == nil else { return }
+        guard activeSession?.id == sessionID, processingSessionID == nil else { return }
 
         snapshot = AppSnapshot(status: .transcribing, elapsedMilliseconds: audio.durationMilliseconds, previewText: "", message: "Transcribing")
+        processingSessionID = sessionID
         processingTask = Task { @MainActor [weak self] in
             await self?.process(audio, for: sessionID)
         }
     }
 
     private func process(_ audio: RecordedAudio, for sessionID: SessionID) async {
-        defer { processingTask = nil }
+        defer {
+            if processingSessionID == sessionID {
+                processingTask = nil
+                processingSessionID = nil
+            }
+        }
         guard let session = activeSession, session.id == sessionID else { return }
 
         let transcription: TranscriptionResult
         do {
             transcription = try await dependencies.transcribe(audio.url)
         } catch {
-            snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: audio.durationMilliseconds, previewText: "", message: "Transcription failed.")
-            activeSession = nil
+            guard owns(sessionID) else { return }
+            let record = TranscriptRecord(
+                id: session.id,
+                ordinal: session.ordinal,
+                createdAt: session.createdAt,
+                durationMilliseconds: audio.durationMilliseconds,
+                detectedLanguages: [],
+                originalText: "",
+                localCleanedText: "",
+                edits: [],
+                deliveryStatus: .pending,
+                outcome: .transcriptionFailed,
+                error: "transcription_failed",
+                finalSource: nil
+            )
+            guard save(record, for: sessionID, durationMilliseconds: audio.durationMilliseconds, previewText: "") else { return }
+            finish(sessionID, with: .failed, durationMilliseconds: audio.durationMilliseconds, previewText: "", message: "Transcription failed.")
             return
         }
 
-        guard !Task.isCancelled, activeSession?.id == sessionID else { return }
+        guard owns(sessionID) else { return }
 
         let cleaned: CleanResult
         do {
@@ -105,8 +128,20 @@ final class SessionCoordinator {
         }
 
         guard !cleaned.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            activeSession = nil
-            snapshot = AppSnapshot(status: .cancelled, elapsedMilliseconds: audio.durationMilliseconds, previewText: "", message: "No speech detected.")
+            let record = TranscriptRecord(
+                id: session.id,
+                ordinal: session.ordinal,
+                createdAt: session.createdAt,
+                durationMilliseconds: audio.durationMilliseconds,
+                detectedLanguages: transcription.detectedLanguage.map { [$0] } ?? [],
+                originalText: transcription.text,
+                localCleanedText: cleaned.text,
+                edits: cleaned.edits,
+                deliveryStatus: .pending,
+                outcome: .noSpeech
+            )
+            guard save(record, for: sessionID, durationMilliseconds: audio.durationMilliseconds, previewText: cleaned.text) else { return }
+            finish(sessionID, with: .cancelled, durationMilliseconds: audio.durationMilliseconds, previewText: "", message: "No speech detected.")
             return
         }
 
@@ -126,27 +161,32 @@ final class SessionCoordinator {
         do {
             try dependencies.save(record)
         } catch {
-            activeSession = nil
-            snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: audio.durationMilliseconds, previewText: cleaned.text, message: "Could not save transcript.")
+            finish(sessionID, with: .failed, durationMilliseconds: audio.durationMilliseconds, previewText: cleaned.text, message: "Could not save transcript.")
             return
         }
 
-        activeSession = nil
+        guard owns(sessionID), activeDeliverySucceeded == nil else { return }
 
-        guard deliveredSessionIDs.insert(session.id).inserted else { return }
         let didCopy = dependencies.copy(cleaned.text)
-        let deliveryStatus: DeliveryStatus = didCopy ? .copied : .failed
+        activeDeliverySucceeded = didCopy
 
         do {
-            try dependencies.updateDeliveryStatus(session.id, deliveryStatus)
-            snapshot = AppSnapshot(
-                status: didCopy ? .delivered : .failed,
-                elapsedMilliseconds: audio.durationMilliseconds,
+            try dependencies.updateDeliveryStatus(session.id, didCopy ? .copied : .failed)
+            finish(
+                sessionID,
+                with: didCopy ? .delivered : .failed,
+                durationMilliseconds: audio.durationMilliseconds,
                 previewText: cleaned.text,
-                message: didCopy ? "Copied to clipboard." : "Could not copy to clipboard."
+                message: didCopy ? "已复制 · 按 ⌘V 粘贴" : "Could not copy to clipboard."
             )
         } catch {
-            snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: audio.durationMilliseconds, previewText: cleaned.text, message: "Could not update delivery status.")
+            finish(
+                sessionID,
+                with: didCopy ? .delivered : .failed,
+                durationMilliseconds: audio.durationMilliseconds,
+                previewText: cleaned.text,
+                message: didCopy ? "已复制，但未能记录复制状态" : "Could not update delivery status."
+            )
         }
     }
 
@@ -155,9 +195,44 @@ final class SessionCoordinator {
 
         processingTask?.cancel()
         processingTask = nil
+        processingSessionID = nil
         dependencies.cancelRecording(session.id)
         activeSession = nil
         stopRequested = false
+        activeDeliverySucceeded = nil
         snapshot = AppSnapshot(status: .cancelled, elapsedMilliseconds: 0, previewText: "", message: "Recording cancelled.")
+    }
+
+    private func owns(_ sessionID: SessionID) -> Bool {
+        !Task.isCancelled && activeSession?.id == sessionID
+    }
+
+    private func save(
+        _ record: TranscriptRecord,
+        for sessionID: SessionID,
+        durationMilliseconds: Int,
+        previewText: String
+    ) -> Bool {
+        snapshot = AppSnapshot(status: .saving, elapsedMilliseconds: durationMilliseconds, previewText: previewText, message: "Saving")
+        do {
+            try dependencies.save(record)
+            return owns(sessionID)
+        } catch {
+            finish(sessionID, with: .failed, durationMilliseconds: durationMilliseconds, previewText: previewText, message: "Could not save transcript.")
+            return false
+        }
+    }
+
+    private func finish(
+        _ sessionID: SessionID,
+        with status: SessionStatus,
+        durationMilliseconds: Int,
+        previewText: String,
+        message: String
+    ) {
+        guard activeSession?.id == sessionID else { return }
+        activeSession = nil
+        stopRequested = false
+        snapshot = AppSnapshot(status: status, elapsedMilliseconds: durationMilliseconds, previewText: previewText, message: message)
     }
 }
