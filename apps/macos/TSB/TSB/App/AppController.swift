@@ -80,9 +80,7 @@ final class AppController: ObservableObject {
             onSnapshot: { snapshot in
                 state.snapshot = snapshot
                 notchOverlay?.update(snapshot)
-                if snapshot.status == .recording {
-                    escapeMonitor.start()
-                } else {
+                if snapshot.status != .recording {
                     escapeMonitor.stop()
                 }
             }
@@ -133,7 +131,7 @@ final class AppController: ObservableObject {
                 guard let self else { return }
                 self.microphoneRequestLatch.finish()
                 if granted {
-                    self.dispatch(.toggleRecording)
+                    self.receive(.toggleRecording)
                 } else {
                     self.state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: "Microphone access is required to record.")
                     self.notchOverlay?.update(self.state.snapshot)
@@ -141,7 +139,24 @@ final class AppController: ObservableObject {
             }
             return
         }
-        dispatch(intent)
+        switch intent {
+        case .cancelRecording:
+            dispatch(intent)
+        case .toggleRecording:
+            switch state.snapshot.status {
+            case .recording:
+                dispatch(intent)
+            case .transcribing, .saving:
+                return
+            case .idle, .delivered, .failed, .cancelled:
+                if let error = escapeMonitor.start() {
+                    state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: error.message)
+                    notchOverlay?.update(state.snapshot)
+                    return
+                }
+                dispatch(intent)
+            }
+        }
     }
 
     private func dispatch(_ intent: UserIntent) {

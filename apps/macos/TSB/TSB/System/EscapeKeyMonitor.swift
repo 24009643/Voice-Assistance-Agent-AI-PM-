@@ -13,21 +13,25 @@ final class EscapeKeyMonitor {
         self.eventSource = eventSource
     }
 
-    func start() {
+    func start() -> HotkeyStartError? {
         if let eventSource {
             eventSource.onKeyDown = { [weak self] in
                 self?.onEscapePressed?()
             }
-            eventSource.start()
-            return
+            if let error = eventSource.start() {
+                eventSource.onKeyDown = nil
+                return error
+            }
+            return nil
         }
 
-        guard monitorStorage.monitors.isEmpty else { return }
+        guard monitorStorage.monitors.isEmpty else { return nil }
         guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             guard let self else { return event }
             return self.handle(event)
-        }) else { return }
+        }) else { return .registrationFailed(-1) }
         monitorStorage.monitors = [monitor]
+        return nil
     }
 
     func stop() {

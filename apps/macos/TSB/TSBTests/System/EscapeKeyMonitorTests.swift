@@ -35,6 +35,18 @@ final class EscapeKeyMonitorTests: XCTestCase {
         XCTAssertEqual(callbackCount, 1)
     }
 
+    func testEventSourceStartFailureIsReturnedAndDoesNotCallEscapeCallback() {
+        let source = FailingEscapeEventSource()
+        let monitor = EscapeKeyMonitor(eventSource: source)
+        var callbackCount = 0
+        monitor.onEscapePressed = { callbackCount += 1 }
+
+        XCTAssertEqual(monitor.start(), .registrationFailed(-1))
+        source.sendKeyDown()
+
+        XCTAssertEqual(callbackCount, 0)
+    }
+
     private func escapeEvent() -> NSEvent {
         NSEvent.keyEvent(
             with: .keyDown,
@@ -48,5 +60,18 @@ final class EscapeKeyMonitorTests: XCTestCase {
             isARepeat: false,
             keyCode: 53
         )!
+    }
+}
+
+@MainActor
+private final class FailingEscapeEventSource: HotkeyEventSource {
+    var onKeyDown: (() -> Void)?
+    var onKeyUp: (() -> Void)?
+
+    func start() -> HotkeyStartError? { .registrationFailed(-1) }
+    func stop() {}
+
+    func sendKeyDown() {
+        onKeyDown?()
     }
 }
