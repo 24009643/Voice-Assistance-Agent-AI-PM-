@@ -191,8 +191,8 @@ private final class ConverterInput: @unchecked Sendable {
 private final class AudioBufferCopy: @unchecked Sendable {
     let buffer: AVAudioPCMBuffer
 
-    init?(_ source: AVAudioPCMBuffer) {
-        guard source.frameLength <= 1_024,
+    init?(_ source: AVAudioPCMBuffer, maximumFrameCount: Int) {
+        guard maximumFrameCount > 0, Int(source.frameLength) <= maximumFrameCount,
               let copy = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: source.frameLength) else { return nil }
         copy.frameLength = source.frameLength
         let sourceBuffers = UnsafeMutableAudioBufferListPointer(source.mutableAudioBufferList)
@@ -301,7 +301,8 @@ private final class NativeAudioCapture: @unchecked Sendable {
             processor: processor,
             pendingBuffers: pendingBuffers,
             queue: queue,
-            terminal: terminal
+            terminal: terminal,
+            maximumInputFrameCount: max(1, Int(ceil(inputFormat.sampleRate * 0.2)))
         )
         inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat, block: tapHandler)
         engine.prepare()
@@ -472,7 +473,8 @@ final class AudioRecordingService {
         processor: PCMStreamProcessor,
         pendingBuffers: DispatchSemaphore,
         queue: DispatchQueue,
-        terminal: TerminalGate
+        terminal: TerminalGate,
+        maximumInputFrameCount: Int
     ) -> AVAudioNodeTapBlock {
         { buffer, _ in
             guard terminal.isOpen else { return }
@@ -480,7 +482,7 @@ final class AudioRecordingService {
                 terminal.signal(false)
                 return
             }
-            guard let copy = AudioBufferCopy(buffer) else {
+            guard let copy = AudioBufferCopy(buffer, maximumFrameCount: maximumInputFrameCount) else {
                 pendingBuffers.signal()
                 terminal.signal(false)
                 return

@@ -115,11 +115,13 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertEqual(gate.result, false)
     }
 
-    func testTapHandlerRunsFromBackgroundQueueWithoutActorIsolation() async throws {
+    func testTapHandlerHonorsHardwareBufferLimitFromBackgroundQueue() async throws {
         let directory = temporaryDirectory()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let format = PCMStreamProcessor.outputFormat
+        let format = try XCTUnwrap(
+            AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)
+        )
         let processorQueue = DispatchQueue(label: "AudioRecordingServiceTests.processor")
         let signals = ThreadSafeSignals()
         let terminal = TerminalGate { signals.append($0) }
@@ -134,11 +136,12 @@ final class AudioRecordingServiceTests: XCTestCase {
             processor: processor,
             pendingBuffers: DispatchSemaphore(value: 4),
             queue: processorQueue,
-            terminal: terminal
+            terminal: terminal,
+            maximumInputFrameCount: Int(ceil(format.sampleRate * 0.2))
         )
         let invocation = TapInvocation(
             handler: handler,
-            buffer: try makeSineBuffer(format: format, frameCount: 320)
+            buffer: try makeSineBuffer(format: format, frameCount: 4_800)
         )
         let invoked = expectation(description: "tap invoked from a non-main queue")
 
@@ -149,8 +152,23 @@ final class AudioRecordingServiceTests: XCTestCase {
         await fulfillment(of: [invoked], timeout: 1)
         processorQueue.sync {}
 
-        XCTAssertGreaterThan(try processor.finish(), 0)
+        XCTAssertGreaterThan(processor.totalOutputFrames, 0)
         XCTAssertTrue(signals.values.isEmpty)
+
+        let oversized = expectation(description: "oversized tap invoked")
+        let oversizedInvocation = TapInvocation(
+            handler: handler,
+            buffer: try makeSineBuffer(format: format, frameCount: 9_601)
+        )
+        DispatchQueue.global().async {
+            oversizedInvocation.call()
+            oversized.fulfill()
+        }
+        await fulfillment(of: [oversized], timeout: 1)
+        processorQueue.sync {}
+
+        XCTAssertEqual(try processor.finish(), 1_600, accuracy: 4)
+        XCTAssertEqual(signals.values, [false])
     }
 
     func testProcessorStopsAtFrameLimitAndSignalsOnce() throws {
