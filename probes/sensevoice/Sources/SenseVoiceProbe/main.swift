@@ -42,17 +42,32 @@ func run(arguments: [String]) throws -> Int {
     for sample in manifest.samples {
         let audio = try loadMono16kWav(URL(fileURLWithPath: sample.path))
         let decodeStart = ContinuousClock.now
-        let result = recognizer.decode(samples: audio.samples, sampleRate: audio.sampleRate)
+        let chunks = chunkedSamples(audio.samples, maximumFrameCount: audio.sampleRate * 30)
+        var transcripts: [String] = []
+        var languages: [String] = []
+        var events: [String] = []
+        var emotions: [String] = []
+        for chunk in chunks {
+            let decoded = autoreleasepool { () -> (String, String, String, String) in
+                let result = recognizer.decode(samples: chunk, sampleRate: audio.sampleRate)
+                return (result.text, result.lang, result.event, result.emotion)
+            }
+            if !decoded.0.isEmpty { transcripts.append(decoded.0) }
+            if !decoded.1.isEmpty { languages.append(decoded.1) }
+            events.append(contentsOf: splitEvents(decoded.2))
+            if !decoded.3.isEmpty { emotions.append(decoded.3) }
+        }
         let elapsed = milliseconds(from: decodeStart, to: ContinuousClock.now)
         let output = SampleResult(
             id: sample.id,
             expectedLanguage: sample.language,
-            detectedLanguage: emptyToNil(result.lang),
-            transcript: result.text,
-            events: splitEvents(result.event),
-            emotion: emptyToNil(result.emotion),
+            detectedLanguage: languages.first,
+            transcript: transcripts.joined(separator: "\n"),
+            events: Array(Set(events)).sorted(),
+            emotion: emotions.first,
             latencyMilliseconds: elapsed,
-            audioDurationSeconds: audio.durationSeconds
+            audioDurationSeconds: audio.durationSeconds,
+            chunkCount: chunks.count
         )
         try writeJSONLine(output)
     }
@@ -196,6 +211,13 @@ private func peakResidentSetSize() -> UInt64 {
 
 func activePeakDelta(baselineRSSBytes: UInt64, peakRSSBytes: UInt64) -> UInt64 {
     peakRSSBytes > baselineRSSBytes ? peakRSSBytes - baselineRSSBytes : 0
+}
+
+func chunkedSamples(_ samples: [Float], maximumFrameCount: Int) -> [[Float]] {
+    precondition(maximumFrameCount > 0)
+    return stride(from: 0, to: samples.count, by: maximumFrameCount).map {
+        Array(samples[$0..<min($0 + maximumFrameCount, samples.count)])
+    }
 }
 
 private func currentResidentSetSize() -> UInt64 {

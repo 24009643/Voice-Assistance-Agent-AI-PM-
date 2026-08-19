@@ -10,6 +10,7 @@ struct SampleResult: Encodable {
     let emotion: String?
     let latencyMilliseconds: Int
     let audioDurationSeconds: Double?
+    let chunkCount: Int
 }
 
 struct ProcessMetrics: Encodable {
