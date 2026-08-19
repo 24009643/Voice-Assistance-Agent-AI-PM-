@@ -4,8 +4,13 @@ set -eu
 MODEL_NAME="sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en"
 MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${MODEL_NAME}.tar.bz2"
 MODEL_ARCHIVE="${MODEL_NAME}.tar.bz2"
+MODEL_ARCHIVE_SHA256="d479167d8752628d9032d29de1060493865389d1e295a1c2e8e011e7062f1932"
+MODEL_CARD_REVISION="e4a00371f24b40f5cd477643edffa7ee55f9f532"
+LICENSE_URL="https://www.apache.org/licenses/LICENSE-2.0.txt"
+LICENSE_SHA256="cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
 DEFAULT_TARGET="${HOME}/Library/Application Support/TSB/Models/${MODEL_NAME}"
-REQUIRED_FILES="encoder.int8.onnx decoder.int8.onnx tokens.txt LICENSE"
+MODEL_FILES="encoder.int8.onnx decoder.int8.onnx tokens.txt"
+REQUIRED_FILES="$MODEL_FILES LICENSE"
 SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 REPO_ROOT=$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel 2>/dev/null) || {
   echo "bootstrap-paraformer-model: unable to locate repository root" >&2
@@ -84,6 +89,14 @@ require_safe_target_file() {
   [ ! -e "$1" ] && [ ! -L "$1" ] || require_regular_file "$1"
 }
 
+verify_sha256() {
+  file=$1
+  expected=$2
+  label=$3
+  actual=$(shasum -a 256 "$file" | awk '{print $1}')
+  [ "$actual" = "$expected" ] || die "$label SHA-256 mismatch"
+}
+
 validate_archive() {
   archive=$1
   members="$archive.members"
@@ -154,23 +167,28 @@ bootstrap_model() {
   mkdir -p "$stage"
 
   curl -fL "$MODEL_URL" -o "$archive"
+  verify_sha256 "$archive" "$MODEL_ARCHIVE_SHA256" "model archive"
   validate_archive "$archive"
   tar -xjf "$archive" -C "$stage"
 
   source_dir="$stage/$MODEL_NAME"
   [ -d "$source_dir" ] || die "archive did not contain expected directory: $MODEL_NAME"
-  for file in $REQUIRED_FILES; do
+  for file in $MODEL_FILES; do
     require_regular_file "$source_dir/$file"
   done
 
-  write_manifest "$source_dir"
-  verify_model "$source_dir"
+  license="$tmp_dir/LICENSE"
+  curl -fL "$LICENSE_URL" -o "$license"
+  verify_sha256 "$license" "$LICENSE_SHA256" "license"
+  require_regular_file "$license"
   mkdir -p "$target"
-  for file in $REQUIRED_FILES; do
+  for file in $MODEL_FILES; do
     cp "$source_dir/$file" "$target/$file"
   done
-  cp "$source_dir/manifest.sha256" "$target/manifest.sha256"
+  cp "$license" "$target/LICENSE"
+  write_manifest "$target"
   verify_model "$target"
+  echo "Model card revision: $MODEL_CARD_REVISION"
   echo "Bootstrapped Streaming Paraformer model at $target"
 }
 
@@ -210,10 +228,44 @@ self_check() {
   tar -cjf "$malicious_archive" -C "$malicious_root" "$MODEL_NAME"
   fake_bin="$tmp_dir/fake-bin"
   mkdir -p "$fake_bin"
-  printf '%s\n' '#!/bin/sh' 'set -eu' 'while [ "$#" -gt 0 ]; do' '  if [ "$1" = "-o" ]; then' '    cp "$PARAFORMER_TEST_ARCHIVE" "$2"' '    exit 0' '  fi' '  shift' 'done' 'exit 2' >"$fake_bin/curl"
+  printf '%s\n' '#!/bin/sh' 'set -eu' 'url=' 'destination=' 'while [ "$#" -gt 0 ]; do' '  case "$1" in' '    -o) destination=$2; shift 2 ;;' '    -*) shift ;;' '    *) url=$1; shift ;;' '  esac' 'done' 'case "$url" in' '  "${PARAFORMER_TEST_LICENSE_URL:-}") cp "${PARAFORMER_TEST_LICENSE:-}" "$destination" ;;' '  *) cp "$PARAFORMER_TEST_ARCHIVE" "$destination" ;;' 'esac' >"$fake_bin/curl"
+  real_shasum=$(command -v shasum)
+  printf '%s\n' '#!/bin/sh' 'set -eu' 'if [ "$1" = "-a" ] && [ "$2" = "256" ]; then' '  case "$(basename "$3")" in' '    "${PARAFORMER_TEST_ARCHIVE_NAME:-}") printf "%s  %s\n" "${PARAFORMER_TEST_ARCHIVE_SHA256:-}" "$3"; exit 0 ;;' '    LICENSE) printf "%s  %s\n" "${PARAFORMER_TEST_LICENSE_SHA256:-}" "$3"; exit 0 ;;' '  esac' 'fi' 'exec "$PARAFORMER_REAL_SHASUM" "$@"' >"$fake_bin/shasum"
+  chmod +x "$fake_bin/shasum"
   chmod +x "$fake_bin/curl"
-  if PARAFORMER_TEST_ARCHIVE="$malicious_archive" PATH="$fake_bin:$PATH" sh "$0" --target "$tmp_dir/malicious-target" >/dev/null 2>&1; then
+  if PARAFORMER_REAL_SHASUM="$real_shasum" PARAFORMER_TEST_ARCHIVE="$malicious_archive" PARAFORMER_TEST_ARCHIVE_NAME="$MODEL_ARCHIVE" PARAFORMER_TEST_ARCHIVE_SHA256="$MODEL_ARCHIVE_SHA256" PATH="$fake_bin:$PATH" sh "$0" --target "$tmp_dir/malicious-target" >/dev/null 2>&1; then
     die "self-check expected malicious link archive to fail"
+  fi
+
+  tampered_root="$tmp_dir/tampered"
+  tampered_model="$tampered_root/$MODEL_NAME"
+  mkdir -p "$tampered_model"
+  for file in $REQUIRED_FILES; do
+    echo "tampered-$file" >"$tampered_model/$file"
+  done
+  tampered_archive="$tmp_dir/tampered.tar.bz2"
+  tar -cjf "$tampered_archive" -C "$tampered_root" "$MODEL_NAME"
+  if PARAFORMER_REAL_SHASUM="$real_shasum" PARAFORMER_TEST_ARCHIVE="$tampered_archive" PARAFORMER_TEST_ARCHIVE_NAME="$MODEL_ARCHIVE" PARAFORMER_TEST_ARCHIVE_SHA256="0000000000000000000000000000000000000000000000000000000000000000" PATH="$fake_bin:$PATH" sh "$0" --target "$tmp_dir/tampered-target" >/dev/null 2>&1; then
+    die "self-check expected tampered archive to fail"
+  fi
+
+  official_root="$tmp_dir/official"
+  official_model="$official_root/$MODEL_NAME"
+  mkdir -p "$official_model"
+  for file in encoder.int8.onnx decoder.int8.onnx tokens.txt README; do
+    echo "$file" >"$official_model/$file"
+  done
+  official_archive="$tmp_dir/official.tar.bz2"
+  tar -cjf "$official_archive" -C "$official_root" "$MODEL_NAME"
+  official_license="$tmp_dir/LICENSE"
+  echo apache-license >"$official_license"
+  if ! PARAFORMER_REAL_SHASUM="$real_shasum" PARAFORMER_TEST_ARCHIVE="$official_archive" PARAFORMER_TEST_ARCHIVE_NAME="$MODEL_ARCHIVE" PARAFORMER_TEST_ARCHIVE_SHA256="$MODEL_ARCHIVE_SHA256" PARAFORMER_TEST_LICENSE="$official_license" PARAFORMER_TEST_LICENSE_SHA256="$LICENSE_SHA256" PARAFORMER_TEST_LICENSE_URL="$LICENSE_URL" PATH="$fake_bin:$PATH" sh "$0" --target "$tmp_dir/official-target" >/dev/null 2>&1; then
+    die "self-check expected official-shaped archive without LICENSE to pass"
+  fi
+  tampered_license="$tmp_dir/tampered-LICENSE"
+  echo tampered-license >"$tampered_license"
+  if PARAFORMER_REAL_SHASUM="$real_shasum" PARAFORMER_TEST_ARCHIVE="$official_archive" PARAFORMER_TEST_ARCHIVE_NAME="$MODEL_ARCHIVE" PARAFORMER_TEST_ARCHIVE_SHA256="$MODEL_ARCHIVE_SHA256" PARAFORMER_TEST_LICENSE="$tampered_license" PARAFORMER_TEST_LICENSE_SHA256="0000000000000000000000000000000000000000000000000000000000000000" PARAFORMER_TEST_LICENSE_URL="$LICENSE_URL" PATH="$fake_bin:$PATH" sh "$0" --target "$tmp_dir/tampered-license-target" >/dev/null 2>&1; then
+    die "self-check expected tampered license to fail"
   fi
 
   other_repo="$tmp_dir/other-repo"
