@@ -43,11 +43,13 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(harness.copyCount, 0)
         XCTAssertFalse(harness.audioWasDeleted)
+        XCTAssertTrue(harness.finalizedSessionIDs.isEmpty)
+        XCTAssertEqual(harness.removeAudioCount, 0)
         XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
     }
 
     func testAudioCleanupFailureAfterSaveDoesNotCopyOrDeliver() async throws {
-        let harness = CoordinatorHarness(transcript: "原始文本", removeAudioError: TestError.cleanup)
+        let harness = CoordinatorHarness(transcript: "原始文本", finalizeAudioError: TestError.cleanup)
 
         await harness.runOneSession()
 
@@ -55,6 +57,15 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 0)
         XCTAssertTrue(harness.deliveryStatuses.isEmpty)
         XCTAssertEqual(harness.coordinator.snapshot.status, .failed)
+    }
+
+    func testSuccessfulSessionFinalizesAudioAfterSave() async throws {
+        let harness = CoordinatorHarness(transcript: "原始文本")
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.finalizedSessionIDs, harness.savedRecords.map(\.id))
+        XCTAssertEqual(harness.removeAudioCount, 0)
     }
 
     func testCleanupFailureFallsBackToOriginalAfterSave() async throws {
@@ -73,6 +84,8 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.finalizedSessionIDs.count, 0)
+        XCTAssertEqual(harness.removeAudioCount, 1)
         XCTAssertEqual(harness.coordinator.snapshot.status, .cancelled)
     }
 
@@ -86,6 +99,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.audioWasDeleted)
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.finalizedSessionIDs.count, 0)
         XCTAssertEqual(harness.coordinator.snapshot.status, .cancelled)
     }
 
@@ -108,6 +122,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.audioWasDeleted)
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.finalizedSessionIDs.count, 0)
     }
 
     func testCancelAfterFinishedAudioBeforeTranscriptionCompletesDeletesWAVWithoutSavingOrCopying() async throws {
@@ -124,6 +139,8 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.audioWasDeleted)
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.finalizedSessionIDs.count, 0)
+        XCTAssertEqual(harness.removeAudioCount, 1)
     }
 }
 
@@ -141,6 +158,7 @@ private final class CoordinatorHarness {
     private let transcript: String
     private let saveError: Error?
     private let cleanupError: Error?
+    private let finalizeAudioError: Error?
     private let removeAudioError: Error?
     private let suspendsTranscription: Bool
     private var onFinished: ((RecordedAudio) -> Void)?
@@ -156,6 +174,8 @@ private final class CoordinatorHarness {
     private(set) var copiedTexts: [String] = []
     private(set) var savedRecords: [TranscriptRecord] = []
     private(set) var deliveryStatuses: [DeliveryStatus] = []
+    private(set) var finalizedSessionIDs: [SessionID] = []
+    private(set) var removeAudioCount = 0
 
     private(set) lazy var coordinator = makeCoordinator()
 
@@ -163,12 +183,14 @@ private final class CoordinatorHarness {
         transcript: String,
         saveError: Error? = nil,
         cleanupError: Error? = nil,
+        finalizeAudioError: Error? = nil,
         removeAudioError: Error? = nil,
         suspendsTranscription: Bool = false
     ) {
         self.transcript = transcript
         self.saveError = saveError
         self.cleanupError = cleanupError
+        self.finalizeAudioError = finalizeAudioError
         self.removeAudioError = removeAudioError
         self.suspendsTranscription = suspendsTranscription
     }
@@ -219,9 +241,16 @@ private final class CoordinatorHarness {
                     self?.copiedTexts.append(text)
                     return true
                 },
+                finalizeAudioAfterSave: { [weak self] _, sessionID in
+                    guard let self else { throw TestError.deallocated }
+                    if let finalizeAudioError { throw finalizeAudioError }
+                    finalizedSessionIDs.append(sessionID)
+                    audioWasDeleted = true
+                },
                 removeAudio: { [weak self] _ in
                     if let error = self?.removeAudioError { throw error }
                     self?.audioWasDeleted = true
+                    self?.removeAudioCount += 1
                 }
             ),
             onSnapshot: { _ in }
@@ -232,7 +261,7 @@ private final class CoordinatorHarness {
         await coordinator.handle(.toggleRecording)
         await coordinator.handle(.toggleRecording)
         await finishRecording()
-        if saveError == nil, removeAudioError == nil, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if saveError == nil, finalizeAudioError == nil, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             await waitForDelivery()
         } else {
             await waitForTerminalState()

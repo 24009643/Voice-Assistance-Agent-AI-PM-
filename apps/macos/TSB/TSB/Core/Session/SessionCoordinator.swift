@@ -11,6 +11,7 @@ final class SessionCoordinator {
         let save: @MainActor (TranscriptRecord) throws -> Void
         let updateDeliveryStatus: @MainActor (SessionID, DeliveryStatus) throws -> Void
         let copy: @MainActor (String) -> Bool
+        let finalizeAudioAfterSave: @MainActor (URL, SessionID) throws -> Void
         let removeAudio: @MainActor (URL) throws -> Void
     }
 
@@ -138,11 +139,11 @@ final class SessionCoordinator {
         }
 
         do {
-            try dependencies.removeAudio(audio.url)
+            try dependencies.finalizeAudioAfterSave(audio.url, session.id)
             completedAudioURL = nil
         } catch {
             activeSession = nil
-            snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: audio.durationMilliseconds, previewText: cleaned.text, message: "Could not remove recording.")
+            snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: audio.durationMilliseconds, previewText: cleaned.text, message: "Could not finalize recording.")
             return
         }
         activeSession = nil
