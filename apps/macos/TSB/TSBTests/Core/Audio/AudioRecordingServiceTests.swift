@@ -14,173 +14,132 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertEqual(settings[AVFormatIDKey] as? UInt32, kAudioFormatLinearPCM)
     }
 
-    func testStartUsesTenMinuteLimitAndCancelRemovesOnlyItsSessionBundle() throws {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
+    func testTenMinuteFrameLimitMatchesPublicDuration() {
+        XCTAssertEqual(AudioRecordingService.maximumDuration, 600)
+        XCTAssertEqual(9_600_000, Int(AudioRecordingService.maximumDuration * 16_000))
+    }
+
+    func testCancelRemovesOnlyTheSelectedSessionBundleAndIsIdempotent() throws {
+        let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
-        let fake = FakeAudioRecorder()
-        let service = AudioRecordingService(sessionsDirectory: temporaryDirectory) { url, _ in
-            FileManager.default.createFile(atPath: url.path, contents: Data())
-            fake.url = url
-            return fake
-        }
-
-        try service.start(sessionID: fixedSessionID, onFinished: { _ in })
-        let activeURL = try XCTUnwrap(service.activeURL)
-        let expectedURL = temporaryDirectory
-            .appendingPathComponent(fixedSessionID.rawValue.uuidString, isDirectory: true)
-            .appendingPathComponent("audio.wav")
-        let siblingURL = temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-            .appendingPathComponent("audio.wav")
-        try FileManager.default.createDirectory(at: siblingURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data([0x01]).write(to: siblingURL)
-
-        XCTAssertEqual(fake.recordedDuration, AudioRecordingService.maximumDuration)
-        XCTAssertTrue(fake.isMeteringEnabled)
-        XCTAssertEqual(activeURL, expectedURL)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let selected = directory.appendingPathComponent(fixedSessionID.rawValue.uuidString, isDirectory: true)
+        let sibling = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try Data([1]).write(to: selected.appendingPathComponent("audio.wav"))
+        try Data([2]).write(to: sibling.appendingPathComponent("audio.wav"))
+        let service = AudioRecordingService(sessionsDirectory: directory)
 
         service.cancel(sessionID: fixedSessionID)
+        service.cancel(sessionID: fixedSessionID)
 
-        XCTAssertNil(service.activeURL)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: activeURL.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: activeURL.deletingLastPathComponent().path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: siblingURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: selected.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path))
     }
 
-    func testManualStopCapturesDurationBeforeResetAndSynchronousDelegateDeliversOnce() throws {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
-        let fake = FakeAudioRecorder()
-        fake.currentTime = 1.25
-        let service = AudioRecordingService(sessionsDirectory: temporaryDirectory) { url, _ in
-            FileManager.default.createFile(atPath: url.path, contents: Data())
-            fake.url = url
-            return fake
-        }
-        var results: [RecordedAudio] = []
-
-        try service.start(sessionID: fixedSessionID) { recorded in
-            results.append(recorded)
-        }
-        fake.onStop = {
-            service.finishActiveRecording(successfully: true)
-        }
-        service.stop()
-        service.finishActiveRecording(successfully: true)
-
-        XCTAssertEqual(results, [RecordedAudio(url: try XCTUnwrap(fake.url), durationMilliseconds: 1_250)])
-        XCTAssertNil(service.activeURL)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(fake.url).path))
-    }
-
-    func testFailedFinishRetainsWAVAndDoesNotDeliver() throws {
-        let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
-        let fake = FakeAudioRecorder()
-        let service = AudioRecordingService(sessionsDirectory: temporaryDirectory) { url, _ in
-            FileManager.default.createFile(atPath: url.path, contents: Data())
-            fake.url = url
-            return fake
-        }
-        var results: [RecordedAudio] = []
-
-        try service.start(sessionID: fixedSessionID) { results.append($0) }
-        let activeURL = try XCTUnwrap(service.activeURL)
-        service.finishActiveRecording(successfully: false)
-
-        XCTAssertTrue(results.isEmpty)
-        XCTAssertNil(service.activeURL)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: activeURL.path))
-    }
-
-    func testLateCancellationOfCompletedSessionDoesNotDeleteNewerBundle() throws {
+    func testConverterWritesAndChunksTheSame16kMonoFramesIncludingResidualTail() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
-        let firstID = fixedSessionID
-        let secondID = SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
-        let first = FakeAudioRecorder()
-        let second = FakeAudioRecorder()
-        var recorders = [first, second]
-        let service = AudioRecordingService(sessionsDirectory: directory) { url, _ in
-            FileManager.default.createFile(atPath: url.path, contents: Data())
-            let recorder = recorders.removeFirst()
-            recorder.url = url
-            return recorder
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outputURL = directory.appendingPathComponent("audio.wav")
+        let inputFormat = try XCTUnwrap(
+            AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false)
+        )
+        var chunks: [[Float]] = []
+        var levels: [Float] = []
+        let processor = try PCMStreamProcessor(
+            inputFormat: inputFormat,
+            outputURL: outputURL,
+            chunkFrameCount: 3_200,
+            maximumFrameCount: 16_000,
+            onPCMChunk: { chunks.append($0) },
+            onLevel: { levels.append($0) },
+            onTerminal: { _ in }
+        )
+
+        try processor.consume(makeSineBuffer(format: inputFormat, frameCount: 10_000))
+        let frameCount = try processor.finish()
+        let secondFinishFrameCount = try processor.finish()
+
+        let file = try AVAudioFile(forReading: outputURL)
+        let written = try XCTUnwrap(
+            AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length))
+        )
+        try file.read(into: written)
+        let writtenSamples = Array(
+            UnsafeBufferPointer(start: try XCTUnwrap(written.floatChannelData?[0]), count: Int(written.frameLength))
+        )
+        let chunkedSamples = chunks.flatMap { $0 }
+
+        XCTAssertEqual(file.fileFormat.sampleRate, 16_000)
+        XCTAssertEqual(file.fileFormat.channelCount, 1)
+        XCTAssertEqual(file.fileFormat.commonFormat, .pcmFormatInt16)
+        XCTAssertEqual(frameCount, Int(file.length))
+        XCTAssertEqual(secondFinishFrameCount, frameCount)
+        XCTAssertEqual(chunkedSamples.count, frameCount)
+        XCTAssertEqual(chunks.count, 2)
+        XCTAssertEqual(chunks[0].count, 3_200)
+        XCTAssertLessThan(chunks[1].count, 3_200)
+        XCTAssertEqual(writtenSamples.count, chunkedSamples.count)
+        for (writtenSample, chunkedSample) in zip(writtenSamples, chunkedSamples) {
+            XCTAssertEqual(writtenSample, chunkedSample, accuracy: 0.000_1)
         }
-
-        try service.start(sessionID: firstID, onFinished: { _ in })
-        service.stop()
-        try service.start(sessionID: secondID, onFinished: { _ in })
-        let secondURL = try XCTUnwrap(service.activeURL)
-
-        service.cancel(sessionID: firstID)
-        service.cancel(sessionID: firstID)
-
-        XCTAssertEqual(service.activeURL, secondURL)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(firstID.rawValue.uuidString).path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: secondURL.path))
+        XCTAssertFalse(levels.isEmpty)
+        XCTAssertTrue(levels.allSatisfy { (0 ... 1).contains($0) })
     }
 
-    func testLateFinishFromPreviousRecorderDoesNotClearNewerBundle() throws {
+    func testCaptureLifecycleReleasesResourcesOnceForStopCancelAndLimit() {
+        for reason in AudioCaptureLifecycle.EndReason.allCases {
+            var lifecycle = AudioCaptureLifecycle()
+            var releaseCount = 0
+
+            XCTAssertTrue(lifecycle.end(reason: reason) { releaseCount += 1 })
+            XCTAssertFalse(lifecycle.end(reason: reason) { releaseCount += 1 })
+            XCTAssertFalse(lifecycle.end(reason: .stop) { releaseCount += 1 })
+            XCTAssertEqual(releaseCount, 1)
+        }
+    }
+
+    func testProcessorStopsAtFrameLimitAndSignalsOnce() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
-        let first = FakeAudioRecorder()
-        let second = FakeAudioRecorder()
-        var recorders = [first, second]
-        let service = AudioRecordingService(sessionsDirectory: directory) { url, _ in
-            FileManager.default.createFile(atPath: url.path, contents: Data())
-            let recorder = recorders.removeFirst()
-            recorder.url = url
-            return recorder
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outputURL = directory.appendingPathComponent("audio.wav")
+        let format = PCMStreamProcessor.outputFormat
+        var chunks: [[Float]] = []
+        var terminalSignals: [Bool] = []
+        let processor = try PCMStreamProcessor(
+            inputFormat: format,
+            outputURL: outputURL,
+            chunkFrameCount: 320,
+            maximumFrameCount: 1_000,
+            onPCMChunk: { chunks.append($0) },
+            onLevel: { _ in },
+            onTerminal: { terminalSignals.append($0) }
+        )
+
+        try processor.consume(makeSineBuffer(format: format, frameCount: 2_000))
+        try processor.consume(makeSineBuffer(format: format, frameCount: 2_000))
+        let frameCount = try processor.finish()
+
+        XCTAssertEqual(frameCount, 1_000)
+        XCTAssertEqual(chunks.map(\.count), [320, 320, 320, 40])
+        XCTAssertEqual(terminalSignals, [true])
+        XCTAssertEqual(try AVAudioFile(forReading: outputURL).length, 1_000)
+    }
+
+    private func makeSineBuffer(format: AVAudioFormat, frameCount: AVAudioFrameCount) throws -> AVAudioPCMBuffer {
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+        buffer.frameLength = frameCount
+        let channels = try XCTUnwrap(buffer.floatChannelData)
+        for channel in 0 ..< Int(format.channelCount) {
+            for frame in 0 ..< Int(frameCount) {
+                channels[channel][frame] = sin(Float(frame) * 0.02) * 0.25
+            }
         }
-
-        try service.start(sessionID: fixedSessionID, onFinished: { _ in })
-        service.stop()
-        try service.start(sessionID: SessionID(rawValue: UUID()), onFinished: { _ in })
-        let secondURL = try XCTUnwrap(service.activeURL)
-
-        service.finishActiveRecording(first, successfully: false)
-
-        XCTAssertEqual(service.activeURL, secondURL)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: secondURL.path))
-    }
-
-    func testFailedStartRemovesEmptySessionBundle() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
-        let fake = FakeAudioRecorder()
-        fake.recordSucceeds = false
-        let service = AudioRecordingService(sessionsDirectory: directory) { url, _ in
-            FileManager.default.createFile(atPath: url.path, contents: Data())
-            return fake
-        }
-
-        XCTAssertThrowsError(try service.start(sessionID: fixedSessionID, onFinished: { _ in }))
-
-        XCTAssertNil(service.activeURL)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent(fixedSessionID.rawValue.uuidString).path))
-    }
-}
-
-@MainActor
-private final class FakeAudioRecorder: AudioRecording {
-    var delegate: AVAudioRecorderDelegate?
-    var isMeteringEnabled = false
-    var currentTime: TimeInterval = 0
-    var recordSucceeds = true
-    var recordedDuration: TimeInterval?
-    var stopCount = 0
-    var url: URL?
-    var onStop: (() -> Void)?
-
-    func record(forDuration duration: TimeInterval) -> Bool {
-        recordedDuration = duration
-        return recordSucceeds
-    }
-
-    func stop() {
-        stopCount += 1
-        currentTime = 0
-        onStop?()
+        return buffer
     }
 }
