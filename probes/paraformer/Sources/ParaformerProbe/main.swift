@@ -16,6 +16,7 @@ private enum ProbeError: Error, CustomStringConvertible {
 private struct Options {
     let modelDirectory: URL
     let wav: URL
+    let repeatCount: Int
 }
 
 private struct ResultLine: Encodable {
@@ -23,6 +24,7 @@ private struct ResultLine: Encodable {
     let phase: String
     let text: String
     let elapsedMilliseconds: Int
+    let session: Int
 }
 
 private struct TimingLine: Encodable {
@@ -30,10 +32,11 @@ private struct TimingLine: Encodable {
     let phase: String
     let elapsedMilliseconds: Int
     let audioSeconds: Double
+    let session: Int
 }
 
 private let helpText = """
-Usage: ParaformerProbe --model-dir <dir> --wav <16k-mono.wav>
+Usage: ParaformerProbe --model-dir <dir> --wav <16k-mono.wav> [--repeat <count>]
 
 Runs the local online Paraformer recognizer in 200 ms PCM chunks and writes
 JSONL timing and recognition-result events to stdout.
@@ -48,28 +51,42 @@ private func run(arguments: [String]) async throws {
     let options = try parse(arguments: arguments)
     let bundle = try ModelBundle.validate(at: options.modelDirectory)
     let recognizer = OnlineParaformerRecognizer(modelBundle: bundle)
-    let audio = try AVAudioFile(forReading: options.wav)
+    for session in 1...options.repeatCount {
+        try await runSession(wav: options.wav, recognizer: recognizer, session: session)
+    }
+}
+
+private func runSession(
+    wav: URL,
+    recognizer: OnlineParaformerRecognizer,
+    session: Int
+) async throws {
+    let audio = try AVAudioFile(forReading: wav)
     let format = audio.processingFormat
     guard Int(format.sampleRate.rounded()) == OnlineParaformerRecognizer.sampleRate,
           format.channelCount == 1,
           format.commonFormat == .pcmFormatFloat32 else {
-        throw ProbeError.unsupportedAudio("WAV must decode as 16 kHz mono Float32 PCM: \(options.wav.path)")
+        throw ProbeError.unsupportedAudio("WAV must decode as 16 kHz mono Float32 PCM: \(wav.path)")
     }
     guard let buffer = AVAudioPCMBuffer(
         pcmFormat: format,
-        frameCapacity: AVAudioFrameCount(OnlineParaformerRecognizer.finalPaddingSamples)
+        frameCapacity: 3_200
     ) else {
         throw ProbeError.unsupportedAudio("could not allocate PCM buffer")
     }
 
     var framesRead = 0
-    while true {
+    while audio.framePosition < audio.length {
         buffer.frameLength = 0
-        try audio.read(into: buffer, frameCount: buffer.frameCapacity)
+        let countToRead = framesToRead(
+            position: audio.framePosition,
+            length: audio.length,
+            maximum: buffer.frameCapacity
+        )
+        try audio.read(into: buffer, frameCount: countToRead)
         let count = Int(buffer.frameLength)
-        guard count > 0 else { break }
         guard let channel = buffer.floatChannelData?[0] else {
-            throw ProbeError.unsupportedAudio("WAV has no Float32 PCM channel: \(options.wav.path)")
+            throw ProbeError.unsupportedAudio("WAV has no Float32 PCM channel: \(wav.path)")
         }
 
         let samples = Array(UnsafeBufferPointer(start: channel, count: count))
@@ -80,9 +97,10 @@ private func run(arguments: [String]) async throws {
         try writeJSONLine(TimingLine(
             phase: "chunk",
             elapsedMilliseconds: elapsed,
-            audioSeconds: Double(framesRead) / Double(OnlineParaformerRecognizer.sampleRate)
+            audioSeconds: Double(framesRead) / Double(OnlineParaformerRecognizer.sampleRate),
+            session: session
         ))
-        try write(events: events, elapsedMilliseconds: elapsed)
+        try write(events: events, elapsedMilliseconds: elapsed, session: session)
     }
 
     let finishStart = ContinuousClock.now
@@ -91,14 +109,16 @@ private func run(arguments: [String]) async throws {
     try writeJSONLine(TimingLine(
         phase: "finish",
         elapsedMilliseconds: elapsed,
-        audioSeconds: Double(framesRead) / Double(OnlineParaformerRecognizer.sampleRate)
+        audioSeconds: Double(framesRead) / Double(OnlineParaformerRecognizer.sampleRate),
+        session: session
     ))
-    try write(events: events, elapsedMilliseconds: elapsed)
+    try write(events: events, elapsedMilliseconds: elapsed, session: session)
 }
 
 private func parse(arguments: [String]) throws -> Options {
     var modelDirectory: URL?
     var wav: URL?
+    var repeatCount = 1
     var index = 0
     while index < arguments.count {
         guard index + 1 < arguments.count else {
@@ -108,20 +128,36 @@ private func parse(arguments: [String]) throws -> Options {
         switch arguments[index] {
         case "--model-dir": modelDirectory = URL(fileURLWithPath: value)
         case "--wav": wav = URL(fileURLWithPath: value)
+        case "--repeat":
+            guard let count = Int(value), count > 0 else {
+                throw ProbeError.usage("--repeat must be a positive integer")
+            }
+            repeatCount = count
         default: throw ProbeError.usage("unknown argument: \(arguments[index])")
         }
         index += 2
     }
     guard let modelDirectory, let wav else { throw ProbeError.usage(helpText) }
-    return Options(modelDirectory: modelDirectory, wav: wav)
+    return Options(modelDirectory: modelDirectory, wav: wav, repeatCount: repeatCount)
 }
 
-private func write(events: [OnlineRecognizerEvent], elapsedMilliseconds: Int) throws {
+func framesToRead(
+    position: AVAudioFramePosition,
+    length: AVAudioFramePosition,
+    maximum: AVAudioFrameCount
+) -> AVAudioFrameCount {
+    guard position < length else { return 0 }
+    return AVAudioFrameCount(min(Int64(maximum), length - position))
+}
+
+private func write(events: [OnlineRecognizerEvent], elapsedMilliseconds: Int, session: Int) throws {
     for event in events {
         let line: ResultLine
         switch event {
-        case let .partial(text): line = ResultLine(phase: "partial", text: text, elapsedMilliseconds: elapsedMilliseconds)
-        case let .final(text): line = ResultLine(phase: "final", text: text, elapsedMilliseconds: elapsedMilliseconds)
+        case let .partial(text):
+            line = ResultLine(phase: "partial", text: text, elapsedMilliseconds: elapsedMilliseconds, session: session)
+        case let .final(text):
+            line = ResultLine(phase: "final", text: text, elapsedMilliseconds: elapsedMilliseconds, session: session)
         }
         try writeJSONLine(line)
     }

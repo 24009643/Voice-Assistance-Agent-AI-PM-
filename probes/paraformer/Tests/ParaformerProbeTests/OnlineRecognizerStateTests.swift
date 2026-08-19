@@ -52,4 +52,10 @@ final class OnlineRecognizerStateTests: XCTestCase {
         XCTAssertEqual(state.endpoint(""), [])
         XCTAssertEqual(state.finish(""), [])
     }
+
+    func testFramesToReadStopsAtTheExactWAVEnd() {
+        XCTAssertEqual(framesToRead(position: 0, length: 4_810, maximum: 3_200), 3_200)
+        XCTAssertEqual(framesToRead(position: 3_200, length: 4_810, maximum: 3_200), 1_610)
+        XCTAssertEqual(framesToRead(position: 4_810, length: 4_810, maximum: 3_200), 0)
+    }
 }
