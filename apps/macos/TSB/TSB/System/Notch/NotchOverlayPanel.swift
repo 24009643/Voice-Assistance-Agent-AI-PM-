@@ -33,6 +33,7 @@ struct NotchPresentation: Equatable, Sendable {
 
     let label: String?
     let text: String
+    let statusText: String
     let tone: Tone
     let systemImage: String?
     let accessibilityLabel: String?
@@ -41,8 +42,18 @@ struct NotchPresentation: Equatable, Sendable {
 
     static func make(for snapshot: AppSnapshot) -> Self? {
         guard snapshot.status != .idle else { return nil }
-        let hasLiveDraft = snapshot.status == .recording && !snapshot.previewText.isEmpty
-        let text = hasLiveDraft ? snapshot.previewText : snapshot.message ?? snapshot.previewText
+        let label: String?
+        if snapshot.previewText.isEmpty {
+            label = nil
+        } else {
+            switch snapshot.status {
+            case .recording: label = "实时草稿"
+            case .transcribing, .saving: label = "本地复核中"
+            default: label = nil
+            }
+        }
+        let text = label == nil ? snapshot.message ?? snapshot.previewText : snapshot.previewText
+        let accessibilityLabel = label.map { "\($0)，\(text)" }
         let secondary = snapshot.secondaryProcessing.prefix(3).map { item in
             let isSuccess = item.status == .delivered && item.message == "已复制 · 按 ⌘V 粘贴"
             let isWarning = item.status == .failed || item.status == .delivered
@@ -60,6 +71,7 @@ struct NotchPresentation: Equatable, Sendable {
             return Self(
                 label: nil,
                 text: text,
+                statusText: text,
                 tone: .success,
                 systemImage: "checkmark.circle.fill",
                 accessibilityLabel: "复制成功，按 Command V 粘贴",
@@ -72,6 +84,7 @@ struct NotchPresentation: Equatable, Sendable {
             return Self(
                 label: nil,
                 text: text,
+                statusText: text,
                 tone: .warning,
                 systemImage: "exclamationmark.triangle.fill",
                 accessibilityLabel: nil,
@@ -81,11 +94,12 @@ struct NotchPresentation: Equatable, Sendable {
         }
 
         return Self(
-            label: hasLiveDraft ? "实时草稿" : nil,
+            label: label,
             text: text,
+            statusText: label ?? text,
             tone: .neutral,
             systemImage: nil,
-            accessibilityLabel: nil,
+            accessibilityLabel: accessibilityLabel,
             autoHideDelay: nil,
             secondary: secondary
         )

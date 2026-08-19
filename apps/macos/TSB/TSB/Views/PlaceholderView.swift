@@ -14,7 +14,7 @@ struct PlaceholderView: View {
                     if let systemImage = presentation.systemImage {
                         Image(systemName: systemImage)
                     }
-                    Text(presentation.text)
+                    Text(presentation.statusText)
                 }
                 .foregroundStyle(foregroundColor(for: presentation.tone))
                 .accessibilityElement(children: .ignore)

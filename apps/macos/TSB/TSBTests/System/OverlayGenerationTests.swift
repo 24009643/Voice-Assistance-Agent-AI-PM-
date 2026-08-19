@@ -92,8 +92,52 @@ final class OverlayGenerationTests: XCTestCase {
 
         XCTAssertEqual(presentation.label, "实时草稿")
         XCTAssertEqual(presentation.text, "actual live draft")
+        XCTAssertEqual(presentation.accessibilityLabel, "实时草稿，actual live draft")
         XCTAssertEqual(presentation.secondary.map(\.text), ["older 1", "older 2", "older 3"])
         XCTAssertEqual(presentation.windowHeight(notchHeight: 32), 140)
+    }
+
+    func testProcessingPresentationKeepsLastPreviewForTranscribingAndSaving() throws {
+        for status in [SessionStatus.transcribing, .saving] {
+            let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
+                status: status,
+                elapsedMilliseconds: 0,
+                previewText: "last live preview",
+                message: status == .transcribing ? "Transcribing" : "Saving"
+            )))
+
+            XCTAssertEqual(presentation.label, "本地复核中")
+            XCTAssertEqual(presentation.text, "last live preview")
+            XCTAssertEqual(presentation.accessibilityLabel, "本地复核中，last live preview")
+        }
+    }
+
+    func testPlaceholderStatusLineUsesLabelWithoutRepeatingPreviewBody() throws {
+        let live = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
+            status: .recording,
+            elapsedMilliseconds: 0,
+            previewText: "actual live draft",
+            message: "实时草稿"
+        )))
+        let delivered = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
+            status: .delivered,
+            elapsedMilliseconds: 0,
+            previewText: "final body",
+            message: "已复制 · 按 ⌘V 粘贴"
+        )))
+        let failed = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
+            status: .failed,
+            elapsedMilliseconds: 0,
+            previewText: "retained body",
+            message: "Could not copy to clipboard."
+        )))
+
+        XCTAssertEqual(live.statusText, "实时草稿")
+        XCTAssertNotEqual(live.statusText, live.text)
+        XCTAssertEqual(delivered.statusText, "已复制 · 按 ⌘V 粘贴")
+        XCTAssertEqual(delivered.systemImage, "checkmark.circle.fill")
+        XCTAssertEqual(failed.statusText, "Could not copy to clipboard.")
+        XCTAssertEqual(failed.systemImage, "exclamationmark.triangle.fill")
     }
 
     func testSecondaryDeliveryPresentationUsesSuccessAndFailureTones() throws {
