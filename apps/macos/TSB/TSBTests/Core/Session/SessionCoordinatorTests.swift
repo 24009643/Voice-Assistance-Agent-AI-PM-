@@ -93,6 +93,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.savedRecords.single?.outcome, .recordingFailed)
         XCTAssertEqual(harness.savedRecords.single?.error, "recording_failed")
         XCTAssertEqual(harness.events.filter { $0 == .transcribed }.count, 0)
+        XCTAssertEqual(harness.cancelledPreviewSessionIDs, harness.startedSessionIDs)
         XCTAssertEqual(harness.copyCount, 0)
         XCTAssertFalse(harness.audioWasDeleted)
         XCTAssertLessThan(
@@ -155,6 +156,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(harness.cancelCount, 1)
         XCTAssertTrue(harness.audioWasDeleted)
+        XCTAssertEqual(harness.cancelledPreviewSessionIDs, harness.startedSessionIDs)
         XCTAssertEqual(harness.cancelledSessionIDs, [try XCTUnwrap(harness.startedSessionIDs.single)])
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
@@ -195,6 +197,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(harness.audioWasDeleted)
         XCTAssertEqual(harness.cancelledSessionIDs, [try XCTUnwrap(harness.startedSessionIDs.single)])
+        XCTAssertEqual(harness.cancelledPreviewSessionIDs, harness.startedSessionIDs)
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
     }
@@ -236,6 +239,129 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 0)
         XCTAssertEqual(harness.coordinator.snapshot.status, .transcribing)
     }
+
+    func testLivePreviewIsVisibleOnlyAndNeverSavesOrCopies() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed")
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishPreview("实时内容")
+        let publishedSnapshotCount = harness.timeline.count
+        harness.publishPreview("实时内容")
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.previewText, "实时内容")
+        XCTAssertEqual(harness.coordinator.snapshot.message, "实时草稿")
+        XCTAssertEqual(harness.timeline.count, publishedSnapshotCount)
+        XCTAssertTrue(harness.savedRecords.isEmpty)
+        XCTAssertEqual(harness.copyCount, 0)
+    }
+
+    func testSenseVoiceSuccessWinsAndPersistsBothCandidates() async throws {
+        let harness = CoordinatorHarness(transcript: "SenseVoice final", streamingText: "Paraformer draft")
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.single?.streamingText, "Paraformer draft")
+        XCTAssertEqual(harness.savedRecords.single?.senseVoiceText, "SenseVoice final")
+        XCTAssertEqual(harness.savedRecords.single?.finalSource, .senseVoice)
+        XCTAssertEqual(harness.copiedTexts, ["SenseVoice final"])
+    }
+
+    func testSenseVoiceFailureUsesNonemptyCompletedStreamingFallback() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "ignored",
+            streamingText: "Paraformer fallback",
+            transcriptionError: TestError.transcription
+        )
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.single?.outcome, .success)
+        XCTAssertEqual(harness.savedRecords.single?.streamingText, "Paraformer fallback")
+        XCTAssertNil(harness.savedRecords.single?.senseVoiceText)
+        XCTAssertEqual(harness.savedRecords.single?.finalSource, .streamingFallback)
+        XCTAssertEqual(harness.copiedTexts, ["Paraformer fallback"])
+    }
+
+    func testSenseVoiceFailureWithoutStreamingResultPersistsFailure() async throws {
+        let harness = CoordinatorHarness(transcript: "ignored", transcriptionError: TestError.transcription)
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.single?.outcome, .transcriptionFailed)
+        XCTAssertNil(harness.savedRecords.single?.finalSource)
+        XCTAssertEqual(harness.copyCount, 0)
+    }
+
+    func testSuccessfulEmptySenseVoiceIsNoSpeechAndNeverUsesStreamingFallback() async throws {
+        let harness = CoordinatorHarness(transcript: "   ", streamingText: "draft should not win")
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.single?.outcome, .noSpeech)
+        XCTAssertEqual(harness.savedRecords.single?.finalSource, .senseVoice)
+        XCTAssertEqual(harness.savedRecords.single?.streamingText, "draft should not win")
+        XCTAssertEqual(harness.savedRecords.single?.senseVoiceText, "   ")
+        XCTAssertEqual(harness.copyCount, 0)
+    }
+
+    func testStalePreviewCannotCrossIntoNewSession() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed")
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.cancelRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishPreview("stale", at: 0)
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.previewText, "")
+    }
+
+    func testNewRecordingOwnsMainWhileOlderSenseVoiceFinishesInSecondaryCard() async throws {
+        let harness = CoordinatorHarness(transcript: "first final", suspendsTranscription: true)
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 0)
+        await harness.waitUntilTranscriptionStarts()
+        await harness.waitUntilPreviewFinishes()
+
+        await harness.coordinator.handle(.toggleRecording)
+
+        XCTAssertEqual(harness.startedSessionIDs.count, 2)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.count, 1)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.status, .transcribing)
+
+        harness.completeTranscription(at: 0)
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
+    }
+
+    func testCancelCleansOnlyCurrentRecordingAndItsPreview() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed")
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.cancelRecording)
+
+        XCTAssertEqual(harness.cancelledPreviewSessionIDs, harness.startedSessionIDs)
+        XCTAssertEqual(harness.cancelledSessionIDs, harness.startedSessionIDs)
+        XCTAssertTrue(harness.savedRecords.isEmpty)
+        XCTAssertEqual(harness.copyCount, 0)
+    }
+
+    func testUnavailablePreviewStillDeliversSenseVoiceFinal() async throws {
+        let harness = CoordinatorHarness(transcript: "SenseVoice only", streamingText: "")
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.single?.senseVoiceText, "SenseVoice only")
+        XCTAssertNil(harness.savedRecords.single?.streamingText)
+        XCTAssertEqual(harness.savedRecords.single?.finalSource, .senseVoice)
+        XCTAssertEqual(harness.copiedTexts, ["SenseVoice only"])
+    }
 }
 
 @MainActor
@@ -250,6 +376,7 @@ private final class CoordinatorHarness {
     }
 
     private let transcript: String
+    private let streamingText: String
     private let transcriptionError: Error?
     private let saveError: Error?
     private let statusWriteError: Error?
@@ -258,6 +385,7 @@ private final class CoordinatorHarness {
     private let copyResult: Bool
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
+    private var onPreview: [(@MainActor (SessionID, String) -> Void)] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
     private let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
@@ -266,6 +394,8 @@ private final class CoordinatorHarness {
     private(set) var cancelCount = 0
     private(set) var startedSessionIDs: [SessionID] = []
     private(set) var cancelledSessionIDs: [SessionID] = []
+    private(set) var cancelledPreviewSessionIDs: [SessionID] = []
+    private(set) var finishedPreviewSessionIDs: [SessionID] = []
     private(set) var audioWasDeleted = false
     private(set) var copyCount = 0
     private(set) var copiedTexts: [String] = []
@@ -277,6 +407,7 @@ private final class CoordinatorHarness {
 
     init(
         transcript: String,
+        streamingText: String = "",
         transcriptionError: Error? = nil,
         saveError: Error? = nil,
         statusWriteError: Error? = nil,
@@ -285,6 +416,7 @@ private final class CoordinatorHarness {
         copyResult: Bool = true
     ) {
         self.transcript = transcript
+        self.streamingText = streamingText
         self.transcriptionError = transcriptionError
         self.saveError = saveError
         self.statusWriteError = statusWriteError
@@ -296,9 +428,10 @@ private final class CoordinatorHarness {
     private func makeCoordinator() -> SessionCoordinator {
         SessionCoordinator(
             dependencies: .init(
-                startRecording: { [weak self] sessionID, onFinished, onFailed in
+                startRecording: { [weak self] sessionID, onPreview, onFinished, onFailed in
                     self?.events.append(.recordingStarted)
                     self?.startedSessionIDs.append(sessionID)
+                    self?.onPreview.append(onPreview)
                     self?.onFinished.append(onFinished)
                     self?.onFailed.append(onFailed)
                 },
@@ -309,6 +442,13 @@ private final class CoordinatorHarness {
                     self?.cancelCount += 1
                     self?.cancelledSessionIDs.append(sessionID)
                     self?.audioWasDeleted = true
+                },
+                finishPreview: { [weak self] sessionID in
+                    self?.finishedPreviewSessionIDs.append(sessionID)
+                    return self?.streamingText ?? ""
+                },
+                cancelPreview: { [weak self] sessionID in
+                    self?.cancelledPreviewSessionIDs.append(sessionID)
                 },
                 transcribe: { [weak self] _ in
                     guard let self else { throw TestError.deallocated }
@@ -372,6 +512,11 @@ private final class CoordinatorHarness {
         await Task.yield()
     }
 
+    func publishPreview(_ text: String, at index: Int? = nil) {
+        let target = index ?? onPreview.count - 1
+        onPreview[target](startedSessionIDs[target], text)
+    }
+
     func failRecording(at index: Int? = nil) async {
         let callback = index.map { onFailed[$0] } ?? onFailed.last
         callback?(RecordedAudio(url: audioURL, durationMilliseconds: 500))
@@ -396,6 +541,14 @@ private final class CoordinatorHarness {
             await Task.yield()
         }
         XCTFail("Timed out waiting for transcription")
+    }
+
+    func waitUntilPreviewFinishes(count: Int = 1) async {
+        for _ in 0..<100 {
+            if finishedPreviewSessionIDs.count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for preview finalization")
     }
 
     func waitForTerminalState() async {

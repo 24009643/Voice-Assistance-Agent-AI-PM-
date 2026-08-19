@@ -22,9 +22,27 @@ struct PlaceholderView: View {
             }
 
             if !state.snapshot.previewText.isEmpty {
+                Text(state.snapshot.status == .recording ? "实时草稿" : "本地结果")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text(state.snapshot.previewText)
                     .textSelection(.enabled)
                     .lineLimit(6)
+            }
+
+            ForEach(state.snapshot.secondaryProcessing) { item in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("本地复核中")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !item.previewText.isEmpty {
+                        Text(item.previewText)
+                            .lineLimit(2)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             }
 
             Button(actionTitle, action: onToggle)
@@ -49,19 +67,16 @@ struct PlaceholderView: View {
     }
 
     private var actionTitle: String {
-        switch state.snapshot.status {
-        case .recording: "Stop recording"
-        case .transcribing, .saving: "Processing…"
-        case .failed: "Unavailable"
-        default: "Start recording"
-        }
+        if modelIsUnavailable { return "Unavailable" }
+        return state.snapshot.status == .recording ? "Stop recording" : "Start recording"
     }
 
     private var allowsToggle: Bool {
-        switch state.snapshot.status {
-        case .transcribing, .saving, .failed: false
-        default: true
-        }
+        !modelIsUnavailable
+    }
+
+    private var modelIsUnavailable: Bool {
+        state.snapshot.status == .failed && state.snapshot.message?.hasPrefix("SenseVoice model is unavailable") == true
     }
 
     private func foregroundColor(for tone: NotchPresentation.Tone) -> Color {

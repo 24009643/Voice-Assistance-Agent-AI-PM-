@@ -81,6 +81,8 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
     let outcome: TranscriptOutcome
     let error: String?
     let finalSource: TranscriptFinalSource?
+    let streamingText: String?
+    let senseVoiceText: String?
     let languageSlice: String?
     let localEvaluationConsent: Bool?
     let reviewState: TranscriptReviewState
@@ -99,6 +101,8 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         case outcome
         case error
         case finalSource
+        case streamingText
+        case senseVoiceText
         case languageSlice
         case localEvaluationConsent
         case reviewState
@@ -118,6 +122,8 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         outcome: TranscriptOutcome = .success,
         error: String? = nil,
         finalSource: TranscriptFinalSource? = .senseVoice,
+        streamingText: String? = nil,
+        senseVoiceText: String? = nil,
         languageSlice: String? = nil,
         localEvaluationConsent: Bool? = nil,
         reviewState: TranscriptReviewState = .unreviewed,
@@ -135,6 +141,8 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         self.outcome = outcome
         self.error = error
         self.finalSource = finalSource
+        self.streamingText = streamingText
+        self.senseVoiceText = senseVoiceText
         self.languageSlice = languageSlice
         self.localEvaluationConsent = localEvaluationConsent
         self.reviewState = reviewState
@@ -155,6 +163,8 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         outcome = try container.decodeIfPresent(TranscriptOutcome.self, forKey: .outcome) ?? .success
         error = try container.decodeIfPresent(String.self, forKey: .error)
         finalSource = try container.decodeIfPresent(TranscriptFinalSource.self, forKey: .finalSource)
+        streamingText = try container.decodeIfPresent(String.self, forKey: .streamingText)
+        senseVoiceText = try container.decodeIfPresent(String.self, forKey: .senseVoiceText)
         languageSlice = try container.decodeIfPresent(String.self, forKey: .languageSlice)
         localEvaluationConsent = try container.decodeIfPresent(Bool.self, forKey: .localEvaluationConsent)
         reviewState = try container.decodeIfPresent(TranscriptReviewState.self, forKey: .reviewState) ?? .unreviewed

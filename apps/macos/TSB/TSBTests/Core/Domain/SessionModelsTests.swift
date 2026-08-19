@@ -22,6 +22,28 @@ final class SessionModelsTests: XCTestCase {
         XCTAssertEqual(decoded.originalText, "嗯 这个想法不能删")
     }
 
+    func testTranscriptRecordPersistsBothASRCandidates() throws {
+        let record = TranscriptRecord(
+            id: SessionID(rawValue: UUID()),
+            ordinal: SessionOrdinal(rawValue: 3),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_200),
+            durationMilliseconds: 900,
+            detectedLanguages: ["zh"],
+            originalText: "SenseVoice final",
+            localCleanedText: "SenseVoice final",
+            edits: [],
+            deliveryStatus: .pending,
+            finalSource: .senseVoice,
+            streamingText: "Paraformer draft",
+            senseVoiceText: "SenseVoice final"
+        )
+
+        let decoded = try JSONDecoder().decode(TranscriptRecord.self, from: JSONEncoder().encode(record))
+
+        XCTAssertEqual(decoded.streamingText, "Paraformer draft")
+        XCTAssertEqual(decoded.senseVoiceText, "SenseVoice final")
+    }
+
     func testTranscriptRecordEncodesRetainedSessionDefaultsAndDecodesLegacyRecords() throws {
         let record = TranscriptRecord(
             id: SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
@@ -46,5 +68,13 @@ final class SessionModelsTests: XCTestCase {
             try JSONDecoder().decode(TranscriptRecord.self, from: encoded),
             record
         )
+
+        var legacyFields = try XCTUnwrap(fields)
+        legacyFields.removeValue(forKey: "streamingText")
+        legacyFields.removeValue(forKey: "senseVoiceText")
+        let legacy = try JSONSerialization.data(withJSONObject: legacyFields)
+        let decodedLegacy = try JSONDecoder().decode(TranscriptRecord.self, from: legacy)
+        XCTAssertNil(decodedLegacy.streamingText)
+        XCTAssertNil(decodedLegacy.senseVoiceText)
     }
 }

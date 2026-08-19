@@ -47,11 +47,18 @@ final class AppController: ObservableObject {
             modelError = "SenseVoice model is unavailable. Set TSB_SENSEVOICE_MODEL_DIR to a validated model directory."
         }
 
+        let previewTranscriber = try? ParaformerPreviewTranscriber(
+            location: ParaformerModelLocation.developmentLocation()
+        )
+        let livePreview = LivePreviewPipeline(transcriber: previewTranscriber)
+
         let coordinator = SessionCoordinator(
             dependencies: .init(
-                startRecording: { sessionID, onFinished, onFailed in
+                startRecording: { sessionID, onPreview, onFinished, onFailed in
+                    let feed = livePreview.start(sessionID: sessionID, onPreview: onPreview)
                     try recorder.start(
                         sessionID: sessionID,
+                        onPCMChunk: feed,
                         onFailed: onFailed,
                         onFinished: onFinished
                     )
@@ -61,6 +68,12 @@ final class AppController: ObservableObject {
                 },
                 cancelRecording: { sessionID in
                     recorder.cancel(sessionID: sessionID)
+                },
+                finishPreview: { sessionID in
+                    await livePreview.finish(sessionID: sessionID)
+                },
+                cancelPreview: { sessionID in
+                    await livePreview.cancel(sessionID: sessionID)
                 },
                 transcribe: { url in
                     guard let transcriber else { throw AppControllerError.modelUnavailable }
@@ -148,9 +161,7 @@ final class AppController: ObservableObject {
             switch state.snapshot.status {
             case .recording:
                 dispatch(intent)
-            case .transcribing, .saving:
-                return
-            case .idle, .delivered, .failed, .cancelled:
+            case .idle, .transcribing, .saving, .delivered, .failed, .cancelled:
                 if let error = escapeMonitor.start() {
                     state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: error.message)
                     notchOverlay?.update(state.snapshot)
