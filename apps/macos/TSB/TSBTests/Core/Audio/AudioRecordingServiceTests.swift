@@ -36,7 +36,7 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: activeURL.path))
     }
 
-    func testFinishIsIdempotentAcrossDelegateAndManualStop() throws {
+    func testManualStopCapturesDurationBeforeResetAndSynchronousDelegateDeliversOnce() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
         let fake = FakeAudioRecorder()
@@ -51,8 +51,11 @@ final class AudioRecordingServiceTests: XCTestCase {
         try service.start(sessionID: fixedSessionID) { recorded in
             results.append(recorded)
         }
-        service.finishActiveRecording(successfully: true)
+        fake.onStop = {
+            service.finishActiveRecording(successfully: true)
+        }
         service.stop()
+        service.finishActiveRecording(successfully: true)
 
         XCTAssertEqual(results, [RecordedAudio(url: try XCTUnwrap(fake.url), durationMilliseconds: 1_250)])
         XCTAssertNil(service.activeURL)
@@ -87,6 +90,7 @@ private final class FakeAudioRecorder: AudioRecording {
     var recordedDuration: TimeInterval?
     var stopCount = 0
     var url: URL?
+    var onStop: (() -> Void)?
 
     func record(forDuration duration: TimeInterval) -> Bool {
         recordedDuration = duration
@@ -95,5 +99,7 @@ private final class FakeAudioRecorder: AudioRecording {
 
     func stop() {
         stopCount += 1
+        currentTime = 0
+        onStop?()
     }
 }
