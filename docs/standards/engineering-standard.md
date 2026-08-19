@@ -1,6 +1,6 @@
 # TSB Engineering Standard
 
-Version: 2.0
+Version: 2.1
 
 Effective date: 2026-08-19
 
@@ -46,7 +46,7 @@ Each session has a non-sensitive `sessionID`; each segment has a monotonically i
 Every work package maps:
 
 ```text
-WP → spec requirement → files → tests → commit → AC → evidence
+WP → ADR → spec requirement → production files → focused tests → AC → evidence → commit
 ```
 
 The mapping lives in one execution record; duplicate status tables are not maintained.
@@ -54,10 +54,12 @@ The mapping lives in one execution record; duplicate status tables are not maint
 ## 6. Privacy and repository hygiene
 
 - API keys are stored only in macOS Keychain.
-- Audio, real transcripts, runtime databases, model weights, DMGs, signing assets and raw benchmark recordings are never committed.
+- Runtime/private audio, real transcripts, runtime databases, model weights, DMGs, signing assets and raw benchmark recordings are never committed. A manually curated public corpus export may enter Git only after explicit item review, consent, provenance and license checks required by the active ADR.
 - Third-party source copied into the product requires a pinned source commit, license and provenance notice.
 - External reference applications are not nested Git repositories inside the product repository.
-- Successful audio is deleted only after transcript persistence succeeds; failed audio follows the approved 24-hour policy.
+- Audio lifecycle follows the active ADR. Under ADR-0004, every non-cancelled Alpha 2 capture remains in its exact local SessionBundle by default; cancellation and user-invoked bundle deletion are the only automatic/product deletion paths.
+
+Network request types must not accept audio, PCM, file URLs, session directories or complete session objects. Training, background publication and audio upload are forbidden paths, not disabled feature flags.
 
 ## 7. Quality gates
 

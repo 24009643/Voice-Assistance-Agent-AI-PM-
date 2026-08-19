@@ -1,5 +1,9 @@
 # Evidence Index
 
+- [`WP-A2-00-DESIGN-FREEZE.md`](WP-A2-00-DESIGN-FREEZE.md): Alpha 2 decision,
+  requirements, plans and acceptance mapping freeze. It proves documentation
+  consistency only, not runtime completion.
+
 This directory contains small, reviewable evidence and indexes for acceptance decisions. Generated Xcode output, model files, audio and raw logs remain ignored.
 
 Evidence file names start with the work package and criterion, for example:
