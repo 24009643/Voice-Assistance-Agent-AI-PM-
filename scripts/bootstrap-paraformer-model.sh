@@ -63,9 +63,41 @@ canonical_target() {
 }
 
 require_external_target() {
-  case "$1" in
-    "$REPO_ROOT"|"$REPO_ROOT"/*) die "target must be outside the Git worktree: $1" ;;
-  esac
+  for location in "$1" "$(dirname "$1")"; do
+    if [ "$(git -C "$location" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
+      die "target must be outside a Git worktree: $1"
+    fi
+  done
+}
+
+require_regular_file() {
+  [ -f "$1" ] && [ ! -L "$1" ] || die "required regular file missing: $1"
+}
+
+require_safe_target_file() {
+  [ ! -e "$1" ] && [ ! -L "$1" ] || require_regular_file "$1"
+}
+
+validate_archive() {
+  archive=$1
+  members="$archive.members"
+  details="$archive.details"
+  tar -tjf "$archive" >"$members" || die "cannot list archive: $archive"
+  tar -tvjf "$archive" >"$details" || die "cannot inspect archive: $archive"
+
+  unsafe=0
+  while IFS= read -r member || [ -n "$member" ]; do
+    case "$member" in
+      /*|..|../*|*/../*|*/..) unsafe=1 ;;
+    esac
+  done <"$members"
+  while IFS= read -r detail || [ -n "$detail" ]; do
+    case "$detail" in
+      l*|h*) unsafe=1 ;;
+    esac
+  done <"$details"
+  rm -f "$members" "$details"
+  [ "$unsafe" -eq 0 ] || die "archive contains unsafe path or link entry"
 }
 
 verify_model() {
@@ -73,9 +105,9 @@ verify_model() {
   [ -d "$dir" ] || die "model directory missing: $dir"
 
   for file in $REQUIRED_FILES; do
-    [ -f "$dir/$file" ] || die "required file missing: $dir/$file"
+    require_regular_file "$dir/$file"
   done
-  [ -f "$dir/manifest.sha256" ] || die "manifest.sha256 missing: $dir/manifest.sha256"
+  require_regular_file "$dir/manifest.sha256"
 
   awk 'END { exit NR == 4 ? 0 : 1 }' "$dir/manifest.sha256" ||
     die "manifest.sha256 must contain exactly the required model files"
@@ -89,6 +121,7 @@ verify_model() {
 
 write_manifest() {
   dir=$1
+  require_safe_target_file "$dir/manifest.sha256"
   (cd "$dir" && shasum -a 256 $REQUIRED_FILES >manifest.sha256)
 }
 
@@ -102,6 +135,9 @@ bootstrap_model() {
       die "target is non-empty; rerun with --confirm-existing: $target"
     fi
   fi
+  for file in $REQUIRED_FILES manifest.sha256; do
+    require_safe_target_file "$target/$file"
+  done
 
   parent=$(dirname "$target")
   mkdir -p "$parent"
@@ -112,12 +148,13 @@ bootstrap_model() {
   mkdir -p "$stage"
 
   curl -fL "$MODEL_URL" -o "$archive"
+  validate_archive "$archive"
   tar -xjf "$archive" -C "$stage"
 
   source_dir="$stage/$MODEL_NAME"
   [ -d "$source_dir" ] || die "archive did not contain expected directory: $MODEL_NAME"
   for file in $REQUIRED_FILES; do
-    [ -f "$source_dir/$file" ] || die "archive missing required file: $file"
+    require_regular_file "$source_dir/$file"
   done
 
   write_manifest "$source_dir"
@@ -153,6 +190,36 @@ self_check() {
   echo changed >"$model_dir/encoder.int8.onnx"
   if sh "$0" --verify-only --target "$model_dir" >/dev/null 2>&1; then
     die "self-check expected checksum mismatch to fail"
+  fi
+
+  malicious_root="$tmp_dir/malicious"
+  malicious_model="$malicious_root/$MODEL_NAME"
+  mkdir -p "$malicious_model"
+  echo encoder >"$malicious_model/encoder-target"
+  ln -s encoder-target "$malicious_model/encoder.int8.onnx"
+  for file in decoder.int8.onnx tokens.txt LICENSE; do
+    echo "$file" >"$malicious_model/$file"
+  done
+  malicious_archive="$tmp_dir/malicious.tar.bz2"
+  tar -cjf "$malicious_archive" -C "$malicious_root" "$MODEL_NAME"
+  fake_bin="$tmp_dir/fake-bin"
+  mkdir -p "$fake_bin"
+  printf '%s\n' '#!/bin/sh' 'set -eu' 'while [ "$#" -gt 0 ]; do' '  if [ "$1" = "-o" ]; then' '    cp "$PARAFORMER_TEST_ARCHIVE" "$2"' '    exit 0' '  fi' '  shift' 'done' 'exit 2' >"$fake_bin/curl"
+  chmod +x "$fake_bin/curl"
+  if PARAFORMER_TEST_ARCHIVE="$malicious_archive" PATH="$fake_bin:$PATH" sh "$0" --target "$tmp_dir/malicious-target" >/dev/null 2>&1; then
+    die "self-check expected malicious link archive to fail"
+  fi
+
+  other_repo="$tmp_dir/other-repo"
+  git init -q "$other_repo"
+  other_model="$other_repo/model"
+  mkdir -p "$other_model"
+  for file in $REQUIRED_FILES; do
+    echo "$file" >"$other_model/$file"
+  done
+  (cd "$other_model" && shasum -a 256 $REQUIRED_FILES >manifest.sha256)
+  if sh "$0" --verify-only --target "$other_model" >/dev/null 2>&1; then
+    die "self-check expected target in another Git worktree to fail"
   fi
 
   non_empty="$tmp_dir/non-empty"
