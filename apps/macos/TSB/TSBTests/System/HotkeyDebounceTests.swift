@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import XCTest
 @testable import TSB
 
@@ -44,6 +45,17 @@ final class HotkeyDebounceTests: XCTestCase {
     func testOnlyOptionSpaceMatchesTheLocalShortcut() {
         XCTAssertTrue(LocalHotkeyEventSource.matchesHotkey(keyEvent(modifiers: .option)))
         XCTAssertFalse(LocalHotkeyEventSource.matchesHotkey(keyEvent(modifiers: [.option, .command])))
+    }
+
+    func testCarbonOptionSpaceDeliversIntentWhenNoWindowIsFocused() {
+        let source = CarbonHotkeyEventSource(keyCode: UInt32(kVK_Space), modifiers: UInt32(optionKey))
+        let recorder = IntentRecorder()
+        let service = HotkeyService(eventSource: source, onIntent: recorder.record)
+
+        service.start()
+        source.handle(eventKind: UInt32(kEventHotKeyPressed))
+
+        XCTAssertEqual(recorder.intents, [.toggleRecording])
     }
 
     private func keyEvent(modifiers: NSEvent.ModifierFlags) -> NSEvent {

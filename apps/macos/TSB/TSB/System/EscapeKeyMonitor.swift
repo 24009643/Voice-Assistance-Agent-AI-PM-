@@ -6,9 +6,22 @@ import AppKit
 final class EscapeKeyMonitor {
     var onEscapePressed: (() -> Void)?
 
+    private let eventSource: HotkeyEventSource?
     private let monitorStorage = MonitorStorage()
 
+    init(eventSource: HotkeyEventSource? = nil) {
+        self.eventSource = eventSource
+    }
+
     func start() {
+        if let eventSource {
+            eventSource.onKeyDown = { [weak self] in
+                self?.onEscapePressed?()
+            }
+            eventSource.start()
+            return
+        }
+
         guard monitorStorage.monitors.isEmpty else { return }
         guard let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             guard let self else { return event }
@@ -18,6 +31,11 @@ final class EscapeKeyMonitor {
     }
 
     func stop() {
+        if let eventSource {
+            eventSource.onKeyDown = nil
+            eventSource.stop()
+            return
+        }
         monitorStorage.removeAll()
     }
 

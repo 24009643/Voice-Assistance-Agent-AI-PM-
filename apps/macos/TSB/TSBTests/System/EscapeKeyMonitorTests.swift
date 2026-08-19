@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import XCTest
 @testable import TSB
 
@@ -17,6 +18,20 @@ final class EscapeKeyMonitorTests: XCTestCase {
         monitor.onEscapePressed = { callbackCount += 1 }
 
         XCTAssertNil(monitor.handle(escapeEvent()))
+        XCTAssertEqual(callbackCount, 1)
+    }
+
+    func testCarbonEscapePathDeliversOnlyWhileMonitorIsStarted() {
+        let source = CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
+        let monitor = EscapeKeyMonitor(eventSource: source)
+        var callbackCount = 0
+        monitor.onEscapePressed = { callbackCount += 1 }
+
+        monitor.start()
+        source.handle(eventKind: UInt32(kEventHotKeyPressed))
+        monitor.stop()
+        source.handle(eventKind: UInt32(kEventHotKeyPressed))
+
         XCTAssertEqual(callbackCount, 1)
     }
 
