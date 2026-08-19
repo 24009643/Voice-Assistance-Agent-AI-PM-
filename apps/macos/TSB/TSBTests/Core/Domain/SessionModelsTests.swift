@@ -21,4 +21,30 @@ final class SessionModelsTests: XCTestCase {
         XCTAssertEqual(decoded, record)
         XCTAssertEqual(decoded.originalText, "嗯 这个想法不能删")
     }
+
+    func testTranscriptRecordEncodesRetainedSessionDefaultsAndDecodesLegacyRecords() throws {
+        let record = TranscriptRecord(
+            id: SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
+            ordinal: SessionOrdinal(rawValue: 2),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_100),
+            durationMilliseconds: 800,
+            detectedLanguages: ["en"],
+            originalText: "keep this",
+            localCleanedText: "keep this",
+            edits: [],
+            deliveryStatus: .pending
+        )
+        let encoded = try JSONEncoder().encode(record)
+        let fields = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+
+        XCTAssertEqual(fields?["outcome"] as? String, "success")
+        XCTAssertEqual(fields?["finalSource"] as? String, "senseVoice")
+        XCTAssertEqual(fields?["localEvaluationConsent"] as? Bool, true)
+        XCTAssertEqual(fields?["reviewState"] as? String, "unreviewed")
+        XCTAssertEqual(fields?["intendedUse"] as? String, "localEvaluation")
+        XCTAssertEqual(
+            try JSONDecoder().decode(TranscriptRecord.self, from: encoded),
+            record
+        )
+    }
 }
