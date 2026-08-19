@@ -3,6 +3,9 @@
 - [`WP-A2-00-DESIGN-FREEZE.md`](WP-A2-00-DESIGN-FREEZE.md): Alpha 2 decision,
   requirements, plans and acceptance mapping freeze. It proves documentation
   consistency only, not runtime completion.
+- [`WP-A2-01-PARAFORMER.md`](WP-A2-01-PARAFORMER.md): bounded online
+  Paraformer model provenance and release-probe evidence; it does not pass the
+  product acceptance criteria.
 
 This directory contains small, reviewable evidence and indexes for acceptance decisions. Generated Xcode output, model files, audio and raw logs remain ignored.
 

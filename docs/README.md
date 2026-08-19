@@ -20,6 +20,8 @@ Each execution record links one work package, its commits, acceptance criteria a
 
 ## Current execution and evidence
 
+- [WP-A2-01 Paraformer execution record](execution/EXE-WP-A2-01.md) — bounded online-ASR technical probe; product acceptance remains in progress.
+- [WP-A2-01 Paraformer evidence](../evidence/WP-A2-01-PARAFORMER.md) — model provenance and release-probe measurements without raw audio or transcripts.
 - [WP-03 Alpha local dictation execution record](execution/EXE-WP-03.md) — gate is pending until a user performs the real microphone-to-clipboard smoke.
 - [WP-03 Alpha local-chain evidence](../evidence/WP-03-ALPHA-local-chain.md) — automated verification and the shortest manual acceptance path.
 - [Alpha 2 canonical design](specs/tsb-v0.1-alpha2-design.md) — active requirements and exclusions.
