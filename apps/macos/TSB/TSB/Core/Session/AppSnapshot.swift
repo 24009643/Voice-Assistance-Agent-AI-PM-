@@ -13,18 +13,21 @@ struct AppSnapshot: Equatable, Sendable {
     let previewText: String
     let message: String?
     let secondaryProcessing: [SecondaryProcessingSnapshot]
+    let canStartRecording: Bool
 
     init(
         status: SessionStatus,
         elapsedMilliseconds: Int,
         previewText: String,
         message: String?,
-        secondaryProcessing: [SecondaryProcessingSnapshot] = []
+        secondaryProcessing: [SecondaryProcessingSnapshot] = [],
+        canStartRecording: Bool = true
     ) {
         self.status = status
         self.elapsedMilliseconds = elapsedMilliseconds
         self.previewText = previewText
         self.message = message
         self.secondaryProcessing = secondaryProcessing
+        self.canStartRecording = canStartRecording
     }
 }

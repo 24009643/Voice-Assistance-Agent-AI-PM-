@@ -91,6 +91,11 @@ final class AppController: ObservableObject {
                 copy: { text in
                     clipboard.copy(text)
                 },
+                scheduleSecondaryRemoval: { delay, action in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                        action()
+                    }
+                }
             ),
             onSnapshot: { snapshot in
                 state.snapshot = snapshot
@@ -162,12 +167,37 @@ final class AppController: ObservableObject {
             case .recording:
                 dispatch(intent)
             case .idle, .transcribing, .saving, .delivered, .failed, .cancelled:
-                if let error = escapeMonitor.start() {
-                    state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: error.message)
-                    notchOverlay?.update(state.snapshot)
-                    return
-                }
-                dispatch(intent)
+                guard state.snapshot.canStartRecording else { return }
+                dispatchRecordingStart()
+            }
+        }
+    }
+
+    static func startRecordingAfterEscapePreflight(
+        startEscape: @MainActor () -> HotkeyStartError?,
+        startRecording: @MainActor () -> Void
+    ) -> HotkeyStartError? {
+        if let error = startEscape() { return error }
+        startRecording()
+        return nil
+    }
+
+    private func dispatchRecordingStart() {
+        intentTask?.cancel()
+        intentTask = Task { @MainActor [weak self] in
+            guard !Task.isCancelled, let self else { return }
+            let error = Self.startRecordingAfterEscapePreflight(
+                startEscape: { self.escapeMonitor.start() },
+                startRecording: { self.coordinator.handleToggleRecording() }
+            )
+            if let error {
+                state.snapshot = AppSnapshot(
+                    status: .failed,
+                    elapsedMilliseconds: 0,
+                    previewText: "",
+                    message: error.message
+                )
+                notchOverlay?.update(state.snapshot)
             }
         }
     }

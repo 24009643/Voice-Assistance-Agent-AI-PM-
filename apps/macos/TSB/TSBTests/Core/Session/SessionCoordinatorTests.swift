@@ -337,7 +337,104 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.waitForDelivery()
 
         XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.status, .delivered)
+    }
+
+    func testOlderDeliveredSessionStaysSecondaryThenRemovesOnlyItself() async throws {
+        let harness = CoordinatorHarness(transcript: "first final", suspendsTranscription: true)
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 0)
+        await harness.waitUntilTranscriptionStarts()
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishPreview("new live draft", at: 1)
+        harness.completeTranscription(at: 0)
+        await harness.waitUntilSecondaryRemovalScheduled()
+
+        XCTAssertEqual(harness.scheduledSecondaryRemovals.single?.delay, 1.2)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.previewText, "new live draft")
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.status, .delivered)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.message, "已复制 · 按 ⌘V 粘贴")
+
+        harness.runScheduledSecondaryRemoval(at: 0)
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.previewText, "new live draft")
         XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
+    }
+
+    func testOlderFailedSessionStaysSecondaryWithFailureFeedback() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "first final",
+            suspendsTranscription: true,
+            copyResult: false
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 0)
+        await harness.waitUntilTranscriptionStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        harness.completeTranscription(at: 0)
+        await harness.waitUntilSecondaryRemovalScheduled()
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.status, .failed)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.message, "Could not copy to clipboard.")
+    }
+
+    func testSecondaryExpiryRemovesOnlyItsSessionAndPreservesNewerCard() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed", suspendsTranscription: true)
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 0)
+        await harness.waitUntilTranscriptionStarts(count: 1)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilTranscriptionStarts(count: 2)
+        await harness.coordinator.handle(.toggleRecording)
+
+        harness.completeTranscription(at: 0)
+        await harness.waitUntilSecondaryRemovalScheduled(count: 1)
+        harness.completeTranscription(at: 1)
+        await harness.waitUntilSecondaryRemovalScheduled(count: 2)
+        let newerSessionID = harness.startedSessionIDs[1]
+
+        harness.runScheduledSecondaryRemoval(at: 0)
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.map(\.id), [newerSessionID])
+    }
+
+    func testAtMostThreeProcessingSessionsAndCapacityReturnsAfterCompletion() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed", suspendsTranscription: true)
+
+        for index in 0..<3 {
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.finishRecording(at: index)
+            await harness.waitUntilTranscriptionStarts(count: index + 1)
+        }
+
+        XCTAssertFalse(harness.coordinator.snapshot.canStartRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        XCTAssertEqual(harness.startedSessionIDs.count, 3)
+
+        harness.completeTranscription(at: 0)
+        await harness.waitUntilRecordingCapacityReturns()
+        await harness.coordinator.handle(.toggleRecording)
+
+        XCTAssertEqual(harness.startedSessionIDs.count, 4)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+
+        await harness.coordinator.handle(.cancelRecording)
+        harness.completeTranscription(at: 1)
+        harness.completeTranscription(at: 2)
     }
 
     func testCancelCleansOnlyCurrentRecordingAndItsPreview() async throws {
@@ -402,6 +499,7 @@ private final class CoordinatorHarness {
     private(set) var savedRecords: [TranscriptRecord] = []
     private(set) var deliveryStatuses: [DeliveryStatus] = []
     private(set) var timeline: [String] = []
+    private(set) var scheduledSecondaryRemovals: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
 
     private(set) lazy var coordinator = makeCoordinator()
 
@@ -484,6 +582,9 @@ private final class CoordinatorHarness {
                     self?.copiedTexts.append(text)
                     return self?.copyResult ?? false
                 },
+                scheduleSecondaryRemoval: { [weak self] delay, action in
+                    self?.scheduledSecondaryRemovals.append((delay, action))
+                }
             ),
             onSnapshot: { [weak self] snapshot in
                 self?.timeline.append("snapshot:\(snapshot.status.rawValue)")
@@ -549,6 +650,26 @@ private final class CoordinatorHarness {
             await Task.yield()
         }
         XCTFail("Timed out waiting for preview finalization")
+    }
+
+    func waitUntilSecondaryRemovalScheduled(count: Int = 1) async {
+        for _ in 0..<100 {
+            if scheduledSecondaryRemovals.count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for secondary removal scheduling")
+    }
+
+    func waitUntilRecordingCapacityReturns() async {
+        for _ in 0..<100 {
+            if coordinator.snapshot.canStartRecording { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for recording capacity")
+    }
+
+    func runScheduledSecondaryRemoval(at index: Int) {
+        scheduledSecondaryRemovals[index].action()
     }
 
     func waitForTerminalState() async {

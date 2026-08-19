@@ -18,6 +18,10 @@ final class SessionCoordinator {
         let save: @MainActor (TranscriptRecord) throws -> Void
         let updateDeliveryStatus: @MainActor (SessionID, DeliveryStatus) throws -> Void
         let copy: @MainActor (String) -> Bool
+        let scheduleSecondaryRemoval: @MainActor (
+            TimeInterval,
+            @escaping @MainActor () -> Void
+        ) -> Void
     }
 
     private struct Session {
@@ -30,6 +34,7 @@ final class SessionCoordinator {
         var message = "Recording"
         var stopRequested = false
         var deliverySucceeded: Bool?
+        var secondaryRemovalScheduled = false
 
         var isProcessing: Bool { status == .transcribing || status == .saving }
     }
@@ -54,20 +59,28 @@ final class SessionCoordinator {
     func handle(_ intent: UserIntent) async {
         switch intent {
         case .toggleRecording:
-            if let recordingSessionID {
-                guard var session = sessions[recordingSessionID], !session.stopRequested else { return }
-                session.stopRequested = true
-                sessions[recordingSessionID] = session
-                dependencies.stopRecording()
-            } else {
-                await startRecording()
-            }
+            handleToggleRecording()
         case .cancelRecording:
             await cancelCurrentSession()
         }
     }
 
-    private func startRecording() async {
+    func handleToggleRecording() {
+        if let recordingSessionID {
+            guard var session = sessions[recordingSessionID], !session.stopRequested else { return }
+            session.stopRequested = true
+            sessions[recordingSessionID] = session
+            dependencies.stopRecording()
+        } else {
+            startRecording()
+        }
+    }
+
+    private func startRecording() {
+        guard processingSessionCount < 3 else {
+            publishSnapshot()
+            return
+        }
         if let mainSessionID, sessions[mainSessionID]?.isProcessing != true {
             sessions.removeValue(forKey: mainSessionID)
         }
@@ -103,7 +116,9 @@ final class SessionCoordinator {
         } catch {
             recordingSessionID = nil
             sessions.removeValue(forKey: session.id)
-            await dependencies.cancelPreview(session.id)
+            Task { @MainActor [dependencies] in
+                await dependencies.cancelPreview(session.id)
+            }
             snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: "Could not start recording.")
         }
     }
@@ -335,8 +350,20 @@ final class SessionCoordinator {
 
     private func completeProcessing(_ sessionID: SessionID) {
         processingTasks.removeValue(forKey: sessionID)
-        if mainSessionID != sessionID {
-            sessions.removeValue(forKey: sessionID)
+        if mainSessionID != sessionID,
+           var session = sessions[sessionID],
+           !session.isProcessing,
+           !session.secondaryRemovalScheduled {
+            session.secondaryRemovalScheduled = true
+            let terminalStatus = session.status
+            sessions[sessionID] = session
+            dependencies.scheduleSecondaryRemoval(1.2) { [weak self] in
+                guard let self,
+                      self.mainSessionID != sessionID,
+                      self.sessions[sessionID]?.status == terminalStatus else { return }
+                self.sessions.removeValue(forKey: sessionID)
+                self.publishSnapshot()
+            }
         }
         publishSnapshot()
     }
@@ -348,7 +375,7 @@ final class SessionCoordinator {
     private func publishSnapshot() {
         guard let mainSessionID, let main = sessions[mainSessionID] else { return }
         let secondary = sessions.values
-            .filter { $0.id != mainSessionID && $0.isProcessing }
+            .filter { $0.id != mainSessionID }
             .sorted { $0.ordinal > $1.ordinal }
             .prefix(3)
             .map {
@@ -364,8 +391,13 @@ final class SessionCoordinator {
             elapsedMilliseconds: main.durationMilliseconds,
             previewText: main.previewText,
             message: main.message,
-            secondaryProcessing: Array(secondary)
+            secondaryProcessing: Array(secondary),
+            canStartRecording: processingSessionCount < 3
         )
+    }
+
+    private var processingSessionCount: Int {
+        sessions.values.lazy.filter(\.isProcessing).count
     }
 
     private func nonempty(_ text: String) -> String? {

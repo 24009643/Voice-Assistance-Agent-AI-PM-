@@ -32,11 +32,11 @@ struct PlaceholderView: View {
 
             ForEach(state.snapshot.secondaryProcessing) { item in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("本地复核中")
+                    Text(secondaryTitle(for: item))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if !item.previewText.isEmpty {
-                        Text(item.previewText)
+                        .foregroundStyle(secondaryColor(for: item))
+                    if !secondaryText(for: item).isEmpty {
+                        Text(secondaryText(for: item))
                             .lineLimit(2)
                     }
                 }
@@ -68,11 +68,15 @@ struct PlaceholderView: View {
 
     private var actionTitle: String {
         if modelIsUnavailable { return "Unavailable" }
+        if state.snapshot.status != .recording && !state.snapshot.canStartRecording {
+            return "3 reviews in progress"
+        }
         return state.snapshot.status == .recording ? "Stop recording" : "Start recording"
     }
 
     private var allowsToggle: Bool {
         !modelIsUnavailable
+            && (state.snapshot.status == .recording || state.snapshot.canStartRecording)
     }
 
     private var modelIsUnavailable: Bool {
@@ -84,6 +88,29 @@ struct PlaceholderView: View {
         case .neutral: .secondary
         case .success: .green
         case .warning: .orange
+        }
+    }
+
+    private func secondaryTitle(for item: SecondaryProcessingSnapshot) -> String {
+        switch item.status {
+        case .delivered: "已完成"
+        case .failed: "需要处理"
+        default: "本地复核中"
+        }
+    }
+
+    private func secondaryText(for item: SecondaryProcessingSnapshot) -> String {
+        switch item.status {
+        case .delivered, .failed: item.message
+        default: item.previewText
+        }
+    }
+
+    private func secondaryColor(for item: SecondaryProcessingSnapshot) -> Color {
+        switch item.status {
+        case .delivered: .green
+        case .failed: .orange
+        default: .secondary
         }
     }
 }

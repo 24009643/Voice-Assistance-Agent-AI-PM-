@@ -2,7 +2,10 @@ import AppKit
 
 /// Adapted from OpenDictation/Views/Notch/NotchWindow.swift (MIT, Copyright (c) 2025 Kenny).
 final class NotchWindow: NSPanel {
+    private let targetScreen: NSScreen
+
     init(screen: NSScreen) {
+        targetScreen = screen
         let frame = screen.frame
         let height = screen.safeAreaInsets.top
         super.init(
@@ -24,4 +27,17 @@ final class NotchWindow: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    func resize(height: CGFloat) {
+        let screenFrame = targetScreen.frame
+        setFrame(
+            CGRect(
+                x: screenFrame.minX,
+                y: screenFrame.maxY - height,
+                width: screenFrame.width,
+                height: height
+            ),
+            display: true
+        )
+    }
 }
