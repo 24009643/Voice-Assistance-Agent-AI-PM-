@@ -1,19 +1,28 @@
-# EXE-WP-02: SenseVoice G0 foundation and partial smoke
+# EXE-WP-02: SenseVoice G0 foundation and acceptance
 
 - Plan: `docs/plans/2026-08-19-g0-foundation-and-sensevoice-probe.md`
 - Owner: GPT-5.5 probe/bootstrap, Luna evidence, Sol integration
 - Reviewer: independent Sol reviewers
-- Status: partial smoke recorded; G0 not passed
-- Branch: `codex/wp-02-g0-run`
+- Status: G0 passed; ADR-0002 Accepted
+- Branch: `codex/wp-03-alpha`
 - Evidence: `evidence/WP-02-AC-ASR-001-sensevoice-probe.md`
 - Started: 2026-08-19
 - Updated: 2026-08-19
+
+## Final G0 update
+
+- Added the reproducible public corpus in ADR-0003: 20 Mandarin, 20 Cantonese, 20 real mixed clips and four stability-only long composites.
+- The initial one-shot long run exposed the root cause: 240 seconds exceeded 2 GiB; 600 seconds used about 6.78 GiB and returned only 30 characters.
+- Added tested, frame-preserving, sequential 30-second inference chunks. The repeated 600-second run used `998064128` bytes active peak delta, RTF `0.0275`, and returned 1661 characters.
+- Seven independent target-Mac runs exited successfully with no residual process. Exact metrics and hashes are in `evidence/WP-02-AC-ASR-001-sensevoice-probe.md`.
+- Raw CER is recorded, not hidden: Mandarin `0.046`, Cantonese `0.382`, mixed `0.212`. Cantonese remains an RC/Golden Set risk.
+- ADR-0002 is Accepted under the written technical G0 criteria; WP-03 is unblocked.
 
 ## Files changed
 
 - Added the SenseVoice G0 evidence record.
 - Added this execution record.
-- Linked the pending evidence in `docs/decisions/ADR-0002-sensevoice-baseline.md`; ADR status remains Proposed.
+- The earlier commit linked partial evidence while ADR-0002 was Proposed; the final update now records acceptance.
 - Recorded the first real official-short-sample smoke without committing model weights, audio, raw transcripts or generated result files.
 
 ## Commands and results
@@ -42,11 +51,11 @@
 - Conservative total including SwiftPM-copied static archives plus all model-directory regular files: `419494772` bytes.
 - `otool -L` for the release probe reported no non-system dynamic dependencies.
 
-## Still not G0
+## Superseded partial-smoke status
 
-The required user corpus is absent: Mandarin, Cantonese, mixed Chinese-English, three 3-5 minute samples and one 10 minute sample. Long-audio resource release, truncation and target-corpus accuracy remain unmeasured. VAD model/version/license/SHA-256 are not selected or executed.
+At the time of the earlier smoke, the required Mandarin, Cantonese, mixed Chinese-English and long-audio evidence was absent. VAD remains intentionally unselected because it is outside G0.
 
-ADR-0002 remains `Proposed`; no G0 pass tag is issued; WP-03 must not begin.
+This section describes the earlier one-shot state and is superseded by the final G0 update above.
 
 ## Rollback
 

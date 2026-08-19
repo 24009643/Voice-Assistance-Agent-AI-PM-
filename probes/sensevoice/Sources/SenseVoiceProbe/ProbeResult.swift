@@ -10,6 +10,7 @@ struct SampleResult: Encodable {
     let emotion: String?
     let latencyMilliseconds: Int
     let audioDurationSeconds: Double?
+    let chunkCount: Int
 }
 
 struct ProcessMetrics: Encodable {
@@ -17,5 +18,7 @@ struct ProcessMetrics: Encodable {
     let sampleCount: Int
     let coldLoadMilliseconds: Int
     let totalElapsedMilliseconds: Int
+    let baselineRSSBytes: UInt64
     let peakRSSBytes: UInt64
+    let activePeakRSSDeltaBytes: UInt64
 }

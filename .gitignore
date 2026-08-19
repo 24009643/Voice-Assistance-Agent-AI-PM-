@@ -8,6 +8,8 @@ evidence/raw/
 *.xcuserstate
 xcuserdata/
 .swiftpm/
+__pycache__/
+*.pyc
 
 # Local secrets
 *.env

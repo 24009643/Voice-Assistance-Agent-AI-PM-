@@ -1,114 +1,83 @@
 # WP-02 / AC-ASR-001 SenseVoice G0 gate evidence
 
 - Date: 2026-08-19
-- Device: target Mac, Apple M5 Pro, arm64, 48 GiB memory (`51539607552` bytes)
-- Branch: `codex/wp-02-g0-run`
-- Tested commit before this evidence update: `f2b7c3e`
-- Gate result: **Partial smoke only; G0 not passed**
+- Device: Apple M5 Pro, arm64, 48 GiB memory (`51539607552` bytes)
+- Branch: `codex/wp-03-alpha`
+- Tested commit: `934da7c`
+- Gate result: **PASS — technical G0 only**
 
-## Expected
+## Scope
 
-- The pinned sherpa-onnx 1.13.6 and SenseVoiceSmall int8 candidate decode Mandarin, Cantonese and mixed Chinese-English samples without crash or truncation.
-- Three-to-five-minute and ten-minute samples complete and release resources.
-- Real-time factor is at most 0.5; ASR active peak memory increase is at most 2 GiB; runtime plus model is at most 500 MB.
-- Runtime, model, license and SHA-256 values are recorded without committing model weights, audio or raw output.
+The pinned SenseVoiceSmall int8 model and sherpa-onnx runtime were tested against 20 Mandarin FLEURS clips, 20 Cantonese FLEURS clips, 20 ASCEND clips labeled `mixed`, and deterministic 180/240/300/600 second composites. Public corpus selection and licenses are frozen in `ADR-0003`.
 
-## Scope ruling
+The 60 short clips may be used for accuracy and performance observations. The four derived long files are licensed CC-BY-SA-4.0 and are valid only for stability, truncation, memory and RTF checks; they are not natural long-dictation accuracy evidence. Audio, references, raw transcripts, raw metrics and model weights remain in ignored `artifacts/`.
 
-The real pinned model was downloaded and verified, and the existing probe decoded the official short sample WAV files packaged by k2-fsa with the pinned model archive. This is only a smoke run. The required user corpus is still absent: Mandarin, Cantonese, mixed Chinese-English, three 3-5 minute samples and one 10 minute sample. G0 therefore remains **not passed**, ADR-0002 remains `Proposed`, no pass tag is authorized and WP-03 must not begin.
+## Frozen model and runtime
 
-Raw probe JSON, raw transcripts, audio and model files are stored only under ignored `artifacts/`.
+- sherpa-onnx: `1.13.6`; onnxruntime-libs: `1.27.1`.
+- Recognizer: `language=auto`, ITN enabled, CPU, one thread, greedy search.
+- Input handling: whole WAV loaded locally, every frame preserved, sequential non-overlapping 30-second inference chunks, newline join.
+- Model directory: ignored `artifacts/models/sensevoice-2024-07-17-int8/`.
+- `model.int8.onnx`: SHA-256 `c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51`.
+- `tokens.txt`: SHA-256 `f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc`.
+- `LICENSE`: SHA-256 `221c6df10b0931a5629adad671ea48fb7747e034c414b6d2bfa275bc3dd4ea17`.
+- Release probe: `39086768` bytes; SHA-256 `26ac5315015190f80f5fa3f8addb433ccbac9b5e03c80b6463ceb2c1391f376c`.
+- Model regular files: `240506668` bytes.
+- Conservative runtime binaries plus model: `419499380` bytes, below the 500 MB gate.
 
-## Official sample source
+## Performance and stability
 
-- Documentation: `https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html`
-- Release archive: `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2`
-- Archive members copied to ignored fixtures: `test_wavs/en.wav`, `test_wavs/ja.wav`, `test_wavs/ko.wav`, `test_wavs/yue.wav`, `test_wavs/zh.wav`.
+| Run | Samples | Audio seconds | Chunks | Max RTF | Active peak RSS delta | Output chars |
+|---|---:|---:|---:|---:|---:|---:|
+| Mandarin | 20 | 247.56 | 20 | 0.0271 | 964116480 B | 694 |
+| Cantonese | 20 | 239.64 | 20 | 0.0272 | 924499968 B | 692 |
+| Mixed | 20 | 48.26 | 20 | 0.0373 | 896024576 B | 342 |
+| 180 s composite | 1 | 180 | 6 | 0.0275 | 958644224 B | 385 |
+| 240 s composite | 1 | 240 | 8 | 0.0274 | 974602240 B | 586 |
+| 300 s composite | 1 | 300 | 10 | 0.0276 | 978501632 B | 739 |
+| 600 s composite | 1 | 600 | 20 | 0.0275 | 998064128 B | 1661 |
 
-All five copied WAV files were valid RIFF/WAVE PCM, 16-bit, mono, 16 kHz.
+- All seven independent processes exited `0`, wrote a complete process record and left no residual `SenseVoiceProbe` process.
+- Maximum observed RTF was `0.0373`, below `0.5`.
+- Maximum active peak RSS delta was `998064128` bytes, below 2 GiB.
+- Chunk counts equal `ceil(duration / 30 seconds)` for every long sample. Unit tests prove chunking preserves all frames in order.
+- Long output length grows with duration and the 600-second run produced 1661 characters; the pre-fix one-shot run produced only 30 characters and used about 6.78 GiB active memory. The bounded path removes that truncation/memory failure.
 
-## Model and runtime
+## Accuracy observations, not a G0 quality pass
 
-- sherpa-onnx SwiftPM dependency: version `1.13.6`, revision `1cb484af5e69d3c7803c1eb0b3b5ab8041e0e911`.
-- onnxruntime-libs SwiftPM dependency: version `1.27.1`, revision `1fbef5f2a1b5c2691fe9411243f3a8afe9a0b169`.
-- Recognizer settings: `language=auto`, `useITN=true`, CPU provider, greedy search.
-- Model directory: `artifacts/models/sensevoice-2024-07-17-int8/`.
-- Model manifest SHA-256: `311ab4b34975ba648d3d64a5a1e70bda61ca464573b8829bd5ae7c4c6beefa8e`.
-- `model.int8.onnx`: `239233841` bytes, SHA-256 `c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51`.
-- `tokens.txt`: `315894` bytes, SHA-256 `f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc`.
-- `LICENSE`: `71` bytes, SHA-256 `221c6df10b0931a5629adad671ea48fb7747e034c414b6d2bfa275bc3dd4ea17`.
-- Release probe executable: `39082160` bytes, SHA-256 `57313ba9d45e75be02268685bc3c6ed9604d8239991943359a2c321b6ad4efe8`.
-- `otool -L` for the release probe reported no non-system dynamic dependencies.
-- Probe executable plus all model-directory regular files: `279588828` bytes.
-- Conservative total including SwiftPM-copied static archives plus all model-directory regular files: `419494772` bytes.
+Normalization lowercased text and removed punctuation/whitespace; it did not convert traditional and simplified Chinese.
 
-## Smoke measurements
+| Slice | Raw normalized CER | Language tags |
+|---|---:|---|
+| Mandarin | 0.046 | 20/20 `<|zh|>` |
+| Cantonese | 0.382 | 20/20 `<|yue|>` |
+| Mixed Chinese-English | 0.212 | 12 zh, 5 en, 2 yue, 1 ko |
 
-Raw output: `artifacts/results/g0-official-short.jsonl`, SHA-256 `774ac69f2022bf28ac53b39c6662fa0508f75f89da5abcef6f4a34cb48e69fbb`.
+The Cantonese result is a serious product risk. Traditional reference versus simplified output inflates the raw number, but does not explain it away. G0's written hard gate requires the slice to decode without crash/truncation and records accuracy for later comparison; it does not define a CER pass threshold. RC must use the user's consented Golden Set and the Whisper Tiny baseline before product-quality acceptance.
 
-Timing stderr: `artifacts/results/g0-official-short.time.txt`, SHA-256 `a870324e6a8b9ea7414951d2499aaa5c1eee398fb8a8789952ef91ebb0d64919`.
-
-| Sample | Expected language | Detected language | Duration seconds | Latency ms | RTF |
-| --- | --- | --- | ---: | ---: | ---: |
-| `sensevoice-official-en` | `en` | `<|en|>` | 7.152 | 200 | 0.027964 |
-| `sensevoice-official-ja` | `ja` | `<|ja|>` | 7.200 | 189 | 0.026250 |
-| `sensevoice-official-ko` | `ko` | `<|ko|>` | 4.608 | 126 | 0.027344 |
-| `sensevoice-official-yue` | `yue` | `<|yue|>` | 5.148 | 138 | 0.026807 |
-| `sensevoice-official-zh` | `zh` | `<|zh|>` | 5.592 | 151 | 0.027003 |
-
-- Probe exit: `0`.
-- Residual `SenseVoiceProbe` process after run: none.
-- Cold load: `392` ms.
-- Total elapsed inside probe: `1204` ms.
-- `/usr/bin/time -l` elapsed: `1.23 real`, `1.12 user`, `0.09 sys`.
-- Absolute process peak RSS: `907821056` bytes, matching the probe JSON and `/usr/bin/time -l`.
-
-The peak RSS value is absolute process peak RSS, not an ASR active-memory delta. Because the absolute peak is below `2147483648` bytes, the active delta for this short-process smoke cannot exceed 2 GiB, but this is still not a target-corpus G0 pass.
-
-## Commands and results
+## Reproduction and raw hashes
 
 ```text
-scripts/bootstrap-sensevoice-model.sh
-result: passed; bootstrapped the pinned official model.
+python3 -m unittest scripts/tests/test_prepare_g0_corpus.py
+result: 5 tests passed.
 
-scripts/bootstrap-sensevoice-model.sh --verify-only
-result: passed.
+python3 scripts/prepare_g0_corpus.py --samples 20 --output artifacts/corpora/g0
+result: 64 manifest rows; 60 accuracy/performance, 4 stability-only.
 
 swift test --package-path probes/sensevoice
-result: passed; 5 tests, 0 failures.
+result: 7 tests passed.
 
 swift build --package-path probes/sensevoice -c release
 result: passed.
 
-/usr/bin/time -l SenseVoiceProbe --model-dir artifacts/models/sensevoice-2024-07-17-int8 --manifest artifacts/fixtures/g0-official-short.jsonl
-result: passed; 5 official short samples decoded, exit 0, no residual process.
+SenseVoiceProbe run separately for mandarin, cantonese, mixed, 180 s, 240 s, 300 s and 600 s manifests
+result: seven exit-0 processes; no residual process.
 ```
 
-Toolchain snapshot:
+- Corpus manifest SHA-256: `df9cc9a0c3afaf5c903a07139b781b2f59eadf6355e57b7784c641831fa406f3`.
+- Raw result SHA-256 values: Mandarin `318369ee4566f60b8087c93cabe0dc7db65180d3374856e062d4cb95c5cbd792`; Cantonese `79cf9a480105fafc2d01ecd08050f777fabed3577e8052d07351ae115634c249`; mixed `69ef6661bd3ecbd3ea4ecd92149d98ba53e1d1e23b5b1d5617449b9d09868db5`; 180 s `c5d7a27d6cab3327acde5ab3d41288843b61d0e283193f462a2d9cd5b2c25bba`; 240 s `c9f378254b271cab36c523fd4d319fa3115efff815fc69887ac64c0339565df8`; 300 s `ebad6f82603e5144c7e902453703b55720a85b042d1fa4612575891f6e4c4a18`; 600 s `a9f3b8cf4dc11f1dd9b19d1d765e80fbe795073d84ab4d517c9505a3bacf76e0`.
+- Toolchain: macOS 26.5.2, Swift 6.3.3, Xcode 26.6.
 
-```text
-macOS 26.5.2 (25F84)
-Apple Swift 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
-Xcode 26.6 (17F113)
-```
+## Decision
 
-## Remaining hard gates
-
-- Required user Mandarin sample: absent.
-- Required user Cantonese sample: absent.
-- Required user mixed Chinese-English sample: absent.
-- Three required 3-5 minute samples: absent.
-- Required 10 minute sample: absent.
-- Long-audio resource release: unmeasured.
-- Target-corpus truncation and accuracy observations: unmeasured.
-- VAD model/version/license/SHA-256: not selected, frozen or executed.
-
-## Hygiene result
-
-- `artifacts/` is ignored and contains the downloaded model, copied official sample audio, ignored manifest and raw result files.
-- `git status --ignored --short` was checked before editing tracked evidence and showed `artifacts/` only as ignored.
-- No model, audio, raw transcript or generated result is intended for commit.
-
-## Result
-
-The first real SenseVoice smoke on official short samples succeeded, but the G0 acceptance gate remains **not passed** because the required user corpus and long-audio evidence are missing. ADR-0002 remains `Proposed`; no G0 pass tag is authorized.
+The SenseVoice baseline passes the written technical G0 gate. ADR-0002 is Accepted and WP-03 may begin. This does not approve Cantonese product quality, filler deletion, VAD, streaming preview or the RC Golden Set.
