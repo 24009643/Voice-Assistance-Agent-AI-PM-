@@ -81,7 +81,7 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
     let error: String?
     let finalSource: TranscriptFinalSource?
     let languageSlice: String?
-    let localEvaluationConsent: Bool
+    let localEvaluationConsent: Bool?
     let reviewState: TranscriptReviewState
     let intendedUse: TranscriptIntendedUse
 
@@ -118,7 +118,7 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         error: String? = nil,
         finalSource: TranscriptFinalSource? = .senseVoice,
         languageSlice: String? = nil,
-        localEvaluationConsent: Bool = true,
+        localEvaluationConsent: Bool? = nil,
         reviewState: TranscriptReviewState = .unreviewed,
         intendedUse: TranscriptIntendedUse = .localEvaluation
     ) {
@@ -153,9 +153,9 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         deliveryStatus = try container.decode(DeliveryStatus.self, forKey: .deliveryStatus)
         outcome = try container.decodeIfPresent(TranscriptOutcome.self, forKey: .outcome) ?? .success
         error = try container.decodeIfPresent(String.self, forKey: .error)
-        finalSource = try container.decodeIfPresent(TranscriptFinalSource.self, forKey: .finalSource) ?? .senseVoice
+        finalSource = try container.decodeIfPresent(TranscriptFinalSource.self, forKey: .finalSource)
         languageSlice = try container.decodeIfPresent(String.self, forKey: .languageSlice)
-        localEvaluationConsent = try container.decodeIfPresent(Bool.self, forKey: .localEvaluationConsent) ?? true
+        localEvaluationConsent = try container.decodeIfPresent(Bool.self, forKey: .localEvaluationConsent)
         reviewState = try container.decodeIfPresent(TranscriptReviewState.self, forKey: .reviewState) ?? .unreviewed
         intendedUse = try container.decodeIfPresent(TranscriptIntendedUse.self, forKey: .intendedUse) ?? .localEvaluation
     }

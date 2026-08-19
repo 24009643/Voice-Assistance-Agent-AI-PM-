@@ -39,7 +39,7 @@ final class SessionModelsTests: XCTestCase {
 
         XCTAssertEqual(fields?["outcome"] as? String, "success")
         XCTAssertEqual(fields?["finalSource"] as? String, "senseVoice")
-        XCTAssertEqual(fields?["localEvaluationConsent"] as? Bool, true)
+        XCTAssertNil(fields?["localEvaluationConsent"])
         XCTAssertEqual(fields?["reviewState"] as? String, "unreviewed")
         XCTAssertEqual(fields?["intendedUse"] as? String, "localEvaluation")
         XCTAssertEqual(

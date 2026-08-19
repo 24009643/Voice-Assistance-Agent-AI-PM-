@@ -24,7 +24,12 @@ final class TranscriptStoreTests: XCTestCase {
         try legacyEncodedData(for: record).write(to: legacyURL)
         let store = TranscriptStore(directory: directory)
 
-        XCTAssertEqual(try store.load(id: record.id), record)
+        let loaded = try store.load(id: record.id)
+        XCTAssertEqual(loaded.id, record.id)
+        XCTAssertEqual(loaded.localCleanedText, record.localCleanedText)
+        XCTAssertNil(loaded.localEvaluationConsent)
+        XCTAssertNil(loaded.finalSource)
+        XCTAssertEqual(loaded.reviewState, .unreviewed)
         XCTAssertTrue(FileManager.default.fileExists(atPath: legacyURL.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: canonicalRecordURL(for: record.id, in: directory).path))
     }
@@ -40,10 +45,10 @@ final class TranscriptStoreTests: XCTestCase {
         try store.updateDeliveryStatus(id: record.id, to: .copied)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: canonicalRecordURL(for: record.id, in: directory).path))
-        XCTAssertEqual(
-            try JSONDecoder().decode(TranscriptRecord.self, from: Data(contentsOf: legacyURL)).deliveryStatus,
-            .copied
-        )
+        let rewritten = try JSONDecoder().decode(TranscriptRecord.self, from: Data(contentsOf: legacyURL))
+        XCTAssertEqual(rewritten.deliveryStatus, .copied)
+        XCTAssertNil(rewritten.localEvaluationConsent)
+        XCTAssertNil(rewritten.finalSource)
     }
 
     func testLoadPrefersCanonicalRecordOverLegacyFlatRecord() throws {
