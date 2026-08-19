@@ -32,6 +32,18 @@ final class SenseVoiceTranscriberTests: XCTestCase {
         }
     }
 
+    func testModelLocationRejectsOversizedManifestBeforeReadingIt() throws {
+        try withTemporaryDirectory { directory in
+            try writeModelFiles(in: directory)
+            try Data(repeating: 0x20, count: 65_537)
+                .write(to: directory.appendingPathComponent("manifest.sha256"))
+
+            XCTAssertThrowsError(try SenseVoiceModelLocation(directory: directory)) { error in
+                XCTAssertEqual(error as? SenseVoiceTranscriberError, .modelManifestTooLarge)
+            }
+        }
+    }
+
     func testUserTextDoesNotContainControlTags() {
         let parsed = SenseVoiceTranscriber.parse(
             text: "<|zh|><|Speech|>这是正文",

@@ -3,10 +3,11 @@ import CryptoKit
 import Foundation
 import SherpaOnnx
 
-enum SenseVoiceTranscriberError: Error {
+enum SenseVoiceTranscriberError: Error, Equatable {
     case missingDevelopmentModelDirectory
     case missingModelFile(String)
     case invalidModelManifest
+    case modelManifestTooLarge
     case unsupportedAudio(String)
 }
 
@@ -40,6 +41,10 @@ struct SenseVoiceModelLocation: Sendable {
     }
 
     private static func verifyManifest(at manifest: URL, in directory: URL) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: manifest.path)
+        guard let size = attributes[.size] as? NSNumber, size.uint64Value <= 65_536 else {
+            throw SenseVoiceTranscriberError.modelManifestTooLarge
+        }
         let contents = try String(contentsOf: manifest, encoding: .utf8)
         var expectedDigests: [String: String] = [:]
 
@@ -99,8 +104,11 @@ actor SenseVoiceTranscriber {
         var events: [String] = []
 
         for chunk in Self.chunkedSamples(audio.samples, maximumFrameCount: Self.maximumFrameCount) {
-            let decoded = recognizer.decode(samples: chunk, sampleRate: audio.sampleRate)
-            let parsed = Self.parse(text: decoded.text, language: decoded.lang, event: decoded.event)
+            let decoded = autoreleasepool { () -> (text: String, language: String, event: String) in
+                let result = recognizer.decode(samples: chunk, sampleRate: audio.sampleRate)
+                return (result.text, result.lang, result.event)
+            }
+            let parsed = Self.parse(text: decoded.text, language: decoded.language, event: decoded.event)
             if !parsed.text.isEmpty { texts.append(parsed.text) }
             if let language = parsed.detectedLanguage { languages.append(language) }
             events.append(contentsOf: parsed.eventTags)
