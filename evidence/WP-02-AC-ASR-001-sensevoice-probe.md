@@ -1,10 +1,10 @@
 # WP-02 / AC-ASR-001 SenseVoice G0 gate evidence
 
 - Date: 2026-08-19
-- Device: target Mac, Apple M5 Pro, arm64, 48 GiB memory
-- Branch: `codex/wp-02-sensevoice`
-- Tested commit: `e53776b`
-- Gate result: **Not run (deferred)**
+- Device: target Mac, Apple M5 Pro, arm64, 48 GiB memory (`51539607552` bytes)
+- Branch: `codex/wp-02-g0-run`
+- Tested commit before this evidence update: `f2b7c3e`
+- Gate result: **Partial smoke only; G0 not passed**
 
 ## Expected
 
@@ -15,133 +15,100 @@
 
 ## Scope ruling
 
-The user explicitly deferred local runtime execution for this task. The real model was not downloaded, no audio was decoded, and the Mandarin, Cantonese, mixed Chinese-English, three-to-five-minute and ten-minute target-Mac corpus is not present. G0 is therefore recorded as **not run**, never Passed.
+The real pinned model was downloaded and verified, and the existing probe decoded the official short sample WAV files packaged by k2-fsa with the pinned model archive. This is only a smoke run. The required user corpus is still absent: Mandarin, Cantonese, mixed Chinese-English, three 3-5 minute samples and one 10 minute sample. G0 therefore remains **not passed**, ADR-0002 remains `Proposed`, no pass tag is authorized and WP-03 must not begin.
 
-## Tooling and non-model checks
+Raw probe JSON, raw transcripts, audio and model files are stored only under ignored `artifacts/`.
 
-Task 3 established the probe at `b62b7c7` (`fix(probe): measure duration from decoded WAV`), with the exact sherpa-onnx package dependency at 1.13.6. Its reported checks were 5 manifest tests passing and `SenseVoiceProbe --help` exiting 0 without model files.
+## Official sample source
 
-Task 4 established the bootstrap and ADR proposal at `e53776b` (`fix(asr): preserve dangling model target symlink`). Its reported checks were shell syntax passing, the bootstrap self-check passing, the probe package tests passing (5 tests, 0 failures), and the model path remaining ignored. ADR-0002 remains Proposed.
+- Documentation: `https://k2-fsa.github.io/sherpa/onnx/sense-voice/pretrained.html`
+- Release archive: `https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2`
+- Archive members copied to ignored fixtures: `test_wavs/en.wav`, `test_wavs/ja.wav`, `test_wavs/ko.wav`, `test_wavs/yue.wav`, `test_wavs/zh.wav`.
 
-The permitted checks were rerun at `e53776b`:
+All five copied WAV files were valid RIFF/WAVE PCM, 16-bit, mono, 16 kHz.
+
+## Model and runtime
+
+- sherpa-onnx SwiftPM dependency: version `1.13.6`, revision `1cb484af5e69d3c7803c1eb0b3b5ab8041e0e911`.
+- onnxruntime-libs SwiftPM dependency: version `1.27.1`, revision `1fbef5f2a1b5c2691fe9411243f3a8afe9a0b169`.
+- Recognizer settings: `language=auto`, `useITN=true`, CPU provider, greedy search.
+- Model directory: `artifacts/models/sensevoice-2024-07-17-int8/`.
+- Model manifest SHA-256: `311ab4b34975ba648d3d64a5a1e70bda61ca464573b8829bd5ae7c4c6beefa8e`.
+- `model.int8.onnx`: `239233841` bytes, SHA-256 `c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51`.
+- `tokens.txt`: `315894` bytes, SHA-256 `f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc`.
+- `LICENSE`: `71` bytes, SHA-256 `221c6df10b0931a5629adad671ea48fb7747e034c414b6d2bfa275bc3dd4ea17`.
+- Release probe executable: `39082160` bytes, SHA-256 `57313ba9d45e75be02268685bc3c6ed9604d8239991943359a2c321b6ad4efe8`.
+- `otool -L` for the release probe reported no non-system dynamic dependencies.
+- Probe executable plus all model-directory regular files: `279588828` bytes.
+- Conservative total including SwiftPM-copied static archives plus all model-directory regular files: `419494772` bytes.
+
+## Smoke measurements
+
+Raw output: `artifacts/results/g0-official-short.jsonl`, SHA-256 `774ac69f2022bf28ac53b39c6662fa0508f75f89da5abcef6f4a34cb48e69fbb`.
+
+Timing stderr: `artifacts/results/g0-official-short.time.txt`, SHA-256 `a870324e6a8b9ea7414951d2499aaa5c1eee398fb8a8789952ef91ebb0d64919`.
+
+| Sample | Expected language | Detected language | Duration seconds | Latency ms | RTF |
+| --- | --- | --- | ---: | ---: | ---: |
+| `sensevoice-official-en` | `en` | `<|en|>` | 7.152 | 200 | 0.027964 |
+| `sensevoice-official-ja` | `ja` | `<|ja|>` | 7.200 | 189 | 0.026250 |
+| `sensevoice-official-ko` | `ko` | `<|ko|>` | 4.608 | 126 | 0.027344 |
+| `sensevoice-official-yue` | `yue` | `<|yue|>` | 5.148 | 138 | 0.026807 |
+| `sensevoice-official-zh` | `zh` | `<|zh|>` | 5.592 | 151 | 0.027003 |
+
+- Probe exit: `0`.
+- Residual `SenseVoiceProbe` process after run: none.
+- Cold load: `392` ms.
+- Total elapsed inside probe: `1204` ms.
+- `/usr/bin/time -l` elapsed: `1.23 real`, `1.12 user`, `0.09 sys`.
+- Absolute process peak RSS: `907821056` bytes, matching the probe JSON and `/usr/bin/time -l`.
+
+The peak RSS value is absolute process peak RSS, not an ASR active-memory delta. Because the absolute peak is below `2147483648` bytes, the active delta for this short-process smoke cannot exceed 2 GiB, but this is still not a target-corpus G0 pass.
+
+## Commands and results
 
 ```text
-sh -n scripts/bootstrap-sensevoice-model.sh                 exit 0
-scripts/bootstrap-sensevoice-model.sh --self-check          exit 0; self-check passed
-swift test --package-path probes/sensevoice                 exit 0; 5 tests, 0 failures
-swift run --package-path probes/sensevoice SenseVoiceProbe --help
-                                                            exit 0; usage printed, no model required
-```
+scripts/bootstrap-sensevoice-model.sh
+result: passed; bootstrapped the pinned official model.
 
-Current toolchain snapshot (read-only commands, not a G0 runtime run):
+scripts/bootstrap-sensevoice-model.sh --verify-only
+result: passed.
 
-```text
-sw_vers
-ProductVersion: 26.5.2
-BuildVersion: 25F84
-swift --version
-Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
-xcodebuild -version
-Xcode 26.6
-Build version 17F113
-```
-
-## Deferred hard gates
-
-The following values are intentionally unexecuted and unreported:
-
-- Real decode: not run.
-- RTF: not measured.
-- Active ASR memory delta: not measured.
-- Runtime plus model installed size: not measured; no model/runtime artifact size is claimed.
-- Truncation and resource release for three-to-five-minute and ten-minute samples: not observed.
-- Mandarin, Cantonese and mixed Chinese-English language accuracy observations: not made.
-- Model, runtime, license and SHA-256 evidence: not recorded because no real model was downloaded.
-- VAD model, version, license and SHA-256: not frozen, not executed and not recorded.
-
-The current probe's `peakRSSBytes` is an absolute process peak RSS, not an active ASR memory delta. A future G0 run must measure a pre-load baseline and report the delta; otherwise absolute RSS may be reported only as an upper bound, not as proof of the 2 GiB active-memory gate.
-
-## Future reproduction commands
-
-These commands are recorded for the authorized future run and were **not run for this record**. They are ordered so a clean worktree can bootstrap the ignored model, verify it, create the result directory, build the probe, and run the binary directly:
-
-```bash
-MODEL_DIR=artifacts/models/sensevoice-2024-07-17-int8
-RESULT_DIR=artifacts/results
-
-# Requires explicit authorization for the real model download.
-scripts/bootstrap-sensevoice-model.sh --target "$MODEL_DIR"
-scripts/bootstrap-sensevoice-model.sh --verify-only --target "$MODEL_DIR"
-(cd "$MODEL_DIR" && shasum -a 256 -c manifest.sha256)
-mkdir -p "$RESULT_DIR"
+swift test --package-path probes/sensevoice
+result: passed; 5 tests, 0 failures.
 
 swift build --package-path probes/sensevoice -c release
-BUILD_DIR="$(swift build --package-path probes/sensevoice -c release --show-bin-path)"
-PROBE_BIN="$BUILD_DIR/SenseVoiceProbe"
-test -x "$PROBE_BIN"
+result: passed.
 
-/usr/bin/time -l "$PROBE_BIN" \
-  --model-dir "$MODEL_DIR" \
-  --manifest artifacts/fixtures/g0-short.jsonl \
-  > "$RESULT_DIR/g0-short.json" \
-  2> "$RESULT_DIR/g0-short.time.txt"
-test "$?" -eq 0
-if pgrep -x SenseVoiceProbe >/dev/null; then exit 1; fi
+/usr/bin/time -l SenseVoiceProbe --model-dir artifacts/models/sensevoice-2024-07-17-int8 --manifest artifacts/fixtures/g0-official-short.jsonl
+result: passed; 5 official short samples decoded, exit 0, no residual process.
 ```
 
-For the target corpus, `g0-target.jsonl` must contain Mandarin, Cantonese, mixed Chinese-English, three-to-five-minute and ten-minute WAV samples. Each long sample must be represented by a one-sample manifest and run as its own process; these are exact future invocations, not executed now:
+Toolchain snapshot:
 
-```bash
-run_one() {
-  manifest="$1"
-  output="$2"
-  /usr/bin/time -l "$PROBE_BIN" \
-    --model-dir "$MODEL_DIR" \
-    --manifest "$manifest" \
-    > "$RESULT_DIR/$output.json" \
-    2> "$RESULT_DIR/$output.time.txt"
-  status=$?
-  test "$status" -eq 0
-  if pgrep -x SenseVoiceProbe >/dev/null; then exit 1; fi
-}
-
-run_one artifacts/fixtures/mandarin-3-5.jsonl mandarin-3-5
-run_one artifacts/fixtures/cantonese-3-5.jsonl cantonese-3-5
-run_one artifacts/fixtures/mixed-zh-en-3-5.jsonl mixed-zh-en-3-5
-run_one artifacts/fixtures/ten-minute.jsonl ten-minute
+```text
+macOS 26.5.2 (25F84)
+Apple Swift 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
+Xcode 26.6 (17F113)
 ```
 
-Collect the environment, model manifest/hash, actual probe/runtime deliverable size and dynamic dependencies without committing them:
+## Remaining hard gates
 
-```bash
-sw_vers
-swift --version
-xcodebuild -version
-(cd "$MODEL_DIR" && shasum -a 256 -c manifest.sha256)
-(cd "$MODEL_DIR" && shasum -a 256 manifest.sha256)
-shasum -a 256 "$PROBE_BIN"
-PROBE_BYTES="$(stat -f %z "$PROBE_BIN")"
-MODEL_BYTES="$(find "$MODEL_DIR" -type f -exec stat -f %z {} + | awk '{total += $1} END {print total + 0}')"
-TOTAL_BYTES=$((PROBE_BYTES + MODEL_BYTES))
-printf 'probe_bytes=%s model_bytes=%s runtime_model_total_bytes=%s\n' "$PROBE_BYTES" "$MODEL_BYTES" "$TOTAL_BYTES"
-otool -L "$PROBE_BIN"
-NON_SYSTEM_DEPS="$(otool -L "$PROBE_BIN" | tail -n +2 | awk '$1 !~ /^\/System\// && $1 !~ /^\/usr\/lib\// {print $1}')"
-test -z "$NON_SYSTEM_DEPS"
-test "$TOTAL_BYTES" -le 524288000
-```
-
-The model files are validated by `manifest.sha256`; the probe executable is hashed separately. The hard installed-size check is the integer sum of the probe executable bytes and every regular file under the model directory, compared with `524288000` bytes. The whole `.build` directory and `du -sh` are not used for this gate. `otool -L` confirms that the current sherpa runtime is statically included and that only `/System` or `/usr/lib` dynamic dependencies remain. If a future `otool` result includes a non-system dependency, stop the gate, resolve the actual delivered file, record its `stat -f %z` bytes and `shasum -a 256` hash, add those bytes to the total, and only then evaluate the limit.
-
-The JSON `peakRSSBytes` and each `*.time.txt` maximum-resident-set-size line are absolute process peak RSS, not active ASR memory delta. Record the absolute value in bytes. If an absolute value is at most `2147483648`, it is a conservative upper bound proving the active delta cannot exceed 2 GiB for that process, but it is still not by itself a G0 pass. If it exceeds 2 GiB, add pre-load RSS instrumentation to the probe before measuring or claiming the active delta; never call that run Passed. Compute RTF from each sample's `latencyMilliseconds` and `audioDurationSeconds`. Check every process exit and absence of a residual `SenseVoiceProbe` process before interpreting any result.
-
-The future report must add model/runtime/license SHA-256 values, VAD model/version/license/hash if selected, the memory interpretation, RTF, installed-size measurement, truncation/resource-release observations and per-language accuracy observations. It must not copy model weights, audio or raw transcripts into Git.
+- Required user Mandarin sample: absent.
+- Required user Cantonese sample: absent.
+- Required user mixed Chinese-English sample: absent.
+- Three required 3-5 minute samples: absent.
+- Required 10 minute sample: absent.
+- Long-audio resource release: unmeasured.
+- Target-corpus truncation and accuracy observations: unmeasured.
+- VAD model/version/license/SHA-256: not selected, frozen or executed.
 
 ## Hygiene result
 
-- `artifacts/` is absent in this worktree; no model, audio or generated result exists.
-- `git check-ignore --no-index -v` confirms the future model, fixture and result paths are ignored by `artifacts/`.
-- No tracked model, audio, raw transcript or generated artifact is present.
+- `artifacts/` is ignored and contains the downloaded model, copied official sample audio, ignored manifest and raw result files.
+- `git status --ignored --short` was checked before editing tracked evidence and showed `artifacts/` only as ignored.
+- No model, audio, raw transcript or generated result is intended for commit.
 
 ## Result
 
-The non-model tooling is reproducible, but the G0 acceptance gate is **not run**. ADR-0002 remains `Proposed`; no G0 pass tag is authorized.
+The first real SenseVoice smoke on official short samples succeeded, but the G0 acceptance gate remains **not passed** because the required user corpus and long-audio evidence are missing. ADR-0002 remains `Proposed`; no G0 pass tag is authorized.

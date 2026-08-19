@@ -1,20 +1,20 @@
-# EXE-WP-02: Deferred SenseVoice G0 gate
+# EXE-WP-02: SenseVoice G0 foundation and partial smoke
 
 - Plan: `docs/plans/2026-08-19-g0-foundation-and-sensevoice-probe.md`
 - Owner: GPT-5.5 probe/bootstrap, Luna evidence, Sol integration
 - Reviewer: independent Sol reviewers
-- Status: blocked
-- Branch: `codex/repo-foundation`
-- Commits: `cbf0516` through `024b8a3`; final reproducible record head `024b8a3`
+- Status: partial smoke recorded; G0 not passed
+- Branch: `codex/wp-02-g0-run`
+- Evidence: `evidence/WP-02-AC-ASR-001-sensevoice-probe.md`
 - Started: 2026-08-19
-- Finished: 2026-08-19
+- Updated: 2026-08-19
 
 ## Files changed
 
-- Added `evidence/WP-02-AC-ASR-001-sensevoice-probe.md`.
+- Added the SenseVoice G0 evidence record.
 - Added this execution record.
 - Linked the pending evidence in `docs/decisions/ADR-0002-sensevoice-baseline.md`; ADR status remains Proposed.
-- No model, audio, raw transcript or generated result was added.
+- Recorded the first real official-short-sample smoke without committing model weights, audio, raw transcripts or generated result files.
 
 ## Commands and results
 
@@ -22,31 +22,32 @@
 - `scripts/bootstrap-sensevoice-model.sh --self-check`: passed, exit 0.
 - `swift test --package-path probes/sensevoice`: passed, 5 tests and 0 failures.
 - `swift run --package-path probes/sensevoice SenseVoiceProbe --help`: passed, exit 0; usage printed without model files.
-- All package tests, `--help`, shell syntax and bootstrap self-check passed again after WP-02 was fast-forwarded into the integration branch at `024b8a3`.
-- Real model bootstrap, `--verify-only`, audio decode and G0 benchmark commands: not run by explicit user ruling.
-- Read-only environment snapshot: macOS 26.5.2 (build 25F84), Xcode 26.6 (build 17F113), Apple Swift 6.3.3.
+- Earlier integration rerun at `f2b7c3e`: macOS app checks passed, 8 tests and 0 failures; probe package tests passed, 5 tests and 0 failures.
+- `scripts/bootstrap-sensevoice-model.sh`: passed; downloaded the pinned official model archive into ignored `artifacts/models/`.
+- `scripts/bootstrap-sensevoice-model.sh --verify-only`: passed.
+- `swift build --package-path probes/sensevoice -c release`: passed.
+- `/usr/bin/time -l SenseVoiceProbe --model-dir artifacts/models/sensevoice-2024-07-17-int8 --manifest artifacts/fixtures/g0-official-short.jsonl`: passed; 5 official short samples decoded, exit 0, no residual process.
+- `git diff --check`: passed.
+- `git status --ignored --short`: checked; model, sample audio, manifest, build outputs and raw results appear only under ignored paths.
 
-## Acceptance criteria and evidence
+## Partial smoke summary
 
-- Evidence: `evidence/WP-02-AC-ASR-001-sensevoice-probe.md`.
-- Tooling checks pass, but G0 is **not run**.
-- Real decode, RTF, active memory delta, installed-size, truncation/resource-release and language-accuracy gates remain unmeasured.
-- Absolute process peak RSS is not treated as active ASR memory delta; a future run requires a pre-load baseline or must label absolute RSS only as an upper bound.
-- Future commands now bootstrap before verify, create `artifacts/results`, build with SwiftPM, run the resolved binary directly, collect `sw_vers`, Swift/Xcode versions, manifest checksums, probe hash, exact `stat -f %z` probe/model bytes and `otool -L` dependencies, with each long sample in a separate process and exit/no-residual checks. The runtime+model hard gate sums probe bytes plus every regular model file and compares the integer total with `524288000`; neither the whole `.build` directory nor `du -sh` is used.
-- VAD model, version, license and SHA-256 are not frozen, not executed and not recorded.
-- ADR-0002 remains Proposed and no G0 pass tag is issued.
+- Official short sample source: k2-fsa `sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2`, archive members `test_wavs/en.wav`, `ja.wav`, `ko.wav`, `yue.wav`, `zh.wav`.
+- All five samples were valid RIFF/WAVE PCM, 16-bit, mono, 16 kHz.
+- Recognizer settings: `language=auto`, `useITN=true`, CPU provider, greedy search.
+- Cold load: `392` ms.
+- Per-sample RTF range: `0.026250` to `0.027964`.
+- Absolute process peak RSS: `907821056` bytes. This is not an ASR active-memory delta.
+- Probe executable plus all model-directory regular files: `279588828` bytes.
+- Conservative total including SwiftPM-copied static archives plus all model-directory regular files: `419494772` bytes.
+- `otool -L` for the release probe reported no non-system dynamic dependencies.
 
-## Deviations from plan
+## Still not G0
 
-- Task 5's planned model download and audio benchmark were deferred by the user. The target corpus is not present, so no result, hash, transcript or accuracy value was fabricated.
-- The execution status is `blocked` to represent the deferred G0 gate, not a passing implementation gate.
+The required user corpus is absent: Mandarin, Cantonese, mixed Chinese-English, three 3-5 minute samples and one 10 minute sample. Long-audio resource release, truncation and target-corpus accuracy remain unmeasured. VAD model/version/license/SHA-256 are not selected or executed.
 
-## Open risks
-
-- SenseVoice suitability on the target Mac is unverified until the real corpus and model are authorized and available.
-- No performance, memory, installed-size, truncation, resource-release or language-accuracy claim can be made.
-- Integration hygiene found no tracked model, audio, DMG, credential or nested repository. Ignored SwiftPM caches and isolated worktrees are not release inputs.
+ADR-0002 remains `Proposed`; no G0 pass tag is issued; WP-03 must not begin.
 
 ## Rollback
 
-Revert the commit containing this record and the linked ADR note. The probe and bootstrap inputs remain available at `e53776b`; no downloaded runtime/model artifact needs removal.
+Revert the commit containing this record and the linked ADR/evidence updates. Remove local ignored `artifacts/models/`, `artifacts/fixtures/` and `artifacts/results/` if the downloaded model, copied audio or raw outputs are no longer needed.
