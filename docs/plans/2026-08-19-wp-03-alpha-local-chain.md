@@ -426,7 +426,7 @@ struct AppSnapshot: Equatable, Sendable {
 final class SessionCoordinator {
     struct Dependencies {
         let startRecording: (SessionID, @escaping @Sendable (RecordedAudio) -> Void) throws -> Void
-        let stopRecording: () throws -> RecordedAudio
+        let stopRecording: () -> Void
         let cancelRecording: () -> Void
         let transcribe: (URL) async throws -> TranscriptionResult
         let clean: (String) throws -> CleanResult
@@ -442,7 +442,7 @@ final class SessionCoordinator {
 }
 ```
 
-Keep the existing `UserIntent` declaration in `HotkeyService.swift`; do not duplicate it. When recording starts, the coordinator passes a callback that re-enters the main actor and handles one internal `.recordingFinished(RecordedAudio)` event. Manual stop and the recorder delegate both call the same idempotent finalization path. The coordinator creates one `SessionID` and increasing ordinal at start. A `stopRequested` latch makes stop idempotent; a `deliveredSessionIDs` set makes automatic clipboard delivery idempotent. After stop it transcribes, cleans with original fallback, atomically saves `.pending`, deletes audio, writes the clipboard once, then atomically updates status to `.copied` or `.failed`. Any initial save error leaves audio in place. Empty text becomes a cancelled/idle outcome without save or copy.
+Keep the existing `UserIntent` declaration in `HotkeyService.swift`; do not duplicate it. When recording starts, the coordinator passes a callback that re-enters the main actor and handles one internal `.recordingFinished(RecordedAudio)` event. `stopRecording` only triggers recorder completion and never returns audio directly; `RecordedAudio` enters the coordinator only through that callback. Manual stop and the recorder delegate both call the same idempotent finalization path. The coordinator creates one `SessionID` and increasing ordinal at start. A `stopRequested` latch makes stop idempotent; a `deliveredSessionIDs` set makes automatic clipboard delivery idempotent. After stop it transcribes, cleans with original fallback, atomically saves `.pending`, deletes audio, writes the clipboard once, then atomically updates status to `.copied` or `.failed`. Any initial save error leaves audio in place. Empty text becomes a cancelled/idle outcome without save or copy.
 
 The coordinator test must invoke the injected `onFinished` callback and assert the full event order `[recordingStarted, recordingFinished, transcribed, saved, copied, deliveryStatusUpdated]`; a subsequent manual toggle must not add a second tail or copy event.
 
