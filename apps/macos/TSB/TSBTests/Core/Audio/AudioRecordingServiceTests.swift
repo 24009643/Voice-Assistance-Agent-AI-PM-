@@ -115,6 +115,44 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertEqual(gate.result, false)
     }
 
+    func testTapHandlerRunsFromBackgroundQueueWithoutActorIsolation() async throws {
+        let directory = temporaryDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let format = PCMStreamProcessor.outputFormat
+        let processorQueue = DispatchQueue(label: "AudioRecordingServiceTests.processor")
+        let signals = ThreadSafeSignals()
+        let terminal = TerminalGate { signals.append($0) }
+        let processor = try PCMStreamProcessor(
+            inputFormat: format,
+            outputURL: directory.appendingPathComponent("audio.wav"),
+            onPCMChunk: { _ in },
+            onLevel: { _ in },
+            onTerminal: terminal.signal
+        )
+        let handler = AudioRecordingService.makeAudioTapHandler(
+            processor: processor,
+            pendingBuffers: DispatchSemaphore(value: 4),
+            queue: processorQueue,
+            terminal: terminal
+        )
+        let invocation = TapInvocation(
+            handler: handler,
+            buffer: try makeSineBuffer(format: format, frameCount: 320)
+        )
+        let invoked = expectation(description: "tap invoked from a non-main queue")
+
+        DispatchQueue.global().async {
+            invocation.call()
+            invoked.fulfill()
+        }
+        await fulfillment(of: [invoked], timeout: 1)
+        processorQueue.sync {}
+
+        XCTAssertGreaterThan(try processor.finish(), 0)
+        XCTAssertTrue(signals.values.isEmpty)
+    }
+
     func testProcessorStopsAtFrameLimitAndSignalsOnce() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
@@ -341,6 +379,20 @@ private final class ThreadSafeTerminalState: @unchecked Sendable {
         lock.lock()
         if storage == nil { storage = value }
         lock.unlock()
+    }
+}
+
+private final class TapInvocation: @unchecked Sendable {
+    private let handler: AVAudioNodeTapBlock
+    private let buffer: AVAudioPCMBuffer
+
+    init(handler: @escaping AVAudioNodeTapBlock, buffer: AVAudioPCMBuffer) {
+        self.handler = handler
+        self.buffer = buffer
+    }
+
+    func call() {
+        handler(buffer, AVAudioTime(sampleTime: 0, atRate: buffer.format.sampleRate))
     }
 }
 

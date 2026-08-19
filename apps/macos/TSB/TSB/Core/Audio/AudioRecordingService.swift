@@ -297,26 +297,13 @@ private final class NativeAudioCapture: @unchecked Sendable {
     @MainActor
     func start() throws {
         let inputNode = engine.inputNode
-        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, terminal.isOpen else { return }
-            guard pendingBuffers.wait(timeout: .now()) == .success else {
-                terminal.signal(false)
-                return
-            }
-            guard let copy = AudioBufferCopy(buffer) else {
-                pendingBuffers.signal()
-                terminal.signal(false)
-                return
-            }
-            queue.async { [processor, pendingBuffers, terminal] in
-                defer { pendingBuffers.signal() }
-                do {
-                    try processor.consume(copy.buffer)
-                } catch {
-                    terminal.signal(false)
-                }
-            }
-        }
+        let tapHandler = AudioRecordingService.makeAudioTapHandler(
+            processor: processor,
+            pendingBuffers: pendingBuffers,
+            queue: queue,
+            terminal: terminal
+        )
+        inputNode.installTap(onBus: 0, bufferSize: 1_024, format: inputFormat, block: tapHandler)
         engine.prepare()
         try engine.start()
         configurationObserver = NotificationCenter.default.addObserver(
@@ -479,6 +466,34 @@ final class AudioRecordingService {
 
     private func sessionDirectoryURL(for sessionID: SessionID) -> URL {
         sessionsDirectory.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+    }
+
+    nonisolated static func makeAudioTapHandler(
+        processor: PCMStreamProcessor,
+        pendingBuffers: DispatchSemaphore,
+        queue: DispatchQueue,
+        terminal: TerminalGate
+    ) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            guard terminal.isOpen else { return }
+            guard pendingBuffers.wait(timeout: .now()) == .success else {
+                terminal.signal(false)
+                return
+            }
+            guard let copy = AudioBufferCopy(buffer) else {
+                pendingBuffers.signal()
+                terminal.signal(false)
+                return
+            }
+            queue.async {
+                defer { pendingBuffers.signal() }
+                do {
+                    try processor.consume(copy.buffer)
+                } catch {
+                    terminal.signal(false)
+                }
+            }
+        }
     }
 
     private static func makeNativeCapture(
