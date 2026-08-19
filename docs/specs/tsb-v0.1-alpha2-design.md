@@ -47,7 +47,7 @@ UserIntent
   -> optional explicit text-only review
 ```
 
-Paraformer initialization and decode failure degrade to the existing SenseVoice path. SenseVoice failure may use a non-empty completed Paraformer result once, marked `streamingFallback`. Neither preview nor LLM review can independently trigger automatic clipboard delivery.
+Paraformer preflight failure degrades to the existing SenseVoice path; the upstream native-fatal boundary is defined in Section 5.1. SenseVoice failure may use a non-empty completed Paraformer result once, marked `streamingFallback`. Neither preview nor LLM review can independently trigger automatic clipboard delivery.
 
 ## 4. Session bundle contract
 
@@ -77,6 +77,8 @@ Canonical reads prefer the bundle, then the legacy `Sessions/<UUID>.json`. Legac
 The gate fixes model name, files, license and checksums before integration. The initial candidate is `sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en` with `encoder.int8.onnx`, `decoder.int8.onnx` and `tokens.txt` under a local ignored model directory.
 
 The adapter owns the non-Sendable recognizer in one actor. It receives normalized Float32 chunks near 200 ms, publishes only changed text, pads the final tail, calls `inputFinished`, and resets on cancel. If tail loss remains, a thin wrapper exposing the upstream final-stream option is allowed only after a failing probe proves it necessary.
+
+Missing model files, malformed or oversized manifests and checksum mismatches are recoverable preflight failures: live preview remains disabled and the session continues through SenseVoice. The pinned, validated bundle mitigates native-runtime risk, but sherpa-onnx's Swift initializer and decode calls are nonthrowing; an upstream native fatal cannot be recovered in-process in Alpha 2. Separate worker-process isolation is deferred until real crash evidence justifies that boundary.
 
 ### 5.2 SenseVoice review
 
@@ -124,7 +126,7 @@ The response is strict JSON with candidate text and edit operations. Invalid JSO
 - Recording start failure leaves no empty bundle.
 - Explicit cancellation removes only the active bundle and produces no clipboard write.
 - ASR/no-speech failure retains audio plus an outcome record.
-- Streaming failure disables preview for that session and continues to SenseVoice.
+- Paraformer preflight failure disables preview for that session and continues to SenseVoice. An upstream native fatal is outside Alpha 2's in-process recovery boundary; pinned hashes and bundle validation are the mitigation until crash evidence warrants worker isolation.
 - SenseVoice failure uses a completed non-empty streaming fallback once; otherwise no copy.
 - Record save failure retains audio and forbids copy.
 - Clipboard failure retains the record and previous clipboard content.

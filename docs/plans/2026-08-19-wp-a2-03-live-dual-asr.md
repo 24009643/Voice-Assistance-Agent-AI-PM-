@@ -16,9 +16,10 @@
 
 ## Task 2: Product Paraformer adapter
 
-- [ ] Add RED tests for model manifest validation, changed-only preview, ordered endpoint text, final tail, cancel/reset and initialization/decode degradation.
+- [ ] Add RED tests for model manifest validation, changed-only preview, ordered endpoint text, final tail and cancel/reset. `ParaformerPreviewTranscriberTests` proves missing files, malformed/oversized manifests and checksum mismatches are rejected before recognizer construction; these preflight failures disable live preview while Task 3 continues through SenseVoice.
 - [ ] Port the proven WP-A2-01 adapter into `Core/Transcription` with one actor owner and no extra protocol/factory.
 - [ ] Add the model directory environment/development lookup using the same manifest convention as SenseVoice.
+- [ ] Record the native-runtime boundary honestly: sherpa-onnx's Swift initializer and decode calls are nonthrowing, so an upstream native fatal cannot be recovered in-process in Alpha 2. Pinned hashes plus validated files are the mitigation; worker-process isolation is deferred until real crash evidence requires it.
 - [ ] Run focused/full app tests, both probes and clean build.
 - [ ] Commit `feat(asr): add live Paraformer preview`.
 
