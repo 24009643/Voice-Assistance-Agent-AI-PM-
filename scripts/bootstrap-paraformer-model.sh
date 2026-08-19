@@ -63,7 +63,13 @@ canonical_target() {
 }
 
 require_external_target() {
-  for location in "$1" "$(dirname "$1")"; do
+  ancestor=$1
+  while [ ! -d "$ancestor" ]; do
+    next=$(dirname "$ancestor")
+    [ "$next" != "$ancestor" ] || die "target has no existing ancestor: $1"
+    ancestor=$next
+  done
+  for location in "$ancestor" "$(dirname "$ancestor")"; do
     if [ "$(git -C "$location" rev-parse --is-inside-work-tree 2>/dev/null || true)" = "true" ]; then
       die "target must be outside a Git worktree: $1"
     fi
@@ -221,6 +227,20 @@ self_check() {
   if sh "$0" --verify-only --target "$other_model" >/dev/null 2>&1; then
     die "self-check expected target in another Git worktree to fail"
   fi
+
+  safe_root="$tmp_dir/safe"
+  safe_model="$safe_root/$MODEL_NAME"
+  mkdir -p "$safe_model"
+  for file in $REQUIRED_FILES; do
+    echo "$file" >"$safe_model/$file"
+  done
+  safe_archive="$tmp_dir/safe.tar.bz2"
+  tar -cjf "$safe_archive" -C "$safe_root" "$MODEL_NAME"
+  nested_target="$other_repo/missing-parent/model"
+  if PARAFORMER_TEST_ARCHIVE="$safe_archive" PATH="$fake_bin:$PATH" sh "$0" --target "$nested_target" >/dev/null 2>&1; then
+    die "self-check expected nested target in another Git worktree to fail"
+  fi
+  [ ! -e "$other_repo/missing-parent" ] || die "self-check expected nested Git target to remain untouched"
 
   non_empty="$tmp_dir/non-empty"
   mkdir -p "$non_empty"
