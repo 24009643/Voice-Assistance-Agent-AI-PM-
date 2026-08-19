@@ -56,9 +56,9 @@ The required human smoke — microphone → real ASR → JSON record → exactly
 
 1. Set `TSB_SENSEVOICE_MODEL_DIR` to `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8` and start the Debug app.
 2. Grant microphone access, invoke Option-Space, dictate a short Mandarin, Cantonese or mixed Chinese-English phrase, then invoke Option-Space again to stop.
-3. Paste once into TextEdit with Command-V. Inspect the session JSON under `~/Library/Application Support/TSB/Sessions/`.
+3. Paste once into TextEdit with Command-V. Inspect the session JSON under `~/Library/Application Support/TSB/Sessions/`, and confirm the TSB process opens no external network connection during the run.
 
-Pass only if one interaction creates one saved JSON record with the original transcript preserved, places the delivered text on the clipboard exactly once, and the pasted text matches that delivered record. If recording, ASR, save or clipboard delivery fails, retain the JSON/audio evidence where present and leave the gate pending.
+Pass only if one interaction creates one saved JSON record with the original transcript preserved, places the delivered text on the clipboard exactly once, the pasted text matches that delivered record, and the app initiates no external network request. If recording, ASR, save, clipboard delivery or the no-network check fails, retain the JSON/audio evidence where present and leave the gate pending.
 
 ## Deviations from plan
 
@@ -67,6 +67,7 @@ Pass only if one interaction creates one saved JSON record with the original tra
 ## Open risks
 
 - Real microphone, ASR, JSON and clipboard handoff has not been observed together on the target machine.
+- Runtime privacy/no-external-network behavior has not yet been observed during an end-to-end dictation.
 - Cantonese quality remains a release/Golden Set risk documented in WP-02 evidence.
 - The noted onnxruntime packaging warning has not been root-caused.
 

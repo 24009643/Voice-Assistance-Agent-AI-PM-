@@ -48,9 +48,9 @@ Without that observation, this evidence does not establish real microphone permi
 
 1. Export `TSB_SENSEVOICE_MODEL_DIR` with the frozen-model path above and launch the Debug app.
 2. Grant microphone access. Press Option-Space, dictate 5–15 seconds, then press Option-Space again.
-3. Open TextEdit and press Command-V once. Locate the matching JSON file under `~/Library/Application Support/TSB/Sessions/`.
+3. Open TextEdit and press Command-V once. Locate the matching JSON file under `~/Library/Application Support/TSB/Sessions/`, and confirm the TSB process opens no external network connection during the run.
 
-Acceptance passes only when the JSON contains preserved `originalText`, its delivery status records the clipboard outcome, exactly one delivered string is pasted, and no second session or duplicate text appears. A failure leaves this evidence at **PENDING / NOT PASSED**; preserve any generated JSON and temporary WAV for diagnosis.
+Acceptance passes only when the JSON contains preserved `originalText`, its delivery status records the clipboard outcome, exactly one delivered string is pasted, no second session or duplicate text appears, and the app initiates no external network request. A failure leaves this evidence at **PENDING / NOT PASSED**; preserve any generated JSON and temporary WAV for diagnosis.
 
 ## Intentionally absent from this gate
 
