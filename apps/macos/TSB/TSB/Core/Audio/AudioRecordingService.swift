@@ -212,7 +212,7 @@ private final class AudioBufferCopy: @unchecked Sendable {
 final class TerminalGate: @unchecked Sendable {
     private let lock = NSLock()
     private let callback: @Sendable (Bool) -> Void
-    private var didSignal = false
+    private var firstResult: Bool?
 
     init(callback: @escaping @Sendable (Bool) -> Void) {
         self.callback = callback
@@ -221,16 +221,22 @@ final class TerminalGate: @unchecked Sendable {
     var isOpen: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return !didSignal
+        return firstResult == nil
+    }
+
+    var result: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return firstResult
     }
 
     func signal(_ succeeded: Bool) {
         lock.lock()
-        guard !didSignal else {
+        guard firstResult == nil else {
             lock.unlock()
             return
         }
-        didSignal = true
+        firstResult = succeeded
         lock.unlock()
         callback(succeeded)
     }
@@ -340,7 +346,7 @@ private final class NativeAudioCapture: @unchecked Sendable {
                 }
                 return try processor.finish()
             }
-            return CaptureEndResult(frameCount: frameCount, succeeded: true)
+            return CaptureEndResult(frameCount: frameCount, succeeded: terminal.result != false)
         } catch {
             terminal.signal(false)
             return CaptureEndResult(frameCount: processor.totalOutputFrames, succeeded: false)

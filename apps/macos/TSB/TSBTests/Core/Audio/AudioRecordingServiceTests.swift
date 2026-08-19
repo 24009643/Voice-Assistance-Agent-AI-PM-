@@ -112,6 +112,7 @@ final class AudioRecordingServiceTests: XCTestCase {
 
         XCTAssertEqual(signals.values, [false])
         XCTAssertFalse(gate.isOpen)
+        XCTAssertEqual(gate.result, false)
     }
 
     func testProcessorStopsAtFrameLimitAndSignalsOnce() throws {
@@ -192,8 +193,8 @@ final class AudioRecordingServiceTests: XCTestCase {
             onFailed: { failed.append($0) },
             onFinished: { finished.append($0) }
         )
-        harness.terminals[0](false)
-        harness.terminals[0](false)
+        harness.signalTerminal(false)
+        harness.signalTerminal(false)
         await Task.yield()
 
         XCTAssertTrue(finished.isEmpty)
@@ -201,6 +202,30 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertEqual(harness.endCounts, [1])
         XCTAssertTrue(FileManager.default.fileExists(atPath: try XCTUnwrap(failed.single).url.path))
         XCTAssertNil(service.activeURL)
+    }
+
+    func testStopCannotTurnAnAlreadyDeclaredRuntimeFailureIntoSuccess() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+        var finished: [RecordedAudio] = []
+        var failed: [RecordedAudio] = []
+
+        try service.start(
+            sessionID: fixedSessionID,
+            onFailed: { failed.append($0) },
+            onFinished: { finished.append($0) }
+        )
+        harness.signalTerminal(false)
+        service.stop()
+        await Task.yield()
+        harness.signalTerminal(false)
+        await Task.yield()
+
+        XCTAssertTrue(finished.isEmpty)
+        XCTAssertEqual(failed.count, 1)
+        XCTAssertEqual(harness.endCounts, [1])
     }
 
     func testStaleFailureAndCancelCannotClearNewerSession() async throws {
@@ -215,7 +240,7 @@ final class AudioRecordingServiceTests: XCTestCase {
         try service.start(sessionID: secondID, onFinished: { _ in })
         let secondURL = try XCTUnwrap(service.activeURL)
 
-        harness.terminals[0](false)
+        harness.signalTerminal(false, at: 0)
         service.cancel(sessionID: fixedSessionID)
         await Task.yield()
 
@@ -246,6 +271,7 @@ final class AudioRecordingServiceTests: XCTestCase {
 private final class CaptureHarness {
     var startError: Error?
     private(set) var terminals: [@Sendable (Bool) -> Void] = []
+    private var terminalStates: [ThreadSafeTerminalState] = []
     private(set) var endCounts: [Int] = []
 
     func makeCapture(
@@ -260,15 +286,23 @@ private final class CaptureHarness {
         let index = endCounts.count
         endCounts.append(0)
         terminals.append(terminal)
+        let terminalState = ThreadSafeTerminalState()
+        terminalStates.append(terminalState)
         return AudioCaptureHandle(
             start: { [weak self] in
                 if let error = self?.startError { throw error }
             },
             end: { [weak self] _ in
                 self?.endCounts[index] += 1
-                return CaptureEndResult(frameCount: 1_600, succeeded: true)
+                return CaptureEndResult(frameCount: 1_600, succeeded: terminalState.result != false)
             }
         )
+    }
+
+    func signalTerminal(_ value: Bool, at index: Int? = nil) {
+        let target = index ?? terminals.count - 1
+        terminalStates[target].setFirst(value)
+        terminals[target](value)
     }
 }
 
@@ -289,6 +323,23 @@ private final class ThreadSafeSignals: @unchecked Sendable {
     func append(_ value: Bool) {
         lock.lock()
         storage.append(value)
+        lock.unlock()
+    }
+}
+
+private final class ThreadSafeTerminalState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Bool?
+
+    var result: Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func setFirst(_ value: Bool) {
+        lock.lock()
+        if storage == nil { storage = value }
         lock.unlock()
     }
 }
