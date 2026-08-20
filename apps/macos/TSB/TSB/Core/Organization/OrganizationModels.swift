@@ -45,6 +45,23 @@ struct KnownRecordLink: Equatable, Codable, Sendable {
     let sourceSegmentIDs: [String]
 }
 
+enum CandidateRecordLinkResolutionError: Error, Equatable {
+    case unknownCandidateID(String)
+}
+
+struct CandidateRecordLink: Equatable, Codable, Sendable {
+    let candidateID: String
+    let reason: String
+    let sourceSegmentIDs: [String]
+
+    func resolve(using recordByCandidateID: [String: SessionID]) throws -> KnownRecordLink {
+        guard let recordID = recordByCandidateID[candidateID] else {
+            throw CandidateRecordLinkResolutionError.unknownCandidateID(candidateID)
+        }
+        return KnownRecordLink(recordID: recordID, reason: reason, sourceSegmentIDs: sourceSegmentIDs)
+    }
+}
+
 struct SpeculativeConnection: Equatable, Codable, Sendable {
     let statement: String
     let whySpeculative: String
