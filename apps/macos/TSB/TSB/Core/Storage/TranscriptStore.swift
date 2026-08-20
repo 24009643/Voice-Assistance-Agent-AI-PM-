@@ -9,6 +9,7 @@ final class TranscriptStore {
         .appendingPathComponent("TSB/Sessions", isDirectory: true)
 
     private let directory: URL
+    private(set) var skippedRecordCount = 0
 
     init(directory: URL = TranscriptStore.defaultDirectory) {
         self.directory = directory
@@ -54,10 +55,16 @@ final class TranscriptStore {
             }
 
             let recordURL = entry.appendingPathComponent("record.json")
-            guard fileManager.fileExists(atPath: recordURL.path),
-                  let recordValues = try? recordURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
-                  recordValues.isDirectory != true,
-                  recordValues.isSymbolicLink != true else { continue }
+            guard fileManager.fileExists(atPath: recordURL.path) else {
+                reportSkippedRecord()
+                continue
+            }
+            guard let recordValues = try? recordURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  recordValues.isRegularFile == true,
+                  recordValues.isSymbolicLink != true else {
+                reportSkippedRecord()
+                continue
+            }
             do {
                 let record = try decodeRecord(at: recordURL)
                 guard record.id == id else {
@@ -73,11 +80,13 @@ final class TranscriptStore {
         for entry in entries {
             guard entry.pathExtension == "json",
                   let rawID = UUID(uuidString: entry.deletingPathExtension().lastPathComponent),
-                  let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
-                  values.isDirectory != true,
-                  values.isSymbolicLink != true else { continue }
+                  let values = try? entry.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else { continue }
             let id = SessionID(rawValue: rawID)
             guard !canonicalIDs.contains(id) else { continue }
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                reportSkippedRecord()
+                continue
+            }
             do {
                 let record = try decodeRecord(at: entry)
                 guard record.id == id else {
@@ -154,6 +163,7 @@ final class TranscriptStore {
     }
 
     private func reportSkippedRecord() {
+        skippedRecordCount += 1
         NSLog("TSB: skipped malformed or unsafe transcript record")
     }
 }

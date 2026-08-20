@@ -17,18 +17,18 @@ struct HistorySelector {
 
     func suggestions(for current: TranscriptRecord, from records: [TranscriptRecord]) -> HistorySuggestions {
         let currentTokens = tokens(in: current.localCleanedText)
-        let ranked = records.compactMap { record -> (record: TranscriptRecord, summary: String, score: Int)? in
+        let ranked = records.compactMap { record -> (record: TranscriptRecord, points: [NumberedPoint], score: Int)? in
             guard record.id != current.id,
                   record.outcome == .success,
                   let organization = record.organization,
                   organization.state == .succeeded,
                   let output = organization.output,
-                  !output.numberedPoints.isEmpty else { return nil }
+                  !output.numberedPoints.isEmpty,
+                  (try? output.validate()) != nil else { return nil }
 
-            let summary = summary(from: output.numberedPoints)
-            let score = currentTokens.intersection(tokens(in: summary)).count
-            guard !summary.isEmpty, score > 0 else { return nil }
-            return (record, summary, score)
+            let score = currentTokens.intersection(tokens(in: output.numberedPoints.map(\.text).joined(separator: "\n"))).count
+            guard score > 0 else { return nil }
+            return (record, output.numberedPoints, score)
         }.sorted {
             if $0.score != $1.score { return $0.score > $1.score }
             if $0.record.createdAt != $1.record.createdAt { return $0.record.createdAt > $1.record.createdAt }
@@ -39,8 +39,10 @@ struct HistorySelector {
         var suggestedSummaries: [HistorySummaryDTO] = []
         var localRecordByCandidateID: [String: SessionID] = [:]
         for candidate in ranked.prefix(Self.maximumRecords) {
+            let summary = summary(from: candidate.points)
+            guard !summary.isEmpty else { continue }
             let candidateID = "h\(suggestedSummaries.count + 1)"
-            suggestedSummaries.append(HistorySummaryDTO(candidateID: candidateID, summary: candidate.summary))
+            suggestedSummaries.append(HistorySummaryDTO(candidateID: candidateID, summary: summary))
             localRecordByCandidateID[candidateID] = candidate.record.id
         }
         return HistorySuggestions(

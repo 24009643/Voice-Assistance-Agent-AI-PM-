@@ -81,6 +81,24 @@ final class HistorySelectorTests: XCTestCase {
         XCTAssertEqual(HistorySelector().suggestions(for: current, from: [unrelated]).suggestedSummaries, [])
     }
 
+    func testSuggestionsDoNotTreatGeneratedPointNumbersAsRelevantText() throws {
+        let current = makeRecord(id: 1, text: "1")
+        let candidate = makeRecord(id: 2, text: "topic", organization: organization(points: ["topic"]))
+
+        XCTAssertEqual(HistorySelector().suggestions(for: current, from: [candidate]).suggestedSummaries, [])
+    }
+
+    func testSuggestionsRejectSucceededOrganizationWithInvalidStoredOutput() throws {
+        let current = makeRecord(id: 1, text: "project")
+        let invalid = makeRecord(
+            id: 2,
+            text: "project",
+            organization: organization(points: ["project"], pointNumbers: [2])
+        )
+
+        XCTAssertEqual(HistorySelector().suggestions(for: current, from: [invalid]).suggestedSummaries, [])
+    }
+
     private func makeRecord(
         id: Int,
         text: String,
@@ -105,7 +123,8 @@ final class HistorySelectorTests: XCTestCase {
 
     private func organization(
         state: OrganizationPersistenceState = .succeeded,
-        points: [String]
+        points: [String],
+        pointNumbers: [Int]? = nil
     ) -> OrganizationRecord {
         OrganizationRecord(
             requestID: UUID(),
@@ -118,7 +137,11 @@ final class HistorySelectorTests: XCTestCase {
             output: OrganizationOutput(
                 noResultReason: nil,
                 numberedPoints: points.enumerated().map {
-                    NumberedPoint(number: $0.offset + 1, text: $0.element, sourceSegmentIDs: ["current-1"])
+                    NumberedPoint(
+                        number: pointNumbers?[$0.offset] ?? $0.offset + 1,
+                        text: $0.element,
+                        sourceSegmentIDs: ["current-1"]
+                    )
                 },
                 knownRecordLinks: [],
                 speculativeConnections: []

@@ -129,6 +129,24 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outsideRecordURL.path))
     }
 
+    func testListReportsCanonicalMissingAndNonRegularRecordFilesWithoutReadingThem() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let missing = makeRecord(id: "00000000-0000-0000-0000-000000000015", ordinal: 15, createdAt: 15)
+        let nonRegular = makeRecord(id: "00000000-0000-0000-0000-000000000016", ordinal: 16, createdAt: 16)
+        let legacyNonRegular = makeRecord(id: "00000000-0000-0000-0000-000000000017", ordinal: 17, createdAt: 17)
+        try FileManager.default.createDirectory(
+            at: canonicalRecordURL(for: missing.id, in: directory).deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: canonicalRecordURL(for: nonRegular.id, in: directory), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: legacyRecordURL(for: legacyNonRegular.id, in: directory), withIntermediateDirectories: true)
+        let store = TranscriptStore(directory: directory)
+
+        XCTAssertEqual(try store.list(), [])
+        XCTAssertEqual(store.skippedRecordCount, 3)
+    }
+
     func testUpdateDeliveryStatusAtomicallyRewritesTheSavedRecord() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
