@@ -79,6 +79,56 @@ final class TranscriptStoreTests: XCTestCase {
         )
     }
 
+    func testListPrefersCanonicalRecordsSkipsMalformedFilesAndSortsNewestFirst() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let canonical = makeRecord(id: "00000000-0000-0000-0000-000000000011", ordinal: 11, createdAt: 11)
+        let legacy = makeRecord(id: "00000000-0000-0000-0000-000000000012", ordinal: 12, createdAt: 12)
+        let staleLegacy = TranscriptRecord(
+            id: canonical.id,
+            ordinal: canonical.ordinal,
+            createdAt: canonical.createdAt,
+            durationMilliseconds: canonical.durationMilliseconds,
+            detectedLanguages: canonical.detectedLanguages,
+            originalText: "stale",
+            localCleanedText: "stale",
+            edits: [],
+            deliveryStatus: .pending
+        )
+        let canonicalURL = canonicalRecordURL(for: canonical.id, in: directory)
+        try FileManager.default.createDirectory(at: canonicalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(canonical).write(to: canonicalURL)
+        try JSONEncoder().encode(staleLegacy).write(to: legacyRecordURL(for: canonical.id, in: directory))
+        try JSONEncoder().encode(legacy).write(to: legacyRecordURL(for: legacy.id, in: directory))
+        try Data("not JSON".utf8).write(to: directory.appendingPathComponent("broken.json"))
+        let malformedID = SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000013")!)
+        let malformedURL = canonicalRecordURL(for: malformedID, in: directory)
+        try FileManager.default.createDirectory(at: malformedURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not JSON".utf8).write(to: malformedURL)
+        let store = TranscriptStore(directory: directory)
+
+        XCTAssertEqual(try store.list(), [legacy, canonical])
+    }
+
+    func testListSkipsSymlinkedRecordsOutsideTheSessionsRoot() throws {
+        let directory = try makeTemporaryDirectory()
+        let outsideDirectory = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: outsideDirectory)
+        }
+        let record = makeRecord(id: "00000000-0000-0000-0000-000000000014", ordinal: 14, createdAt: 14)
+        let outsideRecordURL = canonicalRecordURL(for: record.id, in: outsideDirectory)
+        try FileManager.default.createDirectory(at: outsideRecordURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(record).write(to: outsideRecordURL)
+        let escapedBundleURL = canonicalRecordURL(for: record.id, in: directory).deletingLastPathComponent()
+        try FileManager.default.createSymbolicLink(at: escapedBundleURL, withDestinationURL: outsideRecordURL.deletingLastPathComponent())
+        let store = TranscriptStore(directory: directory)
+
+        XCTAssertEqual(try store.list(), [])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outsideRecordURL.path))
+    }
+
     func testUpdateDeliveryStatusAtomicallyRewritesTheSavedRecord() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -217,11 +267,15 @@ final class TranscriptStoreTests: XCTestCase {
         return try JSONSerialization.data(withJSONObject: object)
     }
 
-    private func makeRecord() -> TranscriptRecord {
+    private func makeRecord(
+        id: String = "00000000-0000-0000-0000-000000000004",
+        ordinal: UInt64 = 4,
+        createdAt: TimeInterval = 1_700_000_000
+    ) -> TranscriptRecord {
         TranscriptRecord(
-            id: SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!),
-            ordinal: SessionOrdinal(rawValue: 4),
-            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            id: SessionID(rawValue: UUID(uuidString: id)!),
+            ordinal: SessionOrdinal(rawValue: ordinal),
+            createdAt: Date(timeIntervalSince1970: createdAt),
             durationMilliseconds: 1_250,
             detectedLanguages: ["zh"],
             originalText: "原始文本",

@@ -24,6 +24,79 @@ final class TranscriptStore {
         try decodeRecord(at: existingRecordURL(for: id))
     }
 
+    // ponytail: linear local scan is enough for 0.2; add an index only after measured latency or relevance failure.
+    func list() throws -> [TranscriptRecord] {
+        let fileManager = FileManager.default
+        let root = directory.standardizedFileURL
+        guard fileManager.fileExists(atPath: root.path) else { return [] }
+        let rootValues = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
+            throw TranscriptStoreError.invalidSessionPath
+        }
+
+        let entries = try fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: [.skipsHiddenFiles]
+        )
+        var canonicalIDs = Set<SessionID>()
+        var records: [TranscriptRecord] = []
+
+        for entry in entries {
+            guard let rawID = UUID(uuidString: entry.lastPathComponent) else { continue }
+            let id = SessionID(rawValue: rawID)
+            guard let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory == true else { continue }
+            canonicalIDs.insert(id)
+            guard values.isSymbolicLink != true else {
+                reportSkippedRecord()
+                continue
+            }
+
+            let recordURL = entry.appendingPathComponent("record.json")
+            guard fileManager.fileExists(atPath: recordURL.path),
+                  let recordValues = try? recordURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  recordValues.isDirectory != true,
+                  recordValues.isSymbolicLink != true else { continue }
+            do {
+                let record = try decodeRecord(at: recordURL)
+                guard record.id == id else {
+                    reportSkippedRecord()
+                    continue
+                }
+                records.append(record)
+            } catch {
+                reportSkippedRecord()
+            }
+        }
+
+        for entry in entries {
+            guard entry.pathExtension == "json",
+                  let rawID = UUID(uuidString: entry.deletingPathExtension().lastPathComponent),
+                  let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isDirectory != true,
+                  values.isSymbolicLink != true else { continue }
+            let id = SessionID(rawValue: rawID)
+            guard !canonicalIDs.contains(id) else { continue }
+            do {
+                let record = try decodeRecord(at: entry)
+                guard record.id == id else {
+                    reportSkippedRecord()
+                    continue
+                }
+                records.append(record)
+            } catch {
+                reportSkippedRecord()
+            }
+        }
+
+        return records.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            if $0.ordinal != $1.ordinal { return $0.ordinal > $1.ordinal }
+            return $0.id.rawValue.uuidString > $1.id.rawValue.uuidString
+        }
+    }
+
     func updateDeliveryStatus(id: SessionID, to status: DeliveryStatus) throws {
         try update(id: id) { $0.deliveryStatus = status }
     }
@@ -78,5 +151,9 @@ final class TranscriptStore {
 
     private func sessionDirectoryURL(for id: SessionID) -> URL {
         directory.standardizedFileURL.appendingPathComponent(id.rawValue.uuidString, isDirectory: true)
+    }
+
+    private func reportSkippedRecord() {
+        NSLog("TSB: skipped malformed or unsafe transcript record")
     }
 }
