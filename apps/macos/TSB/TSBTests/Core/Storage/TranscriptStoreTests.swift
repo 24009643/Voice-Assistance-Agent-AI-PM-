@@ -97,6 +97,43 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(rewritten.localCleanedText, record.localCleanedText)
     }
 
+    func testUpdateOrganizationAtomicallyRewritesTheCanonicalRecord() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let record = makeRecord()
+        let organization = makeOrganization()
+        let store = TranscriptStore(directory: directory)
+        try store.save(record)
+
+        try store.updateOrganization(id: record.id, to: organization)
+
+        let rewritten = try JSONDecoder().decode(
+            TranscriptRecord.self,
+            from: Data(contentsOf: canonicalRecordURL(for: record.id, in: directory))
+        )
+        XCTAssertEqual(rewritten.organization, organization)
+        XCTAssertEqual(rewritten.originalText.data(using: .utf8), record.originalText.data(using: .utf8))
+        XCTAssertEqual(rewritten.localCleanedText.data(using: .utf8), record.localCleanedText.data(using: .utf8))
+    }
+
+    func testUpdateOrganizationAtomicallyRewritesOnlyTheLegacyRecord() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let record = makeRecord()
+        let legacyURL = legacyRecordURL(for: record.id, in: directory)
+        try legacyEncodedData(for: record).write(to: legacyURL)
+        let organization = makeOrganization()
+        let store = TranscriptStore(directory: directory)
+
+        try store.updateOrganization(id: record.id, to: organization)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: canonicalRecordURL(for: record.id, in: directory).path))
+        let rewritten = try JSONDecoder().decode(TranscriptRecord.self, from: Data(contentsOf: legacyURL))
+        XCTAssertEqual(rewritten.organization, organization)
+        XCTAssertEqual(rewritten.originalText.data(using: .utf8), record.originalText.data(using: .utf8))
+        XCTAssertEqual(rewritten.localCleanedText.data(using: .utf8), record.localCleanedText.data(using: .utf8))
+    }
+
     func testFailedDeliveryStatusUpdateSurfacesErrorAndKeepsPendingRecord() throws {
         let directory = try makeTemporaryDirectory()
         defer {
@@ -191,6 +228,28 @@ final class TranscriptStoreTests: XCTestCase {
             localCleanedText: "清理文本",
             edits: [],
             deliveryStatus: .pending
+        )
+    }
+
+    private func makeOrganization() -> OrganizationRecord {
+        OrganizationRecord(
+            requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000020")!,
+            inputTextSHA256: "def456",
+            state: .succeeded,
+            provider: "Local",
+            model: "organizer-v1",
+            providerKind: .local,
+            selectedRecordIDs: [],
+            output: OrganizationOutput(
+                noResultReason: nil,
+                numberedPoints: [
+                    NumberedPoint(number: 1, text: "摘要", sourceSegmentIDs: ["current-1"])
+                ],
+                knownRecordLinks: [],
+                speculativeConnections: []
+            ),
+            errorCode: nil,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_002)
         )
     }
 }

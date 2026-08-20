@@ -87,6 +87,7 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
     let localEvaluationConsent: Bool?
     let reviewState: TranscriptReviewState
     let intendedUse: TranscriptIntendedUse
+    var organization: OrganizationRecord?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -107,6 +108,7 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         case localEvaluationConsent
         case reviewState
         case intendedUse
+        case organization
     }
 
     init(
@@ -127,7 +129,8 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         languageSlice: String? = nil,
         localEvaluationConsent: Bool? = nil,
         reviewState: TranscriptReviewState = .unreviewed,
-        intendedUse: TranscriptIntendedUse = .localEvaluation
+        intendedUse: TranscriptIntendedUse = .localEvaluation,
+        organization: OrganizationRecord? = nil
     ) {
         self.id = id
         self.ordinal = ordinal
@@ -147,6 +150,7 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         self.localEvaluationConsent = localEvaluationConsent
         self.reviewState = reviewState
         self.intendedUse = intendedUse
+        self.organization = organization
     }
 
     init(from decoder: Decoder) throws {
@@ -169,5 +173,6 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         localEvaluationConsent = try container.decodeIfPresent(Bool.self, forKey: .localEvaluationConsent)
         reviewState = try container.decodeIfPresent(TranscriptReviewState.self, forKey: .reviewState) ?? .unreviewed
         intendedUse = try container.decodeIfPresent(TranscriptIntendedUse.self, forKey: .intendedUse) ?? .localEvaluation
+        organization = try container.decodeIfPresent(OrganizationRecord.self, forKey: .organization)
     }
 }

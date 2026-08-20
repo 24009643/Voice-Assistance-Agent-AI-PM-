@@ -25,10 +25,11 @@ final class TranscriptStore {
     }
 
     func updateDeliveryStatus(id: SessionID, to status: DeliveryStatus) throws {
-        let recordURL = existingRecordURL(for: id)
-        var record = try decodeRecord(at: recordURL)
-        record.deliveryStatus = status
-        try encodedData(for: record).write(to: recordURL, options: .atomic)
+        try update(id: id) { $0.deliveryStatus = status }
+    }
+
+    func updateOrganization(id: SessionID, to organization: OrganizationRecord) throws {
+        try update(id: id) { $0.organization = organization }
     }
 
     func removeSession(id: SessionID) throws {
@@ -53,6 +54,13 @@ final class TranscriptStore {
 
     private func decodeRecord(at url: URL) throws -> TranscriptRecord {
         try JSONDecoder().decode(TranscriptRecord.self, from: Data(contentsOf: url))
+    }
+
+    private func update(id: SessionID, apply: (inout TranscriptRecord) -> Void) throws {
+        let recordURL = existingRecordURL(for: id)
+        var record = try decodeRecord(at: recordURL)
+        apply(&record)
+        try encodedData(for: record).write(to: recordURL, options: .atomic)
     }
 
     private func existingRecordURL(for id: SessionID) -> URL {
