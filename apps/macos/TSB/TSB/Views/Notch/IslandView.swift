@@ -2,9 +2,9 @@ import SwiftUI
 
 struct IslandView: View {
     let presentation: IslandPresentation
-    let onIntent: (IslandIntent) -> Void
-    let onLocalAction: (IslandAction) -> Void
+    let onAction: (IslandAction, Set<SessionID>) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedChamber = IslandChamber.original
     @State private var selectedRecordIDs: Set<SessionID> = []
 
@@ -22,8 +22,8 @@ struct IslandView: View {
         .frame(width: presentation.size.width, height: presentation.size.height)
         .contentShape(Rectangle())
         .gesture(dragGesture)
-        .animation(animation, value: presentation.size)
-        .animation(animation, value: presentation.mode)
+        .animation(Self.animation(reduceMotion: reduceMotion), value: presentation.size)
+        .animation(Self.animation(reduceMotion: reduceMotion), value: presentation.mode)
         .onChange(of: presentation.suggestions.map(\.id)) { _, availableIDs in
             selectedRecordIDs.formIntersection(Set(availableIDs))
         }
@@ -295,12 +295,8 @@ struct IslandView: View {
         switch action {
         case let .selectChamber(chamber):
             selectedChamber = chamber
-        case .dismiss, .reopenLatest:
-            onLocalAction(action)
         default:
-            if let intent = presentation.intent(for: action, selectedRecordIDs: selectedRecordIDs) {
-                onIntent(intent)
-            }
+            onAction(action, selectedRecordIDs)
         }
     }
 
@@ -346,7 +342,7 @@ struct IslandView: View {
                 moveChamber(for: horizontal)
             } else if vertical > 28,
                       abs(vertical) > abs(horizontal),
-                      presentation.gestureActions.contains(.reopenLatest) {
+                      control(for: .reopenLatest) != nil {
                 activate(.reopenLatest)
             }
         }
@@ -367,12 +363,9 @@ struct IslandView: View {
         }
     }
 
-    private var animation: Animation? {
-        switch presentation.transition {
-        case .springMorph:
-            .spring(response: 0.28, dampingFraction: 0.86)
-        case .opacityAndSize:
-            .easeOut(duration: 0.12)
-        }
+    static func animation(reduceMotion: Bool) -> Animation? {
+        reduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.28, dampingFraction: 0.86)
     }
 }

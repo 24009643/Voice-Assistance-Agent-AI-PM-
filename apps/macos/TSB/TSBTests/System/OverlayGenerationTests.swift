@@ -90,6 +90,91 @@ final class OverlayGenerationTests: XCTestCase {
         XCTAssertEqual(panel.latestResultSessionID, secondaryID)
     }
 
+    @MainActor
+    func testInitialFallbackIdleIsHiddenWhileHardwareNotchIdleNeverInterceptsClicks() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let idle = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil)
+        let fallback = NotchOverlayPanel(
+            screen: screen,
+            hasHardwareNotch: false,
+            onIntent: { _ in }
+        )
+        let hardwareNotch = NotchOverlayPanel(
+            screen: screen,
+            hasHardwareNotch: true,
+            onIntent: { _ in }
+        )
+
+        fallback.update(idle)
+        hardwareNotch.update(idle)
+        fallback.reattach(to: screen)
+
+        XCTAssertFalse(fallback.isVisible)
+        XCTAssertTrue(fallback.isIgnoringMouseEvents)
+        XCTAssertTrue(hardwareNotch.isVisible)
+        XCTAssertTrue(hardwareNotch.isIgnoringMouseEvents)
+    }
+
+    @MainActor
+    func testFallbackLatestResultCanCollapseAndReopenWithVisibleButtons() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let sessionID = SessionID(rawValue: UUID())
+        let panel = NotchOverlayPanel(
+            screen: screen,
+            hasHardwareNotch: false,
+            onIntent: { _ in }
+        )
+        panel.update(AppSnapshot(
+            sessionID: sessionID,
+            status: .delivered,
+            elapsedMilliseconds: 0,
+            previewText: "cleaned",
+            originalText: "raw",
+            message: "已复制 · 按 ⌘V 粘贴"
+        ))
+
+        panel.perform(.dismiss)
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertFalse(panel.isIgnoringMouseEvents)
+        XCTAssertEqual(panel.presentedMode, .idle)
+
+        panel.perform(.reopenLatest)
+        XCTAssertEqual(panel.presentedMode, .localDelivered)
+    }
+
+    @MainActor
+    func testScreenParameterNotificationReattachesPanelAndObserverStopsCleanly() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let center = NotificationCenter()
+        let panel = NotchOverlayPanel(screen: screen, onIntent: { _ in })
+        panel.update(AppSnapshot(
+            sessionID: SessionID(rawValue: UUID()),
+            status: .recording,
+            elapsedMilliseconds: 0,
+            previewText: "draft",
+            message: "实时草稿"
+        ))
+        var callbacks = 0
+        let observer = ScreenParameterObserver(center: center) {
+            callbacks += 1
+            panel.reattach(to: screen)
+        }
+
+        observer.start()
+        center.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+
+        XCTAssertEqual(callbacks, 1)
+        let expectedFrame = screen.islandFrame(for: CGSize(width: 520, height: 82))
+        let presentedFrame = try XCTUnwrap(panel.presentedFrame)
+        XCTAssertEqual(presentedFrame.size, expectedFrame.size)
+        XCTAssertEqual(presentedFrame.midX, expectedFrame.midX, accuracy: 1)
+        XCTAssertEqual(presentedFrame.maxY, expectedFrame.maxY, accuracy: 1)
+
+        observer.stop()
+        center.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        XCTAssertEqual(callbacks, 1)
+    }
+
     private func organizedRecord() -> OrganizationRecord {
         OrganizationRecord(
             requestID: UUID(),

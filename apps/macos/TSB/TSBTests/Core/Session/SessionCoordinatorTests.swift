@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Carbon
 import XCTest
@@ -27,9 +28,11 @@ final class SessionCoordinatorTests: XCTestCase {
         )
         let authorizationAttemptID = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
         XCTAssertEqual(harness.coordinator.snapshot, AppSnapshot(
+            sessionID: try XCTUnwrap(harness.startedSessionIDs.single),
             status: .delivered,
             elapsedMilliseconds: 1_000,
             previewText: "原始文本",
+            originalText: "原始文本",
             message: "已复制 · 按 ⌘V 粘贴",
             organizationPhase: .authorizationRequired,
             organizationRequestID: authorizationAttemptID
@@ -144,9 +147,11 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.savedRecords.count, 1)
         XCTAssertEqual(harness.copyCount, 1)
         XCTAssertEqual(harness.coordinator.snapshot, AppSnapshot(
+            sessionID: try XCTUnwrap(harness.startedSessionIDs.single),
             status: .delivered,
             elapsedMilliseconds: 1_000,
             previewText: "原始文本",
+            originalText: "原始文本",
             message: "已复制，但未能记录复制状态"
         ))
     }
@@ -320,6 +325,23 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.previewText, "")
     }
 
+    func testSessionScopedStopCannotStopANewerRecording() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed")
+
+        await harness.coordinator.handle(.toggleRecording)
+        let recordingA = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.cancelRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        let recordingB = try XCTUnwrap(harness.startedSessionIDs.last)
+
+        harness.coordinator.stopRecording(sessionID: recordingA)
+        XCTAssertEqual(harness.stopCount, 0)
+        XCTAssertEqual(harness.coordinator.snapshot.sessionID, recordingB)
+
+        harness.coordinator.stopRecording(sessionID: recordingB)
+        XCTAssertEqual(harness.stopCount, 1)
+    }
+
     func testNewRecordingOwnsMainWhileOlderSenseVoiceFinishesInSecondaryCard() async throws {
         let harness = CoordinatorHarness(transcript: "first final", suspendsTranscription: true)
 
@@ -343,7 +365,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.status, .delivered)
     }
 
-    func testOlderDeliveredSessionStaysSecondaryThenRemovesOnlyItself() async throws {
+    func testOlderDeliveredSessionStaysAsLatestAfterItsExpiryTimer() async throws {
         let harness = CoordinatorHarness(transcript: "first final", suspendsTranscription: true)
 
         await harness.coordinator.handle(.toggleRecording)
@@ -366,6 +388,28 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
         XCTAssertEqual(harness.coordinator.snapshot.previewText, "new live draft")
+        XCTAssertEqual(
+            harness.coordinator.snapshot.secondaryProcessing.map(\.id),
+            [try XCTUnwrap(harness.startedSessionIDs.first)]
+        )
+    }
+
+    func testOneLatestTerminalResultSurvivesExpiryUntilANewerResultReplacesIt() async throws {
+        let harness = CoordinatorHarness(transcript: "retained result")
+
+        await harness.runOneSession()
+        let resultA = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.waitUntilSecondaryRemovalScheduled()
+
+        harness.runScheduledSecondaryRemoval(at: 0)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.map(\.id), [resultA])
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitForDelivery(count: 2)
+
+        XCTAssertNotEqual(harness.coordinator.snapshot.sessionID, resultA)
         XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
     }
 
@@ -483,6 +527,110 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 1)
     }
 
+    func testMainSnapshotSeparatesRawOriginalFromCleanedPreview() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "raw spoken text",
+            cleanedText: "reviewed local text"
+        )
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.coordinator.snapshot.previewText, "reviewed local text")
+        XCTAssertEqual(harness.coordinator.snapshot.originalText, "raw spoken text")
+    }
+
+    func testMainSnapshotCarriesItsSessionIdentity() async throws {
+        let harness = CoordinatorHarness(transcript: "identified")
+
+        await harness.coordinator.handle(.toggleRecording)
+
+        XCTAssertEqual(
+            harness.coordinator.snapshot.sessionID,
+            try XCTUnwrap(harness.startedSessionIDs.single)
+        )
+    }
+
+    func testSecondarySnapshotKeepsRawOriginalSeparateFromCleanedPreview() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "raw older text",
+            cleanedText: "reviewed older text"
+        )
+
+        await harness.runOneSession()
+        await harness.coordinator.handle(.toggleRecording)
+        let older = try XCTUnwrap(harness.coordinator.snapshot.secondaryProcessing.single)
+
+        XCTAssertEqual(older.previewText, "reviewed older text")
+        XCTAssertEqual(older.originalText, "raw older text")
+    }
+
+    func testFailedNewRecordingDoesNotRetargetOlderResultActions() async throws {
+        let relatedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(
+            transcript: "result A",
+            startRecordingErrors: [nil, TestError.recordingStart],
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true),
+            organizationErrors: [TestError.organization, nil, nil],
+            historySuggestions: HistorySuggestions(
+                suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: "related")],
+                localRecordByCandidateID: ["h1": relatedID]
+            )
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let resultA = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        let failedRequest = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
+
+        await harness.coordinator.handle(.toggleRecording)
+        XCTAssertNil(harness.coordinator.snapshot.sessionID)
+
+        await harness.coordinator.handle(.retry(sessionID: resultA, requestID: failedRequest))
+        await harness.waitUntilOrganizationStarts(count: 2)
+        XCTAssertEqual(harness.organizationInputs[1].segments.map(\.text), ["result A"])
+        await harness.waitUntilOrganizationFinishes()
+
+        await harness.coordinator.handle(.enrichLinks(sessionID: resultA, selectedRecordIDs: [relatedID]))
+        await harness.waitUntilOrganizationStarts(count: 3)
+        XCTAssertEqual(harness.organizationInputs[2].selectedCandidateIDs, ["h1"])
+    }
+
+    func testVisiblePanelRetryRoutesThroughAppControllerMappingToOlderCoordinatorSession() async throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        var emittedIntents: [IslandIntent] = []
+        let panel = NotchOverlayPanel(screen: screen, onIntent: { emittedIntents.append($0) })
+        let harness = CoordinatorHarness(
+            transcript: "panel result A",
+            startRecordingErrors: [nil, TestError.recordingStart],
+            organizationSettings: remoteOrganizationSettings(),
+            organizationErrors: [TestError.organization, nil]
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let resultA = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        let failedRequest = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
+        panel.update(harness.coordinator.snapshot)
+
+        await harness.coordinator.handle(.toggleRecording)
+        panel.update(harness.coordinator.snapshot)
+        panel.perform(.dismiss)
+        panel.perform(.reopenLatest)
+        panel.perform(.retryOrganization(failedRequest))
+
+        let islandIntent = try XCTUnwrap(emittedIntents.last)
+        let organizationIntent = try XCTUnwrap(AppController.organizationIntent(for: islandIntent))
+        await harness.coordinator.handle(organizationIntent)
+        await harness.waitUntilOrganizationStarts(count: 2)
+
+        XCTAssertEqual(harness.organizationInputs[1].segments.map(\.text), ["panel result A"])
+        if case let .retry(sessionID, _) = organizationIntent {
+            XCTAssertEqual(sessionID, resultA)
+        } else {
+            XCTFail("Expected retry route")
+        }
+    }
+
     func testOrganizationFailureAndRetryNeverCopyAgainAndUseNewRequestID() async throws {
         let harness = CoordinatorHarness(
             transcript: "retry me",
@@ -587,7 +735,7 @@ final class SessionCoordinatorTests: XCTestCase {
         }
     }
 
-    func testOrganizedMainSchedulesBoundedHideOnlyAfterNewRecordingMakesItSecondary() async throws {
+    func testOrganizedMainExpiryKeepsTheSingleLatestResultActionable() async throws {
         let harness = CoordinatorHarness(
             transcript: "organized before next recording",
             organizationSettings: remoteOrganizationSettings()
@@ -601,7 +749,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.scheduledSecondaryRemovals.single?.delay, 1.2)
         guard !harness.scheduledSecondaryRemovals.isEmpty else { return }
         harness.runScheduledSecondaryRemoval(at: 0)
-        XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.count, 1)
     }
 
     func testFailedPreparationRearmsSecondaryRemovalWhenOlderTerminalTimerIsPending() async throws {
@@ -629,7 +777,7 @@ final class SessionCoordinatorTests: XCTestCase {
         harness.runScheduledSecondaryRemoval(at: 0)
         XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.id, organizedSessionID)
         harness.runScheduledSecondaryRemoval(at: 1)
-        XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.id, organizedSessionID)
     }
 
     func testLocalOnlyFrozenAtStopUsesDeterministicOrganizerAndNeverDispatchesRemote() async throws {
@@ -1044,6 +1192,7 @@ private final class CoordinatorHarness {
     private let suspendsTranscription: Bool
     private let suspendsOrganization: Bool
     private let copyResult: Bool
+    private let startRecordingErrors: [Error?]
     private var organizationSettings: OrganizationSettings
     private var organizationAPIKey: String
     private let organizationErrors: [Error?]
@@ -1092,6 +1241,7 @@ private final class CoordinatorHarness {
         cleanupError: Error? = nil,
         suspendsTranscription: Bool = false,
         copyResult: Bool = true,
+        startRecordingErrors: [Error?] = [],
         organizationSettings: OrganizationSettings = OrganizationSettings(),
         organizationAPIKey: String = "synthetic-key",
         suspendsOrganization: Bool = false,
@@ -1110,6 +1260,7 @@ private final class CoordinatorHarness {
         self.cleanupError = cleanupError
         self.suspendsTranscription = suspendsTranscription
         self.copyResult = copyResult
+        self.startRecordingErrors = startRecordingErrors
         self.organizationSettings = organizationSettings
         self.organizationAPIKey = organizationAPIKey
         self.suspendsOrganization = suspendsOrganization
@@ -1124,8 +1275,13 @@ private final class CoordinatorHarness {
         SessionCoordinator(
             dependencies: .init(
                 startRecording: { [weak self] sessionID, onPreview, onLevel, onFinished, onFailed in
+                    let attempt = self?.startedSessionIDs.count ?? 0
                     self?.events.append(.recordingStarted)
                     self?.startedSessionIDs.append(sessionID)
+                    if attempt < (self?.startRecordingErrors.count ?? 0),
+                       let error = self?.startRecordingErrors[attempt] {
+                        throw error
+                    }
                     self?.onPreview.append(onPreview)
                     self?.onLevel.append(onLevel)
                     self?.onFinished.append(onFinished)
@@ -1297,9 +1453,9 @@ private final class CoordinatorHarness {
         await Task.yield()
     }
 
-    func waitForDelivery() async {
+    func waitForDelivery(count: Int = 1) async {
         for _ in 0..<100 {
-            if !deliveryStatuses.isEmpty {
+            if deliveryStatuses.count >= count {
                 return
             }
             await Task.yield()
@@ -1405,6 +1561,7 @@ private enum TestError: Error {
     case cleanup
     case organization
     case deallocated
+    case recordingStart
 }
 
 private func remoteOrganizationSettings(

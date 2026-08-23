@@ -83,6 +83,7 @@ final class SessionCoordinator {
     private var processingTasks: [SessionID: Task<Void, Never>] = [:]
     private var organizationQueue: [OrganizationJob] = []
     private var activeOrganization: (job: OrganizationJob, task: Task<Void, Never>)?
+    private var latestTerminalSessionID: SessionID?
     private var nextOrdinal: UInt64 = 1
 
     private(set) var snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil) {
@@ -119,13 +120,19 @@ final class SessionCoordinator {
 
     func handleToggleRecording() {
         if let recordingSessionID {
-            guard var session = sessions[recordingSessionID], !session.stopRequested else { return }
-            session.stopRequested = true
-            sessions[recordingSessionID] = session
-            dependencies.stopRecording()
+            stopRecording(sessionID: recordingSessionID)
         } else {
             startRecording()
         }
+    }
+
+    func stopRecording(sessionID: SessionID) {
+        guard recordingSessionID == sessionID,
+              var session = sessions[sessionID],
+              !session.stopRequested else { return }
+        session.stopRequested = true
+        sessions[sessionID] = session
+        dependencies.stopRecording()
     }
 
     private func startRecording() {
@@ -133,8 +140,9 @@ final class SessionCoordinator {
             publishSnapshot()
             return
         }
+        let previousMainID = mainSessionID
         var previousMainToRetain: SessionID?
-        if let previousMainID = mainSessionID {
+        if let previousMainID {
             if canRemoveSession(previousMainID) {
                 sessions.removeValue(forKey: previousMainID)
             } else {
@@ -181,6 +189,7 @@ final class SessionCoordinator {
         } catch {
             recordingSessionID = nil
             sessions.removeValue(forKey: session.id)
+            mainSessionID = previousMainID.flatMap { sessions[$0] == nil ? nil : $0 }
             Task { @MainActor [dependencies] in
                 await dependencies.cancelPreview(session.id)
             }
@@ -837,6 +846,7 @@ final class SessionCoordinator {
     }
 
     private func scheduleSecondaryRemovalIfEligible(_ sessionID: SessionID) {
+        retainAsLatestTerminalIfEligible(sessionID)
         guard mainSessionID != sessionID,
               var session = sessions[sessionID],
               !session.isProcessing,
@@ -854,6 +864,10 @@ final class SessionCoordinator {
                   current.organizationPhase == phase else { return }
             current.secondaryRemovalScheduled = false
             self.sessions[sessionID] = current
+            if self.latestTerminalSessionID == sessionID {
+                self.publishSnapshot()
+                return
+            }
             guard self.mainSessionID != sessionID,
                   !current.isProcessing,
                   !self.hasOrganizationWork(sessionID, session: current),
@@ -865,6 +879,38 @@ final class SessionCoordinator {
             }
             self.publishSnapshot()
         }
+    }
+
+    private func retainAsLatestTerminalIfEligible(_ sessionID: SessionID) {
+        guard var session = sessions[sessionID],
+              let transcript = session.transcript,
+              !transcript.originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !session.isProcessing,
+              !hasOrganizationWork(sessionID, session: session) else { return }
+
+        if let latestTerminalSessionID,
+           let latest = sessions[latestTerminalSessionID],
+           latest.ordinal > session.ordinal {
+            session.resultRetainedForDisplay = false
+            sessions[sessionID] = session
+            if canRemoveSession(sessionID) {
+                sessions.removeValue(forKey: sessionID)
+            }
+            return
+        }
+
+        if let previousID = latestTerminalSessionID, previousID != sessionID,
+           var previous = sessions[previousID] {
+            previous.resultRetainedForDisplay = false
+            previous.secondaryRemovalScheduled = false
+            sessions[previousID] = previous
+            if canRemoveSession(previousID) {
+                sessions.removeValue(forKey: previousID)
+            }
+        }
+        latestTerminalSessionID = sessionID
+        session.resultRetainedForDisplay = true
+        sessions[sessionID] = session
     }
 
     private func canRemoveSession(_ sessionID: SessionID) -> Bool {
@@ -896,6 +942,7 @@ final class SessionCoordinator {
                     id: $0.id,
                     status: $0.status,
                     previewText: $0.previewText,
+                    originalText: $0.transcript?.originalText ?? "",
                     message: $0.message,
                     organizationPhase: $0.organizationPhase,
                     organizationRequestID: $0.organizationRequestID,
@@ -903,9 +950,11 @@ final class SessionCoordinator {
                 )
             }
         snapshot = AppSnapshot(
+            sessionID: main.id,
             status: main.status,
             elapsedMilliseconds: main.durationMilliseconds,
             previewText: main.previewText,
+            originalText: main.transcript?.originalText ?? "",
             message: main.message,
             audioLevel: main.audioLevel,
             organizationPhase: main.organizationPhase,

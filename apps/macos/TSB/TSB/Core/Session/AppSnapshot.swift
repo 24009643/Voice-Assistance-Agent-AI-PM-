@@ -26,6 +26,7 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
     let id: SessionID
     let status: SessionStatus
     let previewText: String
+    let originalText: String
     let message: String
     let organizationPhase: OrganizationPhase
     let organizationRequestID: UUID?
@@ -35,6 +36,7 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
         id: SessionID,
         status: SessionStatus,
         previewText: String,
+        originalText: String = "",
         message: String,
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
@@ -43,6 +45,7 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
         self.id = id
         self.status = status
         self.previewText = previewText
+        self.originalText = originalText
         self.message = message
         self.organizationPhase = organizationPhase
         self.organizationRequestID = organizationRequestID
@@ -51,9 +54,11 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
 }
 
 struct AppSnapshot: Equatable, Sendable {
+    let sessionID: SessionID?
     let status: SessionStatus
     let elapsedMilliseconds: Int
     let previewText: String
+    let originalText: String
     let message: String?
     let audioLevel: Float
     let organizationPhase: OrganizationPhase
@@ -63,9 +68,11 @@ struct AppSnapshot: Equatable, Sendable {
     let canStartRecording: Bool
 
     init(
+        sessionID: SessionID? = nil,
         status: SessionStatus,
         elapsedMilliseconds: Int,
         previewText: String,
+        originalText: String = "",
         message: String?,
         audioLevel: Float = 0,
         organizationPhase: OrganizationPhase = .notRequested,
@@ -74,9 +81,11 @@ struct AppSnapshot: Equatable, Sendable {
         secondaryProcessing: [SecondaryProcessingSnapshot] = [],
         canStartRecording: Bool = true
     ) {
+        self.sessionID = sessionID
         self.status = status
         self.elapsedMilliseconds = elapsedMilliseconds
         self.previewText = previewText
+        self.originalText = originalText
         self.message = message
         self.audioLevel = audioLevel
         self.organizationPhase = organizationPhase

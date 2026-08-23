@@ -21,8 +21,8 @@ final class AppController: ObservableObject {
     private let escapeMonitor: EscapeKeyMonitor
     private let modelError: String?
     private var notchOverlay: NotchOverlayPanel?
-    private let currentSessionID: () -> SessionID?
     private let manualCopy: (String) -> Bool
+    private var screenParameterObserver: ScreenParameterObserver?
     private var intentTask: Task<Void, Never>?
     private var microphoneRequestLatch = MicrophoneRequestLatch()
 
@@ -52,6 +52,21 @@ final class AppController: ObservableObject {
         )
     }
 
+    static func organizationIntent(for intent: IslandIntent) -> OrganizationIntent? {
+        switch intent {
+        case let .setLocalOnly(sessionID, enabled):
+            .setLocalOnly(sessionID: sessionID, enabled: enabled)
+        case let .cancelOrganization(sessionID, requestID):
+            .cancel(sessionID: sessionID, requestID: requestID)
+        case let .retryOrganization(sessionID, requestID):
+            .retry(sessionID: sessionID, requestID: requestID)
+        case let .generateLinks(sessionID, selectedRecordIDs):
+            .enrichLinks(sessionID: sessionID, selectedRecordIDs: selectedRecordIDs)
+        case .stopRecording, .copy:
+            nil
+        }
+    }
+
     init() {
         let state = AppState()
         let sessionsDirectory = TranscriptStore.defaultDirectory
@@ -62,7 +77,6 @@ final class AppController: ObservableObject {
         let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTest.XCTestCase") != nil
         let clipboard = ClipboardService.system
-        var activeSessionID: SessionID?
         var notchOverlay: NotchOverlayPanel?
         let escapeMonitor = EscapeKeyMonitor(
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
@@ -86,7 +100,6 @@ final class AppController: ObservableObject {
         let coordinator = SessionCoordinator(
             dependencies: .init(
                 startRecording: { sessionID, onPreview, onLevel, onFinished, onFailed in
-                    activeSessionID = sessionID
                     let feed = livePreview.start(sessionID: sessionID, onPreview: onPreview)
                     try recorder.start(
                         sessionID: sessionID,
@@ -175,8 +188,8 @@ final class AppController: ObservableObject {
         self.escapeMonitor = escapeMonitor
         self.modelError = modelError
         self.notchOverlay = nil
-        self.currentSessionID = { activeSessionID }
         self.manualCopy = { clipboard.copy($0) }
+        self.screenParameterObserver = nil
         notchOverlay = NSScreen.findScreenForNotch().map { screen in
             NotchOverlayPanel(screen: screen) { [weak self] intent in
                 self?.receive(intent)
@@ -184,12 +197,17 @@ final class AppController: ObservableObject {
         }
         self.notchOverlay = notchOverlay
         notchOverlay?.update(state.snapshot)
+        screenParameterObserver = ScreenParameterObserver { [weak self] in
+            guard let screen = NSScreen.findScreenForNotch() else { return }
+            self?.notchOverlay?.reattach(to: screen)
+        }
         escapeMonitor.onEscapePressed = { [weak self] in
             self?.dispatch(.cancelRecording)
         }
     }
 
     func start() {
+        screenParameterObserver?.start()
         coordinator.recoverInterruptedOrganizations()
         if let error = hotkey.start() {
             state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: error.message)
@@ -207,6 +225,7 @@ final class AppController: ObservableObject {
         intentTask = nil
         hotkey.stop()
         escapeMonitor.stop()
+        screenParameterObserver?.stop()
     }
 
     func toggleForDevelopment() {
@@ -248,25 +267,21 @@ final class AppController: ObservableObject {
     }
 
     private func receive(_ intent: IslandIntent) {
+        if let organizationIntent = Self.organizationIntent(for: intent) {
+            dispatch(organizationIntent)
+            return
+        }
         switch intent {
-        case .stopRecording:
-            dispatch(.toggleRecording)
-        case let .setLocalOnly(enabled):
-            guard let sessionID = currentSessionID() else { return }
-            dispatch(.setLocalOnly(sessionID: sessionID, enabled: enabled))
-        case let .cancelOrganization(targetSessionID, requestID):
-            guard let sessionID = targetSessionID ?? currentSessionID() else { return }
-            dispatch(.cancel(sessionID: sessionID, requestID: requestID))
-        case let .retryOrganization(targetSessionID, requestID):
-            guard let sessionID = targetSessionID ?? currentSessionID() else { return }
-            dispatch(.retry(sessionID: sessionID, requestID: requestID))
-        case let .generateLinks(targetSessionID, selectedRecordIDs):
-            guard let sessionID = targetSessionID ?? currentSessionID() else { return }
-            dispatch(.enrichLinks(sessionID: sessionID, selectedRecordIDs: selectedRecordIDs))
+        case let .stopRecording(sessionID):
+            enqueue { [weak self] in
+                self?.coordinator.stopRecording(sessionID: sessionID)
+            }
         case let .copy(text):
             enqueue { [weak self] in
                 _ = self?.manualCopy(text)
             }
+        case .setLocalOnly, .cancelOrganization, .retryOrganization, .generateLinks:
+            break
         }
     }
 

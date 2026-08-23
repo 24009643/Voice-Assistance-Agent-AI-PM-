@@ -18,6 +18,10 @@ struct NotchWaveformView: View {
             }
         }
         .frame(width: 36, height: 26)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: level)
+        .animation(Self.animation(reduceMotion: reduceMotion), value: level)
+    }
+
+    static func animation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.08)
     }
 }

@@ -5,8 +5,7 @@ final class IslandPresentationTests: XCTestCase {
     func testIdleUsesTheCompactCandidate() throws {
         let presentation = try XCTUnwrap(IslandPresentation.make(
             for: snapshot(status: .idle),
-            screenWidth: 1_440,
-            reduceMotion: false
+            screenWidth: 1_440
         ))
 
         XCTAssertEqual(presentation.mode, .idle)
@@ -14,14 +13,15 @@ final class IslandPresentationTests: XCTestCase {
     }
 
     func testRecordingUsesLiveCandidateAndExposesStopAndLocalOnly() throws {
+        let sessionID = SessionID(rawValue: UUID())
         let presentation = try XCTUnwrap(IslandPresentation.make(
             for: snapshot(
+                sessionID: sessionID,
                 status: .recording,
                 previewText: "a live one-line draft",
                 audioLevel: 0.6
             ),
-            screenWidth: 1_440,
-            reduceMotion: false
+            screenWidth: 1_440
         ))
 
         XCTAssertEqual(presentation.mode, .recording)
@@ -30,6 +30,11 @@ final class IslandPresentationTests: XCTestCase {
         XCTAssertEqual(presentation.audioLevel, 0.6)
         XCTAssertTrue(presentation.controls.map(\.action).contains(.stopRecording))
         XCTAssertTrue(presentation.controls.map(\.action).contains(.setLocalOnly(true)))
+        XCTAssertEqual(presentation.intent(for: .stopRecording), .stopRecording(sessionID: sessionID))
+        XCTAssertEqual(
+            presentation.intent(for: .setLocalOnly(true)),
+            .setLocalOnly(sessionID: sessionID, enabled: true)
+        )
     }
 
     func testLocalDeliveryStaysCompactAndOrganizingNeverAutoHides() throws {
@@ -42,8 +47,7 @@ final class IslandPresentationTests: XCTestCase {
                 organizationPhase: .organizing,
                 organizationRequestID: requestID
             ),
-            screenWidth: 1_440,
-            reduceMotion: false
+            screenWidth: 1_440
         ))
 
         XCTAssertEqual(presentation.mode, .organizing)
@@ -104,8 +108,7 @@ final class IslandPresentationTests: XCTestCase {
                     ),
                 ]
             ),
-            screenWidth: 1_440,
-            reduceMotion: false
+            screenWidth: 1_440
         ))
 
         XCTAssertNil(presentation.autoHideDelay)
@@ -127,8 +130,7 @@ final class IslandPresentationTests: XCTestCase {
                     ),
                 ]
             ),
-            screenWidth: 1_440,
-            reduceMotion: false
+            screenWidth: 1_440
         ))
 
         XCTAssertNil(presentation.autoHideDelay)
@@ -138,16 +140,18 @@ final class IslandPresentationTests: XCTestCase {
         let presentation = try XCTUnwrap(IslandPresentation.make(
             for: snapshot(
                 status: .delivered,
-                previewText: "original local text",
+                previewText: "cleaned local text",
+                originalText: "raw original text",
                 organizationPhase: .organized(organizedRecord())
             ),
-            screenWidth: 800,
-            reduceMotion: false
+            screenWidth: 800
         ))
 
         XCTAssertEqual(presentation.mode, .organized)
         XCTAssertEqual(presentation.size, CGSize(width: 776, height: 154))
         XCTAssertEqual(presentation.layout, .threeChambers)
+        XCTAssertEqual(presentation.originalText, "raw original text")
+        XCTAssertEqual(presentation.draft, "cleaned local text")
         XCTAssertEqual(presentation.chambers, IslandChamber.allCases)
         XCTAssertEqual(presentation.numberedPoints.map(\.text), ["First point", "Second point"])
         XCTAssertEqual(presentation.speculativeConnections.map(\.label), ["推测"])
@@ -160,8 +164,7 @@ final class IslandPresentationTests: XCTestCase {
                 previewText: "original local text",
                 organizationPhase: .organized(organizedRecord())
             ),
-            screenWidth: 620,
-            reduceMotion: false
+            screenWidth: 620
         ))
 
         XCTAssertEqual(presentation.layout, .singleChamber)
@@ -175,7 +178,6 @@ final class IslandPresentationTests: XCTestCase {
         let idle = try XCTUnwrap(IslandPresentation.make(
             for: snapshot(status: .idle),
             screenWidth: 620,
-            reduceMotion: false,
             hasLatestResult: true
         ))
         let result = try XCTUnwrap(IslandPresentation.make(
@@ -184,31 +186,22 @@ final class IslandPresentationTests: XCTestCase {
                 previewText: "original local text",
                 organizationPhase: .organized(organizedRecord())
             ),
-            screenWidth: 620,
-            reduceMotion: false
+            screenWidth: 620
         ))
 
-        for presentation in [idle, result] {
-            let visibleActions = Set(presentation.controls.map(\.action))
-            XCTAssertTrue(presentation.gestureActions.isSubset(of: visibleActions))
-            XCTAssertTrue(presentation.controls.allSatisfy { !$0.accessibilityLabel.isEmpty })
-        }
+        XCTAssertEqual(idle.controls.map(\.action), [.reopenLatest])
+        XCTAssertEqual(result.controls.compactMap(\.chamberSelection), IslandChamber.allCases)
+        XCTAssertTrue((idle.controls + result.controls).allSatisfy {
+            !$0.title.isEmpty && !$0.accessibilityLabel.isEmpty
+        })
     }
 
-    func testReduceMotionUsesOpacityAndSizeInsteadOfSpringMorph() throws {
-        let animated = try XCTUnwrap(IslandPresentation.make(
-            for: snapshot(status: .recording),
-            screenWidth: 1_440,
-            reduceMotion: false
-        ))
-        let reduced = try XCTUnwrap(IslandPresentation.make(
-            for: snapshot(status: .recording),
-            screenWidth: 1_440,
-            reduceMotion: true
-        ))
-
-        XCTAssertEqual(animated.transition, .springMorph)
-        XCTAssertEqual(reduced.transition, .opacityAndSize)
+    @MainActor
+    func testActualIslandAndWaveformReduceMotionAnimationChoices() {
+        XCTAssertNotNil(IslandView.animation(reduceMotion: false))
+        XCTAssertNotNil(IslandView.animation(reduceMotion: true))
+        XCTAssertNotNil(NotchWaveformView.animation(reduceMotion: false))
+        XCTAssertNil(NotchWaveformView.animation(reduceMotion: true))
     }
 
     func testSuggestionsStayLocalUntilGenerateLinksIsExplicitlyActivated() throws {
@@ -216,14 +209,13 @@ final class IslandPresentationTests: XCTestCase {
         let targetID = SessionID(rawValue: UUID())
         let presentation = try XCTUnwrap(IslandPresentation.make(
             for: snapshot(
+                sessionID: targetID,
                 status: .delivered,
                 previewText: "original local text",
                 organizationPhase: .organized(organizedRecord()),
                 suggestedRecords: [SuggestedRecordSnapshot(id: suggestedID, summary: "related local note")]
             ),
-            screenWidth: 1_440,
-            reduceMotion: false,
-            targetSessionID: targetID
+            screenWidth: 1_440
         ))
 
         XCTAssertEqual(presentation.suggestions.map(\.id), [suggestedID])
@@ -236,8 +228,10 @@ final class IslandPresentationTests: XCTestCase {
     }
 
     private func snapshot(
+        sessionID: SessionID? = nil,
         status: SessionStatus,
         previewText: String = "",
+        originalText: String = "",
         message: String? = nil,
         audioLevel: Float = 0,
         organizationPhase: OrganizationPhase = .notRequested,
@@ -245,9 +239,11 @@ final class IslandPresentationTests: XCTestCase {
         suggestedRecords: [SuggestedRecordSnapshot] = []
     ) -> AppSnapshot {
         AppSnapshot(
+            sessionID: sessionID,
             status: status,
             elapsedMilliseconds: 0,
             previewText: previewText,
+            originalText: originalText,
             message: message,
             audioLevel: audioLevel,
             organizationPhase: organizationPhase,

@@ -9,17 +9,16 @@ struct PlaceholderView: View {
             Text(title)
                 .font(.headline)
 
-            if let presentation = NotchPresentation.make(for: state.snapshot) {
-                HStack(spacing: 6) {
-                    if let systemImage = presentation.systemImage {
-                        Image(systemName: systemImage)
-                    }
-                    Text(presentation.statusText)
+            let presentation = NotchPresentation.make(for: state.snapshot)
+            HStack(spacing: 6) {
+                if let systemImage = presentation.systemImage {
+                    Image(systemName: systemImage)
                 }
-                .foregroundStyle(foregroundColor(for: presentation.tone))
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(presentation.statusText)
+                Text(presentation.statusText)
             }
+            .foregroundStyle(foregroundColor(for: presentation.tone))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(presentation.statusText)
 
             if !state.snapshot.previewText.isEmpty {
                 Text(state.snapshot.previewText)

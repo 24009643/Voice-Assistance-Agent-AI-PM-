@@ -15,11 +15,6 @@ enum IslandLayout: Equatable, Sendable {
     case singleChamber
 }
 
-enum IslandTransition: Equatable, Sendable {
-    case springMorph
-    case opacityAndSize
-}
-
 enum IslandChamber: String, CaseIterable, Hashable, Sendable {
     case original
     case points
@@ -47,11 +42,11 @@ enum IslandAction: Hashable, Sendable {
 }
 
 enum IslandIntent: Equatable, Sendable {
-    case stopRecording
-    case setLocalOnly(Bool)
-    case cancelOrganization(sessionID: SessionID?, requestID: UUID)
-    case retryOrganization(sessionID: SessionID?, requestID: UUID)
-    case generateLinks(sessionID: SessionID?, selectedRecordIDs: Set<SessionID>)
+    case stopRecording(sessionID: SessionID)
+    case setLocalOnly(sessionID: SessionID, enabled: Bool)
+    case cancelOrganization(sessionID: SessionID, requestID: UUID)
+    case retryOrganization(sessionID: SessionID, requestID: UUID)
+    case generateLinks(sessionID: SessionID, selectedRecordIDs: Set<SessionID>)
     case copy(String)
 }
 
@@ -82,7 +77,6 @@ struct IslandPresentation: Equatable, Sendable {
     let mode: IslandMode
     let size: CGSize
     let layout: IslandLayout
-    let transition: IslandTransition
     let statusText: String
     let tone: Tone
     let systemImage: String?
@@ -96,17 +90,14 @@ struct IslandPresentation: Equatable, Sendable {
     let suggestions: [SuggestedRecordSnapshot]
     let chambers: [IslandChamber]
     let controls: [IslandControl]
-    let gestureActions: Set<IslandAction>
     let autoHideDelay: TimeInterval?
     let targetSessionID: SessionID?
 
     static func make(
         for snapshot: AppSnapshot,
         screenWidth: CGFloat = 1_440,
-        reduceMotion: Bool = false,
-        hasLatestResult: Bool = false,
-        targetSessionID: SessionID? = nil
-    ) -> Self? {
+        hasLatestResult: Bool = false
+    ) -> Self {
         let mode = mode(for: snapshot)
         let maximumWidth = max(1, screenWidth - 24)
         let preferredSize: CGSize
@@ -139,15 +130,6 @@ struct IslandPresentation: Equatable, Sendable {
             layout: layout,
             hasLatestResult: hasLatestResult
         )
-        let gestures = Set(controls.compactMap { control -> IslandAction? in
-            switch control.action {
-            case .selectChamber, .reopenLatest:
-                control.action
-            default:
-                nil
-            }
-        })
-
         return Self(
             mode: mode,
             size: CGSize(
@@ -155,23 +137,21 @@ struct IslandPresentation: Equatable, Sendable {
                 height: preferredSize.height
             ),
             layout: layout,
-            transition: reduceMotion ? .opacityAndSize : .springMorph,
             statusText: status.text,
             tone: status.tone,
             systemImage: status.systemImage,
             accessibilityLabel: status.accessibilityLabel,
             draft: snapshot.previewText,
             audioLevel: snapshot.audioLevel,
-            originalText: snapshot.previewText,
+            originalText: snapshot.originalText,
             numberedPoints: output?.numberedPoints ?? [],
             knownRecordLinks: output?.knownRecordLinks ?? [],
             speculativeConnections: speculative,
             suggestions: snapshot.suggestedRecords,
             chambers: mode == .organized ? IslandChamber.allCases : [],
             controls: controls,
-            gestureActions: gestures,
             autoHideDelay: autoHideDelay(for: snapshot, mode: mode),
-            targetSessionID: targetSessionID
+            targetSessionID: snapshot.sessionID
         )
     }
 
@@ -181,17 +161,22 @@ struct IslandPresentation: Equatable, Sendable {
     ) -> IslandIntent? {
         switch action {
         case .stopRecording:
-            return .stopRecording
+            guard let targetSessionID else { return nil }
+            return .stopRecording(sessionID: targetSessionID)
         case let .setLocalOnly(enabled):
-            return .setLocalOnly(enabled)
+            guard let targetSessionID else { return nil }
+            return .setLocalOnly(sessionID: targetSessionID, enabled: enabled)
         case let .cancelOrganization(requestID):
+            guard let targetSessionID else { return nil }
             return .cancelOrganization(sessionID: targetSessionID, requestID: requestID)
         case let .retryOrganization(requestID):
+            guard let targetSessionID else { return nil }
             return .retryOrganization(sessionID: targetSessionID, requestID: requestID)
         case let .copyChamber(chamber):
             let text = copyText(for: chamber)
             return text.isEmpty ? nil : .copy(text)
         case .generateLinks:
+            guard let targetSessionID else { return nil }
             let allowed = selectedRecordIDs.intersection(Set(suggestions.map(\.id)))
             return allowed.isEmpty
                 ? nil

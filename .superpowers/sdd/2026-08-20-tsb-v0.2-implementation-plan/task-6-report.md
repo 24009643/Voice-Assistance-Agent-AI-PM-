@@ -123,3 +123,96 @@ Result: `** TEST SUCCEEDED **`; 192 tests, 0 failures in 20.447 seconds.
 - Xcode continues to emit the existing multiple-matching-destination warning, onnxruntime `Versions/Current` framework-symlink warning, AppIntents metadata-skip warning, and test-host `linkd.autoShortcut` diagnostics. They did not affect focused 20/20 or full 192/192 results.
 - Raw persisted `originalText` is not in the current `AppSnapshot`; the original chamber therefore shows the locally reviewed delivered text as ruled above.
 - Task 7 owns the settings/authorization screen and Task 8 owns real microphone, visual, VoiceOver, Reduce Motion, offline, and timeout acceptance. This task supplies the controls and static accessibility evidence but deliberately does not perform those tasks.
+
+---
+
+# Fix Round 1 — truthful island actions (2026-08-24)
+
+This section supersedes the earlier concern that `AppSnapshot` lacked raw text. The review explicitly allowed the smallest `AppSnapshot`/`SessionCoordinator` correction, so the island now projects persisted raw `originalText` separately from the locally cleaned preview without adding a UI state layer.
+
+## RED/GREEN evidence
+
+Each finding was driven by its smallest focused `xcodebuild` test before production changes:
+
+| Finding | RED evidence | GREEN evidence |
+| --- | --- | --- |
+| Raw original vs cleaned preview | `testMainSnapshotSeparatesRawOriginalFromCleanedPreview` failed to compile with `AppSnapshot has no member originalText`; the secondary companion failed with `SecondaryProcessingSnapshot has no member originalText`. | Both 1/1 focused runs passed. Main and secondary snapshots now project `TranscriptRecord.originalText`; the presentation uses raw text for the original chamber and cleaned text for draft/status. |
+| Session identity and stale start failure | `testMainSnapshotCarriesItsSessionIdentity` failed to compile because `AppSnapshot` had no `sessionID`. `testFailedNewRecordingDoesNotRetargetOlderResultActions` initially failed to compile because the start-failure seam did not exist. | Focused tests passed. Session-scoped island intents carry non-optional IDs; AppController's optional/current-session fallback was deleted; a failed B start restores coordinator ownership of A while the transient failure snapshot remains unscoped. `testSessionScopedStopCannotStopANewerRecording` also proves a stale stop cannot stop B. |
+| One actionable latest result and real route | `testOneLatestTerminalResultSurvivesExpiryUntilANewerResultReplacesIt` failed because the 1.2-second expiry changed `[A]` to `[]`. The production interaction test failed to compile because `NotchOverlayPanel.perform` and `AppController.organizationIntent` did not exist. | Both focused tests passed. The coordinator retains one ordinal-bounded terminal transcript; a newer terminal result releases/removes the older one. A visible dismiss → reopen → retry path crosses the same panel action seam used by `IslandView`, AppController's mapping, and the real coordinator, and still dispatches A after B start fails. |
+| Idle visibility and hit testing | `testInitialFallbackIdleIsHiddenWhileHardwareNotchIdleNeverInterceptsClicks` failed to compile before the placement input existed; its reattachment extension then failed because fallback idle became visible again. | The focused test passed. Initial fallback idle with no latest result is hidden; hardware-notch idle may remain at `120 x 30`, but no-action idle always ignores mouse events. A fallback latest result collapses to a visible, interactive “最近结果” button and reopens through the production action seam. |
+| Screen changes, real motion choices, visible equivalents | The notification test failed to compile before `ScreenParameterObserver`, `reattach`, and `presentedFrame` existed. The motion test failed to compile before actual `IslandView`/`NotchWaveformView` animation choices were exposed. | Notification-driven reattachment/reposition and observer stop/deinit cleanup passed. `IslandView` reads Reduce Motion and replaces spring with a short ease-out; `NotchWaveformView` removes level animation. Gesture evidence now asserts the concrete visible reopen button and segmented chamber controls instead of a presentation-generated `gestureActions` set. |
+
+Representative RED command shape:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+  -only-testing:TSBTests/SessionCoordinatorTests/<test-name> test
+```
+
+The same shape was used for `IslandPresentationTests` and `OverlayGenerationTests`; every named RED was rerun GREEN before the combined focused gate.
+
+## Invariants and interaction mapping
+
+- Raw source and cleaned preview remain separate through main snapshot, secondary snapshot, presentation, status UI, original chamber, and manual original-copy action.
+- `AppSnapshot.sessionID` is optional only for genuinely unscoped idle/start-failure states. Every session-scoped `IslandIntent` contains a concrete `SessionID`; AppController performs no optional target fallback.
+- Stop is also coordinator-session-scoped, so an obsolete view cannot toggle a newer recording. Option-Space remains the deliberate current-recording toggle and Escape remains current-recording cancellation.
+- Exactly one latest terminal transcript is retained for panel actions. A higher-ordinal result replaces it; an older late organization completion cannot replace the newer slot and becomes removable. Processing capacity continues to count only transcription/saving work.
+- `IslandView` sends actions through `NotchOverlayPanel.perform`. The panel accepts only controls visible in the current presentation, handles local dismiss/reopen, and forwards coordinator intents or explicit manual copy.
+- Initial fallback idle does not create a persistent click target. Any no-action idle window ignores mouse events; actionable compact/status/result frames are the only interactive region.
+- `NSApplication.didChangeScreenParametersNotification` re-runs the existing notched-built-in-first screen selection and reattaches/repositions the same panel. The observer is idempotent, removable on `AppController.stop()`, and self-clearing on deinit.
+- Reduce Motion is selected in the actual SwiftUI views, not in a detached presentation enum. The waveform stops animating; island state/size changes use the reduced ease-out path.
+- `IslandPresentation.make` is now total/non-optional. The redundant transition enum, `gestureActions`, and external target-session override were deleted.
+
+## Files changed in Fix Round 1
+
+- `apps/macos/TSB/TSB/App/AppController.swift`
+- `apps/macos/TSB/TSB/Core/Session/AppSnapshot.swift`
+- `apps/macos/TSB/TSB/Core/Session/SessionCoordinator.swift`
+- `apps/macos/TSB/TSB/System/Notch/NotchOverlayPanel.swift`
+- `apps/macos/TSB/TSB/Views/Notch/IslandPresentation.swift`
+- `apps/macos/TSB/TSB/Views/Notch/IslandView.swift`
+- `apps/macos/TSB/TSB/Views/Notch/NotchWaveformView.swift`
+- `apps/macos/TSB/TSB/Views/PlaceholderView.swift`
+- `apps/macos/TSB/TSBTests/Core/Session/SessionCoordinatorTests.swift`
+- `apps/macos/TSB/TSBTests/System/IslandPresentationTests.swift`
+- `apps/macos/TSB/TSBTests/System/OverlayGenerationTests.swift`
+- `.superpowers/sdd/2026-08-20-tsb-v0.2-implementation-plan/task-6-report.md`
+
+## Final verification
+
+Combined focused gate:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+  -only-testing:TSBTests/OverlayGenerationTests \
+  -only-testing:TSBTests/IslandPresentationTests \
+  -only-testing:TSBTests/IslandFrameTests \
+  -only-testing:TSBTests/SessionCoordinatorTests test
+```
+
+Result: `** TEST SUCCEEDED **`; 83 tests, 0 failures (`OverlayGenerationTests` 7, `IslandPresentationTests` 12, `IslandFrameTests` 4, `SessionCoordinatorTests` 60).
+
+The full suite was then run once:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+```
+
+Result: `** TEST SUCCEEDED **`; 202 tests, 0 failures in 20.631 seconds.
+
+Post-test gates:
+
+- `git diff --check`: exit 0.
+- Dependency/project scan: no `Package.swift`, `Package.resolved`, `project.yml`, `project.pbxproj`, Podfile, or Cartfile change.
+- UI boundary scan: no URLSession, OrganizationClient, Keychain, ClipboardService, TranscriptStore, AudioRecordingService, AVAudio, or Network reference in the notch UI/system directories.
+- Production credential-pattern scan: clean.
+- Static behavior/accessibility scan confirms `.nonactivatingPanel`, dynamic `ignoresMouseEvents`, native Button/Picker/Toggle/DragGesture, VoiceOver labels, explicit “推测”, actual Reduce Motion environments, and the native screen-parameter notification.
+
+## Warnings and concerns
+
+- The existing onnxruntime `Versions/Current` framework-symlink warning, AppIntents metadata-skip warning, multiple matching macOS destinations warning, and test-host `linkd.autoShortcut` diagnostics remain non-fatal.
+- No new dependency, recorder/store/network ownership in UI, full-screen click shield, live provider call, real API credential, real microphone action, or real Keychain secret access was introduced.
+- No unresolved functional concern remains within Fix Round 1 scope; real multi-display/notch hardware and full assistive-technology acceptance remain Task 8's device gate.
