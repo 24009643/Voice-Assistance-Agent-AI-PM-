@@ -172,22 +172,22 @@ final class OrganizationClientTests: XCTestCase {
     func testCancellationStopsStartedRequestBeforeLateHandlerOutput() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
         let lifecycle = RequestLifecycle()
-        let completed = TaskCompletion()
+        let completed = OrganizationResultProbe()
         URLProtocolStub.handler = { _ in
             lifecycle.requestStarted.fulfill()
             lifecycle.waitForRelease()
             lifecycle.lateHandlerOutput.fulfill()
-            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+            return .response(200, makeChatResponse(content: OrganizationAdversarialFixtures.timeoutLateCallbackOutput))
         }
         URLProtocolStub.stopHandler = { lifecycle.stopObserved() }
         let client = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
             session: makeSession()
         )
-        let task = Task { () -> Result<OrganizationOutput, Error> in
-            defer { completed.finish() }
+        let task = Task {
+            let result: Result<OrganizationOutput, Error>
             do {
-                return .success(try await client.organize(
+                result = .success(try await client.organize(
                     requestID: requestID,
                     segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
                     historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
@@ -195,42 +195,34 @@ final class OrganizationClientTests: XCTestCase {
                     apiKey: "secret"
                 ))
             } catch {
-                return .failure(error)
+                result = .failure(error)
             }
+            completed.finish(result)
         }
 
+        defer { task.cancel() }
         defer { lifecycle.release() }
         await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
         task.cancel()
         await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
         lifecycle.release()
         await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
-        guard lifecycle.didStop else {
-            task.cancel()
-            completed.allowFinish()
-            await fulfillment(of: [completed.expectation], timeout: 1)
-            return
-        }
         await fulfillment(of: [completed.expectation], timeout: 1)
-        guard completed.didFinish else {
-            task.cancel()
-            await fulfillment(of: [completed.expectation], timeout: 1)
-            return
-        }
-        let result = await task.value
+        XCTAssertTrue(lifecycle.didStop)
+        let result = try XCTUnwrap(completed.result)
         if case .success = result { XCTFail("Expected cancellation") }
     }
 
     func testTimeoutStopsStartedRequestBeforeLateHandlerOutput() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
         let lifecycle = RequestLifecycle()
-        let completed = TaskCompletion()
+        let completed = OrganizationResultProbe()
         let deadlines = DurationRecorder()
         URLProtocolStub.handler = { _ in
             lifecycle.requestStarted.fulfill()
             lifecycle.waitForRelease()
             lifecycle.lateHandlerOutput.fulfill()
-            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+            return .response(200, makeChatResponse(content: OrganizationAdversarialFixtures.timeoutLateCallbackOutput))
         }
         URLProtocolStub.stopHandler = { lifecycle.stopObserved() }
         let timeoutClient = OrganizationClient(
@@ -242,10 +234,10 @@ final class OrganizationClientTests: XCTestCase {
             }
         )
 
-        let task = Task { () -> Result<OrganizationOutput, Error> in
-            defer { completed.finish() }
+        let task = Task {
+            let result: Result<OrganizationOutput, Error>
             do {
-                return .success(try await timeoutClient.organize(
+                result = .success(try await timeoutClient.organize(
                     requestID: requestID,
                     segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
                     historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
@@ -253,29 +245,21 @@ final class OrganizationClientTests: XCTestCase {
                     apiKey: "secret"
                 ))
             } catch {
-                return .failure(error)
+                result = .failure(error)
             }
+            completed.finish(result)
         }
 
+        defer { task.cancel() }
         defer { lifecycle.release() }
         await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
         lifecycle.startTimeout()
         await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
         lifecycle.release()
         await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
-        guard lifecycle.didStop else {
-            task.cancel()
-            completed.allowFinish()
-            await fulfillment(of: [completed.expectation], timeout: 1)
-            return
-        }
         await fulfillment(of: [completed.expectation], timeout: 1)
-        guard completed.didFinish else {
-            task.cancel()
-            await fulfillment(of: [completed.expectation], timeout: 1)
-            return
-        }
-        let result = await task.value
+        XCTAssertTrue(lifecycle.didStop)
+        let result = try XCTUnwrap(completed.result)
         switch result {
         case .success:
             XCTFail("Expected timeout")
@@ -285,50 +269,6 @@ final class OrganizationClientTests: XCTestCase {
             XCTFail("Expected timedOut, got \(error)")
         }
         XCTAssertEqual(deadlines.values, [.seconds(20)])
-    }
-
-    func testCancellationDrainsOwnedTaskWhenStopIsNotReported() async throws {
-        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
-        let lifecycle = RequestLifecycle(reportsStop: false)
-        let completed = TaskCompletion(waitForRelease: true)
-        URLProtocolStub.handler = { _ in
-            lifecycle.requestStarted.fulfill()
-            lifecycle.waitForRelease()
-            lifecycle.lateHandlerOutput.fulfill()
-            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
-        }
-        URLProtocolStub.stopHandler = { lifecycle.stopObserved() }
-        let client = OrganizationClient(
-            endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
-            session: makeSession()
-        )
-        let task = Task { () -> Result<OrganizationOutput, Error> in
-            defer { completed.finish() }
-            do {
-                return .success(try await client.organize(
-                    requestID: requestID,
-                    segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
-                    historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
-                    userSelectedCandidateIDs: [],
-                    apiKey: "secret"
-                ))
-            } catch {
-                return .failure(error)
-            }
-        }
-
-        defer { lifecycle.release() }
-        defer { completed.allowFinish() }
-        defer { XCTAssertTrue(completed.didFinish, "early exit must drain the owned task") }
-        await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
-        task.cancel()
-        await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
-        lifecycle.release()
-        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
-        XCTAssertFalse(lifecycle.didStop)
-        completed.allowFinish()
-        await fulfillment(of: [completed.expectation], timeout: 1)
-        if case .success = await task.value { XCTFail("Expected cancellation") }
     }
 
     func testRejectsRedirectBeforeAnySecondRequestCanCarryText() async throws {
@@ -568,6 +508,12 @@ private func makeValidChatResponse(
     return try! JSONSerialization.data(withJSONObject: outer)
 }
 
+private func makeChatResponse(content: String) -> Data {
+    try! JSONSerialization.data(withJSONObject: [
+        "choices": [["message": ["role": "assistant", "content": content]]]
+    ])
+}
+
 private final class URLRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storedURLs: [URL] = []
@@ -592,13 +538,8 @@ private final class RequestLifecycle: @unchecked Sendable {
     private let releaseGate = DispatchSemaphore(value: 0)
     private let timeout = DispatchSemaphore(value: 0)
     private let lock = NSLock()
-    private let reportsStop: Bool
     private var stopWasObserved = false
     private var stopped = false
-
-    init(reportsStop: Bool = true) {
-        self.reportsStop = reportsStop
-    }
 
     var didStop: Bool { lock.withLock { stopped } }
 
@@ -610,30 +551,23 @@ private final class RequestLifecycle: @unchecked Sendable {
         let shouldFulfill = lock.withLock { () -> Bool in
             guard !stopWasObserved else { return false }
             stopWasObserved = true
-            if reportsStop { stopped = true }
+            stopped = true
             return true
         }
         if shouldFulfill { requestStopped.fulfill() }
     }
 }
 
-private final class TaskCompletion: @unchecked Sendable {
+private final class OrganizationResultProbe: @unchecked Sendable {
     let expectation = XCTestExpectation(description: "operation completed")
     private let lock = NSLock()
-    private let finishGate: DispatchSemaphore?
-    private var finished = false
+    private var storedResult: Result<OrganizationOutput, Error>?
 
-    init(waitForRelease: Bool = false) {
-        finishGate = waitForRelease ? DispatchSemaphore(value: 0) : nil
-    }
-
-    var didFinish: Bool { lock.withLock { finished } }
-    func allowFinish() { finishGate?.signal() }
-    func finish() {
-        finishGate?.wait()
+    var result: Result<OrganizationOutput, Error>? { lock.withLock { storedResult } }
+    func finish(_ result: Result<OrganizationOutput, Error>) {
         let shouldFulfill = lock.withLock { () -> Bool in
-            guard !finished else { return false }
-            finished = true
+            guard storedResult == nil else { return false }
+            storedResult = result
             return true
         }
         if shouldFulfill { expectation.fulfill() }

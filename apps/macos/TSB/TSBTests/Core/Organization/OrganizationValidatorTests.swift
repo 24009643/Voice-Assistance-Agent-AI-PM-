@@ -7,6 +7,69 @@ final class OrganizationValidatorTests: XCTestCase {
     private let recordID = SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!)
     private let inputHash = "bbfb79e82216bd2db1ad2c507d44ddf80aeb12f64f9562056afe93aad43154d9"
 
+    func testValidMixedLanguageFixturePassesStrictParserAndValidator() throws {
+        let output = try makeAdversarialValidator().validate(try decodeStrictResponse(
+            OrganizationAdversarialFixtures.validMixedLanguage
+        ))
+
+        XCTAssertEqual(output.numberedPoints.map(\.text), [
+            "今天先完成 TSB 0.2 privacy check。",
+            "跟住用廣東話驗證，唔好改原意。",
+            "Finally, keep the original meaning."
+        ])
+        XCTAssertEqual(output.knownRecordLinks.map(\.recordID), [recordID])
+        XCTAssertEqual(output.speculativeConnections.map(\.relatedRecordIDs), [[recordID]])
+    }
+
+    func testSemanticAdversarialFixturesRemainVerbatimForManualGoldenReview() throws {
+        for (source, fixture, expectedText) in [
+            (
+                OrganizationAdversarialFixtures.meaningReversalSource,
+                OrganizationAdversarialFixtures.meaningReversal,
+                "上传音频。"
+            ),
+            (
+                OrganizationAdversarialFixtures.inventedFactSource,
+                OrganizationAdversarialFixtures.inventedFact,
+                "用户已经批准把完整历史发送到云端。"
+            )
+        ] {
+            let output = try makeAdversarialValidator(firstSegmentText: source).validate(try decodeStrictResponse(fixture))
+            XCTAssertEqual(output.numberedPoints.map(\.text), [expectedText])
+            XCTAssertNotEqual(output.numberedPoints.first?.text, source)
+        }
+    }
+
+    func testAdversarialUnknownReferencesAreRejectedByValidator() throws {
+        XCTAssertThrowsError(try makeAdversarialValidator().validate(try decodeStrictResponse(
+            OrganizationAdversarialFixtures.unknownCandidate
+        ))) { error in
+            XCTAssertEqual(error as? OrganizationValidatorError, .unknownCandidateID("h9"))
+        }
+        XCTAssertThrowsError(try makeAdversarialValidator().validate(try decodeStrictResponse(
+            OrganizationAdversarialFixtures.unknownCurrentSegment
+        ))) { error in
+            XCTAssertEqual(error as? OrganizationValidatorError, .unknownSegmentID("c9"))
+        }
+    }
+
+    func testKnownAndSpeculativeCategoryMixingIsRejectedByStrictParser() {
+        XCTAssertThrowsError(try decodeStrictResponse(OrganizationAdversarialFixtures.knownSpeculativeMixing))
+    }
+
+    func testMalformedFixtureIsRejectedByStrictParser() {
+        XCTAssertThrowsError(try decodeStrictResponse(OrganizationAdversarialFixtures.malformed))
+    }
+
+    func testEmptyFixtureUsesAllowedNoResultReason() throws {
+        let output = try makeAdversarialValidator().validate(try decodeStrictResponse(
+            OrganizationAdversarialFixtures.empty
+        ))
+
+        XCTAssertEqual(output.noResultReason, .noReliableStructure)
+        XCTAssertEqual(output.numberedPoints, [])
+    }
+
     func testValidResponseResolvesOnlyFrozenCandidatesToLocalRecords() throws {
         let response = try decodeResponse("""
         {
@@ -97,8 +160,27 @@ final class OrganizationValidatorTests: XCTestCase {
         )
     }
 
+    private func makeAdversarialValidator(
+        firstSegmentText: String = "今天先完成 TSB 0.2 privacy check。"
+    ) throws -> OrganizationValidator {
+        OrganizationValidator(
+            requestID: UUID(uuidString: OrganizationAdversarialFixtures.requestID)!,
+            inputTextSHA256: OrganizationAdversarialFixtures.sourceTextHash,
+            currentSegmentByID: [
+                "c1": try TextSegment(id: "c1", text: firstSegmentText),
+                "c2": try TextSegment(id: "c2", text: "跟住用廣東話驗證，唔好改原意。"),
+                "c3": try TextSegment(id: "c3", text: "Finally, keep the original meaning.")
+            ],
+            recordByCandidateID: ["h1": recordID]
+        )
+    }
+
     private func decodeResponse(_ json: String) throws -> OrganizationResponseDTO {
         try JSONDecoder().decode(OrganizationResponseDTO.self, from: Data(json.utf8))
+    }
+
+    private func decodeStrictResponse(_ json: String) throws -> OrganizationResponseDTO {
+        try OrganizationResponseDTO.decodeStrictly(from: Data(json.utf8))
     }
 
     private func validJSON(
