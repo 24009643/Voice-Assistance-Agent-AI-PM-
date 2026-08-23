@@ -61,3 +61,8 @@
 - Task 5: fix round 1/5 (5 original findings addressed; commit `0663215`; focused 51/51 and full 180/180 reported passing); scoped re-review found one Important first-attempt retry regression and one Minor endpoint/key test-quality gap.
 - Task 5: fix round 2/5 (2 addressed, 0 open; commit `b6ee895`; focused 56/56 and full 182/182 reported passing; scoped re-review approved without reopening the original five).
 - Task 5: complete (commits `5c127ec..b6ee895`, review clean; controller full suite 182/182 and production credential-pattern scan clean; no live provider request or real key access).
+- Task 6 implementer: commit `3394e79`; focused 20/20 and full 192/192 reported passing; review found five Important raw-text, session-routing, latest-result, idle-hit-testing and dynamic-screen gaps plus test-quality minors.
+- Task 6: fix round 1/5 (original five production roots substantially addressed; commit `741946c`; focused 83/83 and full 202/202 reported passing); scoped re-review left two Important cleaned-status/screen-reflow gaps and one empty-copy Minor.
+- Task 6: fix round 2/5 (two Important addressed; commit `06c3ae0`; focused 87/87 and full 206/206 reported passing); scoped re-review approved with two nonblocking edge/cache Minors.
+- Task 6: fix round 3/5 (all remaining Minors addressed, duplicate presentation cache deleted; commit `959b3f9`; focused 23/23 and full 206/206 reported passing; scoped re-review clean).
+- Task 6: complete (commits `59056ac..959b3f9`, review clean; controller full suite 206/206, production credential-pattern scan clean; no live provider, real Keychain secret, microphone or external network access).
