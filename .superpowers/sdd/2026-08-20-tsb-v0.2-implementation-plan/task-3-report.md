@@ -118,3 +118,35 @@ Result: exit 0.
 
 - `OrganizationClientTests.swift`
 - this report and `progress.md`
+
+## Fix Round 3 — bounded completion evidence
+
+### Root cause and fix
+
+Round 2 waited for `task.value` while the protocol handler still waited on its release gate. A regression could therefore call `stopLoading` without resolving the URLSession continuation and hang the test after its stop assertion. The tests now release the handler immediately after `stopLoading`, then observe the operation result through a one-second XCTest completion expectation. A missing completion fails boundedly; a late handler output is still released and observed only after the operation has failed.
+
+### RED / GREEN evidence
+
+```text
+RED (temporary mutation delays the timeout branch for 60 seconds after request stop):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput test
+Result: exit 65; 1 bounded ordinary test failure, rather than a runner hang.
+
+GREEN (restored immediate timeout result):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testCancellationStopsStartedRequestBeforeLateHandlerOutput -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput -resultBundlePath /tmp/tsb-task3-round3-gated.xcresult test
+Result: exit 0; 2 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests -only-testing:TSBTests/OrganizationValidatorTests -only-testing:TSBTests/DeterministicOrganizerTests -resultBundlePath /tmp/tsb-task3-round3-focused.xcresult test
+Result: exit 0; 18 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -resultBundlePath /tmp/tsb-task3-round3-full.xcresult test
+Result: exit 0; 144 passed, 0 failed.
+
+git diff --check
+Result: exit 0.
+```
+
+### Files changed
+
+- `OrganizationClientTests.swift`
+- this report and `progress.md`

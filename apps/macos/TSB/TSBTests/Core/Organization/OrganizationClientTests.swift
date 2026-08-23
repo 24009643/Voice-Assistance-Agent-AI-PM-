@@ -197,13 +197,16 @@ final class OrganizationClientTests: XCTestCase {
         await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
         task.cancel()
         await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
+        lifecycle.release()
         guard lifecycle.didStop else {
-            lifecycle.release()
-            await XCTAssertThrowsErrorAsync { try await task.value }
+            task.cancel()
             return
         }
-        await XCTAssertThrowsErrorAsync { try await task.value }
-        lifecycle.release()
+        guard let result = await result(of: task) else {
+            task.cancel()
+            return
+        }
+        if case .success = result { XCTFail("Expected cancellation") }
         await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
     }
 
@@ -241,21 +244,24 @@ final class OrganizationClientTests: XCTestCase {
         await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
         lifecycle.startTimeout()
         await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
+        lifecycle.release()
         guard lifecycle.didStop else {
-            lifecycle.release()
-            await XCTAssertThrowsErrorAsync { try await task.value }
+            task.cancel()
             return
         }
-        do {
-            _ = try await task.value
+        guard let result = await result(of: task) else {
+            task.cancel()
+            return
+        }
+        switch result {
+        case .success:
             XCTFail("Expected timeout")
-        } catch let error as URLError {
+        case let .failure(error as URLError):
             XCTAssertEqual(error.code, .timedOut)
-        } catch {
+        case let .failure(error):
             XCTFail("Expected timedOut, got \(error)")
         }
         XCTAssertEqual(deadlines.values, [.seconds(20)])
-        lifecycle.release()
         await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
     }
 
@@ -387,6 +393,21 @@ final class OrganizationClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
         return URLSession(configuration: configuration)
+    }
+
+    private func result<T: Sendable>(of task: Task<T, Error>) async -> Result<T, Error>? {
+        let completed = expectation(description: "operation completed")
+        let outcome = TaskOutcome<T>()
+        Task {
+            do {
+                outcome.store(.success(try await task.value))
+            } catch {
+                outcome.store(.failure(error))
+            }
+            completed.fulfill()
+        }
+        await fulfillment(of: [completed], timeout: 1)
+        return outcome.value
     }
 
 }
@@ -536,6 +557,14 @@ private final class RequestLifecycle: @unchecked Sendable {
         }
         if shouldFulfill { requestStopped.fulfill() }
     }
+}
+
+private final class TaskOutcome<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Result<Value, Error>?
+
+    var value: Result<Value, Error>? { lock.withLock { stored } }
+    func store(_ value: Result<Value, Error>) { lock.withLock { stored = value } }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {
