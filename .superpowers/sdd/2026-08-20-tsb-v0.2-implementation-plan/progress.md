@@ -57,3 +57,7 @@
 - Task 4 implementer: commit `a3978af`; focused 9/9 and full 154/154 reported passing; review found two Important Keychain/consent-contract gaps.
 - Task 4: fix round 1/5 (3 addressed, 0 open — atomic Keychain replacement, shared request/consent contract, binding test; commits `a3978af..fdb5d45`).
 - Task 4: complete (commits `fb75b0b..fdb5d45`, review clean; controller full-suite exit 0 and production credential-pattern scan clean).
+- Task 5 implementer: commit `38ece23`; focused 43/43 and full 172/172 reported passing; review found one Critical dispatch-time consent/key mismatch and four Important cancellation, stale-intent, cleanup and persistence gaps.
+- Task 5: fix round 1/5 (5 original findings addressed; commit `0663215`; focused 51/51 and full 180/180 reported passing); scoped re-review found one Important first-attempt retry regression and one Minor endpoint/key test-quality gap.
+- Task 5: fix round 2/5 (2 addressed, 0 open; commit `b6ee895`; focused 56/56 and full 182/182 reported passing; scoped re-review approved without reopening the original five).
+- Task 5: complete (commits `5c127ec..b6ee895`, review clean; controller full suite 182/182 and production credential-pattern scan clean; no live provider request or real key access).
