@@ -150,3 +150,35 @@ Result: exit 0.
 
 - `OrganizationClientTests.swift`
 - this report and `progress.md`
+
+## Fix Round 4 — owned bounded task completion
+
+### Root cause and fix
+
+Round 3 used an unretained watcher task to wait for `task.value`. If its completion expectation timed out, the helper returned while that watcher remained alive and the caller could skip late-handler drain. The original operation task now returns `Result` itself and fulfills an owned completion signal in its `defer`; no watcher is created. After `stopLoading`, both tests release and drain the protocol handler before their bounded completion wait. On a missed completion they cancel the owned operation task and perform one bounded cleanup wait.
+
+### RED / GREEN evidence
+
+```text
+RED (temporary mutation delays the timeout branch for 60 seconds after request stop):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput test
+Result: exit 65; 1 bounded ordinary test failure.
+
+GREEN (restored immediate timeout result):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testCancellationStopsStartedRequestBeforeLateHandlerOutput -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput -resultBundlePath /tmp/tsb-task3-round4-gated.xcresult test
+Result: exit 0; 2 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests -only-testing:TSBTests/OrganizationValidatorTests -only-testing:TSBTests/DeterministicOrganizerTests -resultBundlePath /tmp/tsb-task3-round4-focused.xcresult test
+Result: exit 0; 18 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -resultBundlePath /tmp/tsb-task3-round4-full.xcresult test
+Result: exit 0; 144 passed, 0 failed.
+
+git diff --check
+Result: exit 0.
+```
+
+### Files changed
+
+- `OrganizationClientTests.swift`
+- this report and `progress.md`

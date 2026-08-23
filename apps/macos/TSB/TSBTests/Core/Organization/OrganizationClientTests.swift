@@ -172,6 +172,7 @@ final class OrganizationClientTests: XCTestCase {
     func testCancellationStopsStartedRequestBeforeLateHandlerOutput() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
         let lifecycle = RequestLifecycle()
+        let completed = TaskCompletion()
         URLProtocolStub.handler = { _ in
             lifecycle.requestStarted.fulfill()
             lifecycle.waitForRelease()
@@ -183,14 +184,19 @@ final class OrganizationClientTests: XCTestCase {
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
             session: makeSession()
         )
-        let task = Task {
-            try await client.organize(
-                requestID: requestID,
-                segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
-                historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
-                userSelectedCandidateIDs: [],
-                apiKey: "secret"
-            )
+        let task = Task { () -> Result<OrganizationOutput, Error> in
+            defer { completed.finish() }
+            do {
+                return .success(try await client.organize(
+                    requestID: requestID,
+                    segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
+                    historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+                    userSelectedCandidateIDs: [],
+                    apiKey: "secret"
+                ))
+            } catch {
+                return .failure(error)
+            }
         }
 
         defer { lifecycle.release() }
@@ -198,21 +204,25 @@ final class OrganizationClientTests: XCTestCase {
         task.cancel()
         await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
         lifecycle.release()
+        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
         guard lifecycle.didStop else {
             task.cancel()
             return
         }
-        guard let result = await result(of: task) else {
+        await fulfillment(of: [completed.expectation], timeout: 1)
+        guard completed.didFinish else {
             task.cancel()
+            await fulfillment(of: [completed.expectation], timeout: 1)
             return
         }
+        let result = await task.value
         if case .success = result { XCTFail("Expected cancellation") }
-        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
     }
 
     func testTimeoutStopsStartedRequestBeforeLateHandlerOutput() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
         let lifecycle = RequestLifecycle()
+        let completed = TaskCompletion()
         let deadlines = DurationRecorder()
         URLProtocolStub.handler = { _ in
             lifecycle.requestStarted.fulfill()
@@ -230,14 +240,19 @@ final class OrganizationClientTests: XCTestCase {
             }
         )
 
-        let task = Task {
-            try await timeoutClient.organize(
-                requestID: requestID,
-                segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
-                historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
-                userSelectedCandidateIDs: [],
-                apiKey: "secret"
-            )
+        let task = Task { () -> Result<OrganizationOutput, Error> in
+            defer { completed.finish() }
+            do {
+                return .success(try await timeoutClient.organize(
+                    requestID: requestID,
+                    segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
+                    historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+                    userSelectedCandidateIDs: [],
+                    apiKey: "secret"
+                ))
+            } catch {
+                return .failure(error)
+            }
         }
 
         defer { lifecycle.release() }
@@ -245,14 +260,18 @@ final class OrganizationClientTests: XCTestCase {
         lifecycle.startTimeout()
         await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
         lifecycle.release()
+        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
         guard lifecycle.didStop else {
             task.cancel()
             return
         }
-        guard let result = await result(of: task) else {
+        await fulfillment(of: [completed.expectation], timeout: 1)
+        guard completed.didFinish else {
             task.cancel()
+            await fulfillment(of: [completed.expectation], timeout: 1)
             return
         }
+        let result = await task.value
         switch result {
         case .success:
             XCTFail("Expected timeout")
@@ -262,7 +281,6 @@ final class OrganizationClientTests: XCTestCase {
             XCTFail("Expected timedOut, got \(error)")
         }
         XCTAssertEqual(deadlines.values, [.seconds(20)])
-        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
     }
 
     func testRejectsRedirectBeforeAnySecondRequestCanCarryText() async throws {
@@ -393,21 +411,6 @@ final class OrganizationClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]
         return URLSession(configuration: configuration)
-    }
-
-    private func result<T: Sendable>(of task: Task<T, Error>) async -> Result<T, Error>? {
-        let completed = expectation(description: "operation completed")
-        let outcome = TaskOutcome<T>()
-        Task {
-            do {
-                outcome.store(.success(try await task.value))
-            } catch {
-                outcome.store(.failure(error))
-            }
-            completed.fulfill()
-        }
-        await fulfillment(of: [completed], timeout: 1)
-        return outcome.value
     }
 
 }
@@ -559,12 +562,20 @@ private final class RequestLifecycle: @unchecked Sendable {
     }
 }
 
-private final class TaskOutcome<Value: Sendable>: @unchecked Sendable {
+private final class TaskCompletion: @unchecked Sendable {
+    let expectation = XCTestExpectation(description: "operation completed")
     private let lock = NSLock()
-    private var stored: Result<Value, Error>?
+    private var finished = false
 
-    var value: Result<Value, Error>? { lock.withLock { stored } }
-    func store(_ value: Result<Value, Error>) { lock.withLock { stored = value } }
+    var didFinish: Bool { lock.withLock { finished } }
+    func finish() {
+        let shouldFulfill = lock.withLock { () -> Bool in
+            guard !finished else { return false }
+            finished = true
+            return true
+        }
+        if shouldFulfill { expectation.fulfill() }
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {
