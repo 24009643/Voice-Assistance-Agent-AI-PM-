@@ -1,202 +1,112 @@
-import XCTest
 import AppKit
+import XCTest
 @testable import TSB
 
 final class OverlayGenerationTests: XCTestCase {
-    func testDeliveredSnapshotUsesAccessibleGreenConfirmationForOnePointTwoSeconds() throws {
-        let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
-            status: .delivered,
-            elapsedMilliseconds: 0,
-            previewText: "Obsidian",
-            message: "已复制 · 按 ⌘V 粘贴"
-        )))
+    func testAHideGenerationIsRejectedAfterThePresentationAdvances() {
+        let delivered = OverlayGeneration(4)
+        let recording = delivered.next()
 
-        XCTAssertEqual(presentation.text, "已复制 · 按 ⌘V 粘贴")
-        XCTAssertEqual(presentation.tone, .success)
-        XCTAssertEqual(presentation.systemImage, "checkmark.circle.fill")
-        XCTAssertEqual(presentation.accessibilityLabel, "复制成功，按 Command V 粘贴")
-        XCTAssertEqual(presentation.autoHideDelay, 1.2)
-    }
-
-    func testFailureAndDeliveryWarningNeverUseSuccessTone() throws {
-        let snapshots = [
-            AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: "Could not copy to clipboard."),
-            AppSnapshot(status: .delivered, elapsedMilliseconds: 0, previewText: "", message: "已复制，但未能记录复制状态"),
-            AppSnapshot(status: .delivered, elapsedMilliseconds: 0, previewText: "已复制 · 按 ⌘V 粘贴", message: nil),
-        ]
-
-        for snapshot in snapshots {
-            let presentation = try XCTUnwrap(NotchPresentation.make(for: snapshot))
-            XCTAssertNotEqual(presentation.tone, .success)
-            XCTAssertNil(presentation.autoHideDelay)
-        }
+        XCTAssertFalse(recording.accepts(delivered))
+        XCTAssertTrue(recording.accepts(recording))
     }
 
     @MainActor
-    func testPanelSchedulesDeliveredHideAndRejectsItsCallbackAfterANewerSnapshot() throws {
+    func testScheduledHideCannotDismissANewerRecordingPresentation() throws {
         let screen = try XCTUnwrap(NSScreen.screens.first)
-        var scheduled: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
-        let panel = NotchOverlayPanel(screen: screen) { delay, action in
-            scheduled.append((delay, action))
-        }
-
-        panel.update(AppSnapshot(
-            status: .delivered,
-            elapsedMilliseconds: 0,
-            previewText: "Obsidian",
-            message: "已复制 · 按 ⌘V 粘贴"
-        ))
-        XCTAssertTrue(panel.isVisible)
-        XCTAssertEqual(scheduled.map(\.delay), [1.2])
-
-        let staleHide = scheduled[0].action
-        panel.update(AppSnapshot(status: .recording, elapsedMilliseconds: 0, previewText: "", message: "Recording"))
-        staleHide()
-        XCTAssertTrue(panel.isVisible)
-
-        panel.update(AppSnapshot(
-            status: .delivered,
-            elapsedMilliseconds: 0,
-            previewText: "Obsidian",
-            message: "已复制 · 按 ⌘V 粘贴"
-        ))
-        scheduled[1].action()
-
-        XCTAssertFalse(panel.isVisible)
-    }
-
-    func testSnapshotRoutingHidesOnlyIdleState() throws {
-        XCTAssertNil(NotchPresentation.make(for: AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil)))
-        XCTAssertEqual(
-            try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(status: .recording, elapsedMilliseconds: 0, previewText: "", message: "Recording"))).text,
-            "Recording"
+        var scheduled: [@MainActor () -> Void] = []
+        let panel = NotchOverlayPanel(
+            screen: screen,
+            onIntent: { _ in },
+            schedule: { _, action in scheduled.append(action) }
         )
-    }
 
-    func testRecordingPresentationShowsDraftTextAndBoundedSecondaryCards() throws {
-        let secondary = (1...4).map { index in
-            SecondaryProcessingSnapshot(
-                id: SessionID(rawValue: UUID()),
-                status: .transcribing,
-                previewText: "older \(index)",
-                message: "本地复核中"
-            )
-        }
-        let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
-            status: .recording,
-            elapsedMilliseconds: 0,
-            previewText: "actual live draft",
-            message: "实时草稿",
-            secondaryProcessing: secondary
-        )))
-
-        XCTAssertEqual(presentation.label, "实时草稿")
-        XCTAssertEqual(presentation.text, "actual live draft")
-        XCTAssertEqual(presentation.accessibilityLabel, "实时草稿，actual live draft")
-        XCTAssertEqual(presentation.secondary.map(\.text), ["older 1", "older 2", "older 3"])
-        XCTAssertEqual(presentation.windowHeight(notchHeight: 32), 140)
-    }
-
-    func testProcessingPresentationKeepsLastPreviewForTranscribingAndSaving() throws {
-        for status in [SessionStatus.transcribing, .saving] {
-            let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
-                status: status,
-                elapsedMilliseconds: 0,
-                previewText: "last live preview",
-                message: status == .transcribing ? "Transcribing" : "Saving"
-            )))
-
-            XCTAssertEqual(presentation.label, "本地复核中")
-            XCTAssertEqual(presentation.text, "last live preview")
-            XCTAssertEqual(presentation.accessibilityLabel, "本地复核中，last live preview")
-        }
-    }
-
-    func testPlaceholderStatusLineUsesLabelWithoutRepeatingPreviewBody() throws {
-        let live = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
-            status: .recording,
-            elapsedMilliseconds: 0,
-            previewText: "actual live draft",
-            message: "实时草稿"
-        )))
-        let delivered = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
+        panel.update(AppSnapshot(
             status: .delivered,
             elapsedMilliseconds: 0,
-            previewText: "final body",
+            previewText: "local result",
             message: "已复制 · 按 ⌘V 粘贴"
-        )))
-        let failed = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
-            status: .failed,
+        ))
+        XCTAssertEqual(scheduled.count, 1)
+
+        let staleHide = scheduled[0]
+        panel.update(AppSnapshot(
+            status: .recording,
             elapsedMilliseconds: 0,
-            previewText: "retained body",
-            message: "Could not copy to clipboard."
-        )))
+            previewText: "new recording",
+            message: "实时草稿"
+        ))
+        staleHide()
 
-        XCTAssertEqual(live.statusText, "实时草稿")
-        XCTAssertNotEqual(live.statusText, live.text)
-        XCTAssertEqual(delivered.statusText, "已复制 · 按 ⌘V 粘贴")
-        XCTAssertEqual(delivered.systemImage, "checkmark.circle.fill")
-        XCTAssertEqual(failed.statusText, "Could not copy to clipboard.")
-        XCTAssertEqual(failed.systemImage, "exclamationmark.triangle.fill")
+        XCTAssertTrue(panel.isVisible)
     }
 
-    func testPlaceholderSourceKeepsStatusAndPreviewAsSeparateAccessibleElements() throws {
-        let sourceURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("TSB/Views/PlaceholderView.swift")
-        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+    @MainActor
+    func testSuccessfulDeliveryCollapsesToVisibleIdleSoLatestCanBeReopened() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        var scheduled: [@MainActor () -> Void] = []
+        let panel = NotchOverlayPanel(
+            screen: screen,
+            onIntent: { _ in },
+            schedule: { _, action in scheduled.append(action) }
+        )
 
-        XCTAssertTrue(source.contains("Text(presentation.statusText)"))
-        XCTAssertTrue(source.contains(".accessibilityLabel(presentation.statusText)"))
-        XCTAssertFalse(source.contains("state.snapshot.status == .recording ? \"实时草稿\" : \"本地结果\""))
-        XCTAssertEqual(source.components(separatedBy: "Text(state.snapshot.previewText)").count - 1, 1)
-        XCTAssertTrue(source.contains(".accessibilityLabel(state.snapshot.previewText)"))
+        panel.update(AppSnapshot(
+            status: .delivered,
+            elapsedMilliseconds: 0,
+            previewText: "local result",
+            message: "已复制 · 按 ⌘V 粘贴"
+        ))
+        XCTAssertEqual(scheduled.count, 1)
+
+        scheduled[0]()
+
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(panel.presentedMode, .idle)
     }
 
-    func testSecondaryDeliveryPresentationUsesSuccessAndFailureTones() throws {
-        let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
+    @MainActor
+    func testCompletedSecondaryResultIsRetainedWithItsOwnSessionID() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let secondaryID = SessionID(rawValue: UUID())
+        let panel = NotchOverlayPanel(screen: screen, onIntent: { _ in })
+
+        panel.update(AppSnapshot(
             status: .recording,
             elapsedMilliseconds: 0,
             previewText: "new recording",
             message: "实时草稿",
             secondaryProcessing: [
                 SecondaryProcessingSnapshot(
-                    id: SessionID(rawValue: UUID()),
+                    id: secondaryID,
                     status: .delivered,
-                    previewText: "old result",
-                    message: "已复制 · 按 ⌘V 粘贴"
+                    previewText: "older result",
+                    message: "已复制 · 按 ⌘V 粘贴",
+                    organizationPhase: .organized(organizedRecord())
                 ),
-                SecondaryProcessingSnapshot(
-                    id: SessionID(rawValue: UUID()),
-                    status: .failed,
-                    previewText: "old failed result",
-                    message: "Could not copy to clipboard."
-                )
             ]
-        )))
+        ))
 
-        XCTAssertEqual(presentation.secondary.map(\.tone), [.success, .warning])
-        XCTAssertEqual(presentation.secondary.map(\.text), ["已复制 · 按 ⌘V 粘贴", "Could not copy to clipboard."])
+        XCTAssertEqual(panel.latestResultSessionID, secondaryID)
     }
 
-    func testMainDeliveryDoesNotAutoHideWhileSecondaryProcessingRemains() throws {
-        let presentation = try XCTUnwrap(NotchPresentation.make(for: AppSnapshot(
-            status: .delivered,
-            elapsedMilliseconds: 0,
-            previewText: "new result",
-            message: "已复制 · 按 ⌘V 粘贴",
-            secondaryProcessing: [
-                SecondaryProcessingSnapshot(
-                    id: SessionID(rawValue: UUID()),
-                    status: .transcribing,
-                    previewText: "older draft",
-                    message: "本地复核中"
-                )
-            ]
-        )))
-
-        XCTAssertNil(presentation.autoHideDelay)
+    private func organizedRecord() -> OrganizationRecord {
+        OrganizationRecord(
+            requestID: UUID(),
+            inputTextSHA256: String(repeating: "a", count: 64),
+            state: .succeeded,
+            provider: "local",
+            model: "deterministic",
+            providerKind: .local,
+            selectedRecordIDs: [],
+            output: OrganizationOutput(
+                noResultReason: nil,
+                numberedPoints: [],
+                knownRecordLinks: [],
+                speculativeConnections: []
+            ),
+            errorCode: nil,
+            updatedAt: Date(timeIntervalSince1970: 0)
+        )
     }
 }

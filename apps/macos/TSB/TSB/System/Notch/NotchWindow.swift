@@ -2,14 +2,9 @@ import AppKit
 
 /// Adapted from OpenDictation/Views/Notch/NotchWindow.swift (MIT, Copyright (c) 2025 Kenny).
 final class NotchWindow: NSPanel {
-    private let targetScreen: NSScreen
-
-    init(screen: NSScreen) {
-        targetScreen = screen
-        let frame = screen.frame
-        let height = screen.safeAreaInsets.top
+    init(frame: NSRect) {
         super.init(
-            contentRect: CGRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height),
+            contentRect: frame,
             styleMask: [.borderless, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -19,8 +14,9 @@ final class NotchWindow: NSPanel {
         level = .screenSaver
         backgroundColor = .clear
         isOpaque = false
-        hasShadow = false
-        ignoresMouseEvents = true
+        hasShadow = true
+        ignoresMouseEvents = false
+        becomesKeyOnlyIfNeeded = true
         collectionBehavior = [.fullScreenAuxiliary, .stationary, .canJoinAllSpaces, .ignoresCycle]
         hidesOnDeactivate = false
     }
@@ -28,16 +24,7 @@ final class NotchWindow: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
-    func resize(height: CGFloat) {
-        let screenFrame = targetScreen.frame
-        setFrame(
-            CGRect(
-                x: screenFrame.minX,
-                y: screenFrame.maxY - height,
-                width: screenFrame.width,
-                height: height
-            ),
-            display: true
-        )
+    func resize(to frame: NSRect) {
+        setFrame(frame, display: true, animate: false)
     }
 }

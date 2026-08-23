@@ -17,118 +17,35 @@ struct OverlayGeneration: Equatable, Sendable {
     }
 }
 
-struct NotchPresentation: Equatable, Sendable {
-    enum Tone: Equatable, Sendable {
-        case neutral
-        case success
-        case warning
-    }
-
-    struct Secondary: Equatable, Sendable, Identifiable {
-        let id: SessionID
-        let text: String
-        let tone: Tone
-        let systemImage: String?
-    }
-
-    let label: String?
-    let text: String
-    let statusText: String
-    let tone: Tone
-    let systemImage: String?
-    let accessibilityLabel: String?
-    let autoHideDelay: TimeInterval?
-    let secondary: [Secondary]
-
-    static func make(for snapshot: AppSnapshot) -> Self? {
-        guard snapshot.status != .idle else { return nil }
-        let label: String?
-        if snapshot.previewText.isEmpty {
-            label = nil
-        } else {
-            switch snapshot.status {
-            case .recording: label = "实时草稿"
-            case .transcribing, .saving: label = "本地复核中"
-            default: label = nil
-            }
-        }
-        let text = label == nil ? snapshot.message ?? snapshot.previewText : snapshot.previewText
-        let accessibilityLabel = label.map { "\($0)，\(text)" }
-        let secondary = snapshot.secondaryProcessing.prefix(3).map { item in
-            let isSuccess = item.status == .delivered && item.message == "已复制 · 按 ⌘V 粘贴"
-            let isWarning = item.status == .failed || item.status == .delivered
-            return Secondary(
-                id: item.id,
-                text: isWarning ? item.message : (item.previewText.isEmpty ? item.message : item.previewText),
-                tone: isSuccess ? .success : (isWarning ? .warning : .neutral),
-                systemImage: isSuccess
-                    ? "checkmark.circle.fill"
-                    : (isWarning ? "exclamationmark.triangle.fill" : nil)
-            )
-        }
-
-        if snapshot.status == .delivered, snapshot.message == "已复制 · 按 ⌘V 粘贴" {
-            return Self(
-                label: nil,
-                text: text,
-                statusText: text,
-                tone: .success,
-                systemImage: "checkmark.circle.fill",
-                accessibilityLabel: "复制成功，按 Command V 粘贴",
-                autoHideDelay: secondary.isEmpty ? 1.2 : nil,
-                secondary: secondary
-            )
-        }
-
-        if snapshot.status == .failed || snapshot.status == .delivered {
-            return Self(
-                label: nil,
-                text: text,
-                statusText: text,
-                tone: .warning,
-                systemImage: "exclamationmark.triangle.fill",
-                accessibilityLabel: nil,
-                autoHideDelay: nil,
-                secondary: secondary
-            )
-        }
-
-        return Self(
-            label: label,
-            text: text,
-            statusText: label ?? text,
-            tone: .neutral,
-            systemImage: nil,
-            accessibilityLabel: accessibilityLabel,
-            autoHideDelay: nil,
-            secondary: secondary
-        )
-    }
-
-    func windowHeight(notchHeight: CGFloat) -> CGFloat {
-        max(notchHeight, 32) + CGFloat(secondary.count) * 36
-    }
-}
-
 /// Adapted from OpenDictation/Views/Notch/NotchOverlayPanel.swift (MIT, Copyright (c) 2025 Kenny).
 @MainActor
 final class NotchOverlayPanel {
     private let screen: NSScreen
+    private let onIntent: (IslandIntent) -> Void
     private let schedule: (TimeInterval, @escaping @MainActor () -> Void) -> Void
     private var window: NotchWindow?
+    private var hostingView: NSHostingView<IslandView>?
     private var generation = OverlayGeneration(0)
+    private var currentPresentation: IslandPresentation?
+    private var latestResult: IslandPresentation?
 
-    convenience init(screen: NSScreen) {
-        self.init(screen: screen) { delay, action in
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { action() }
-        }
+    convenience init(screen: NSScreen, onIntent: @escaping (IslandIntent) -> Void) {
+        self.init(
+            screen: screen,
+            onIntent: onIntent,
+            schedule: { delay, action in
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { action() }
+            }
+        )
     }
 
     init(
         screen: NSScreen,
+        onIntent: @escaping (IslandIntent) -> Void,
         schedule: @escaping (TimeInterval, @escaping @MainActor () -> Void) -> Void
     ) {
         self.screen = screen
+        self.onIntent = onIntent
         self.schedule = schedule
     }
 
@@ -136,10 +53,45 @@ final class NotchOverlayPanel {
         window?.isVisible == true
     }
 
+    var presentedMode: IslandMode? {
+        currentPresentation?.mode
+    }
+
+    var latestResultSessionID: SessionID? {
+        latestResult?.targetSessionID
+    }
+
     func update(_ snapshot: AppSnapshot) {
-        guard let presentation = NotchPresentation.make(for: snapshot) else {
+        guard let presentation = IslandPresentation.make(
+            for: snapshot,
+            screenWidth: screen.visibleFrame.width,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            hasLatestResult: latestResult != nil
+        ) else {
             hide()
             return
+        }
+        if let secondary = snapshot.secondaryProcessing.first(where: Self.isCompletedResult),
+           let secondaryResult = IslandPresentation.make(
+               for: AppSnapshot(
+                   status: secondary.status,
+                   elapsedMilliseconds: 0,
+                   previewText: secondary.previewText,
+                   message: secondary.message,
+                   organizationPhase: secondary.organizationPhase,
+                   organizationRequestID: secondary.organizationRequestID,
+                   suggestedRecords: secondary.suggestedRecords
+               ),
+               screenWidth: screen.visibleFrame.width,
+               reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+               targetSessionID: secondary.id
+           ) {
+            latestResult = secondaryResult
+        }
+        if presentation.mode == .organized
+            || presentation.mode == .localDelivered
+            || (presentation.mode == .failed && !presentation.originalText.isEmpty) {
+            latestResult = presentation
         }
         show(presentation)
         if let delay = presentation.autoHideDelay {
@@ -147,88 +99,71 @@ final class NotchOverlayPanel {
         }
     }
 
-    private func show(_ presentation: NotchPresentation) {
+    func hide() {
+        scheduleHide(after: 0.25)
+    }
+
+    private func show(_ presentation: IslandPresentation) {
         generation = generation.next()
+        currentPresentation = presentation
+        let frame = screen.islandFrame(for: presentation.size)
         if window == nil {
-            let window = NotchWindow(screen: screen)
-            self.window = window
+            window = NotchWindow(frame: frame)
+        } else {
+            window?.resize(to: frame)
         }
-        window?.resize(height: presentation.windowHeight(notchHeight: screen.notchSize.height))
-        window?.contentView = NSHostingView(rootView: NotchOverlayView(notchSize: screen.notchSize, presentation: presentation))
+        let rootView = IslandView(
+            presentation: presentation,
+            onIntent: onIntent,
+            onLocalAction: { [weak self] action in
+                self?.handleLocalAction(action)
+            }
+        )
+        if let hostingView {
+            hostingView.rootView = rootView
+        } else {
+            let hostingView = NSHostingView(rootView: rootView)
+            self.hostingView = hostingView
+            window?.contentView = hostingView
+        }
         window?.orderFrontRegardless()
     }
 
-    func hide() {
-        scheduleHide(after: 0.25)
+    private func handleLocalAction(_ action: IslandAction) {
+        switch action {
+        case .dismiss:
+            guard currentPresentation?.mode != .idle else { return }
+            showIdle()
+        case .reopenLatest:
+            if let latestResult { show(latestResult) }
+        default:
+            break
+        }
+    }
+
+    private func showIdle() {
+        guard let idle = IslandPresentation.make(
+            for: AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil),
+            screenWidth: screen.visibleFrame.width,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            hasLatestResult: latestResult != nil
+        ) else { return }
+        show(idle)
     }
 
     private func scheduleHide(after delay: TimeInterval) {
         let callbackGeneration = generation
         schedule(delay) { [weak self] in
             guard let self, self.generation.accepts(callbackGeneration) else { return }
-            self.window?.orderOut(nil)
+            self.showIdle()
         }
     }
-}
 
-private struct NotchOverlayView: View {
-    let notchSize: CGSize
-    let presentation: NotchPresentation
-
-    var body: some View {
-        NotchShape()
-            .fill(.black)
-            .overlay {
-                VStack(spacing: 0) {
-                    HStack(spacing: 4) {
-                        if let systemImage = presentation.systemImage {
-                            Image(systemName: systemImage)
-                        }
-                        if let label = presentation.label {
-                            Text(label)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text(presentation.text)
-                            .lineLimit(1)
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(foregroundColor)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(presentation.accessibilityLabel ?? presentation.text)
-                    NotchWaveformView(audioLevel: 0)
-
-                    ForEach(presentation.secondary) { item in
-                        HStack(spacing: 4) {
-                            if let systemImage = item.systemImage {
-                                Image(systemName: systemImage)
-                            }
-                            Text(item.text)
-                                .lineLimit(1)
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(foregroundColor(for: item.tone))
-                        .frame(height: 36)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(item.text)
-                    }
-                }
-            }
-            .frame(
-                width: max(notchSize.width, 280),
-                height: presentation.windowHeight(notchHeight: notchSize.height)
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    private var foregroundColor: Color {
-        foregroundColor(for: presentation.tone)
-    }
-
-    private func foregroundColor(for tone: NotchPresentation.Tone) -> Color {
-        switch tone {
-        case .neutral: .white
-        case .success: .green
-        case .warning: .orange
-        }
+    private static func isCompletedResult(_ item: SecondaryProcessingSnapshot) -> Bool {
+        if case .organized = item.organizationPhase { return true }
+        if case .failed = item.organizationPhase { return !item.previewText.isEmpty }
+        return item.status == .delivered
+            && item.organizationPhase != .queued
+            && item.organizationPhase != .organizing
     }
 }

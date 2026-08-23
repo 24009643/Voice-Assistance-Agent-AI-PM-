@@ -20,7 +20,9 @@ final class AppController: ObservableObject {
     private let coordinator: SessionCoordinator
     private let escapeMonitor: EscapeKeyMonitor
     private let modelError: String?
-    private let notchOverlay: NotchOverlayPanel?
+    private var notchOverlay: NotchOverlayPanel?
+    private let currentSessionID: () -> SessionID?
+    private let manualCopy: (String) -> Bool
     private var intentTask: Task<Void, Never>?
     private var microphoneRequestLatch = MicrophoneRequestLatch()
 
@@ -60,7 +62,8 @@ final class AppController: ObservableObject {
         let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTest.XCTestCase") != nil
         let clipboard = ClipboardService.system
-        let notchOverlay = NSScreen.findScreenForNotch().map(NotchOverlayPanel.init)
+        var activeSessionID: SessionID?
+        var notchOverlay: NotchOverlayPanel?
         let escapeMonitor = EscapeKeyMonitor(
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
         )
@@ -83,6 +86,7 @@ final class AppController: ObservableObject {
         let coordinator = SessionCoordinator(
             dependencies: .init(
                 startRecording: { sessionID, onPreview, onLevel, onFinished, onFailed in
+                    activeSessionID = sessionID
                     let feed = livePreview.start(sessionID: sessionID, onPreview: onPreview)
                     try recorder.start(
                         sessionID: sessionID,
@@ -170,7 +174,16 @@ final class AppController: ObservableObject {
         self.coordinator = coordinator
         self.escapeMonitor = escapeMonitor
         self.modelError = modelError
+        self.notchOverlay = nil
+        self.currentSessionID = { activeSessionID }
+        self.manualCopy = { clipboard.copy($0) }
+        notchOverlay = NSScreen.findScreenForNotch().map { screen in
+            NotchOverlayPanel(screen: screen) { [weak self] intent in
+                self?.receive(intent)
+            }
+        }
         self.notchOverlay = notchOverlay
+        notchOverlay?.update(state.snapshot)
         escapeMonitor.onEscapePressed = { [weak self] in
             self?.dispatch(.cancelRecording)
         }
@@ -234,6 +247,29 @@ final class AppController: ObservableObject {
         }
     }
 
+    private func receive(_ intent: IslandIntent) {
+        switch intent {
+        case .stopRecording:
+            dispatch(.toggleRecording)
+        case let .setLocalOnly(enabled):
+            guard let sessionID = currentSessionID() else { return }
+            dispatch(.setLocalOnly(sessionID: sessionID, enabled: enabled))
+        case let .cancelOrganization(targetSessionID, requestID):
+            guard let sessionID = targetSessionID ?? currentSessionID() else { return }
+            dispatch(.cancel(sessionID: sessionID, requestID: requestID))
+        case let .retryOrganization(targetSessionID, requestID):
+            guard let sessionID = targetSessionID ?? currentSessionID() else { return }
+            dispatch(.retry(sessionID: sessionID, requestID: requestID))
+        case let .generateLinks(targetSessionID, selectedRecordIDs):
+            guard let sessionID = targetSessionID ?? currentSessionID() else { return }
+            dispatch(.enrichLinks(sessionID: sessionID, selectedRecordIDs: selectedRecordIDs))
+        case let .copy(text):
+            enqueue { [weak self] in
+                _ = self?.manualCopy(text)
+            }
+        }
+    }
+
     static func startRecordingAfterEscapePreflight(
         startEscape: @MainActor () -> HotkeyStartError?,
         startRecording: @MainActor () -> Void
@@ -244,9 +280,8 @@ final class AppController: ObservableObject {
     }
 
     private func dispatchRecordingStart() {
-        intentTask?.cancel()
-        intentTask = Task { @MainActor [weak self] in
-            guard !Task.isCancelled, let self else { return }
+        enqueue { [weak self] in
+            guard let self else { return }
             let error = Self.startRecordingAfterEscapePreflight(
                 startEscape: { self.escapeMonitor.start() },
                 startRecording: { self.coordinator.handleToggleRecording() }
@@ -264,10 +299,25 @@ final class AppController: ObservableObject {
     }
 
     private func dispatch(_ intent: UserIntent) {
-        intentTask?.cancel()
-        intentTask = Task { @MainActor [weak self] in
-            guard !Task.isCancelled, let self else { return }
+        enqueue { [weak self] in
+            guard let self else { return }
             await coordinator.handle(intent)
+        }
+    }
+
+    private func dispatch(_ intent: OrganizationIntent) {
+        enqueue { [weak self] in
+            guard let self else { return }
+            await coordinator.handle(intent)
+        }
+    }
+
+    private func enqueue(_ action: @escaping @MainActor () async -> Void) {
+        let previous = intentTask
+        intentTask = Task { @MainActor in
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await action()
         }
     }
 }
