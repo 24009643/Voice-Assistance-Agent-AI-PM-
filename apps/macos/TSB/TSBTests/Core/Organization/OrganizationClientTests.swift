@@ -27,9 +27,15 @@ final class OrganizationClientTests: XCTestCase {
             XCTAssertEqual(messages.count, 2)
             let content = try XCTUnwrap(messages.last?["content"] as? String)
             let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any])
-            XCTAssertEqual(Set(payload.keys), ["schema_version", "request_id", "current_segments", "history_summaries"])
+            XCTAssertEqual(Set(payload.keys), [
+                "schema_version", "request_id", "source_text_hash", "current_segments", "history_summaries"
+            ])
             XCTAssertEqual(payload["schema_version"] as? String, "tsb.organization.request.v1")
             XCTAssertEqual(payload["request_id"] as? String, requestID.uuidString.lowercased())
+            XCTAssertEqual(
+                payload["source_text_hash"] as? String,
+                "bbfb79e82216bd2db1ad2c507d44ddf80aeb12f64f9562056afe93aad43154d9"
+            )
             XCTAssertEqual(payload["current_segments"] as? [[String: String]], [
                 ["segment_id": "c1", "text": "alpha"],
                 ["segment_id": "c2", "text": "beta"]
@@ -46,7 +52,7 @@ final class OrganizationClientTests: XCTestCase {
             ] {
                 XCTAssertFalse(wireText.contains(forbiddenValue), "Leaked \(forbiddenValue)")
             }
-            return (200, response)
+            return .response(200, response)
         }
         let client = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: endpointURL, model: "test-model"),
@@ -83,7 +89,7 @@ final class OrganizationClientTests: XCTestCase {
             let content = try XCTUnwrap(messages.last?["content"] as? String)
             let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any])
             XCTAssertEqual(payload["history_summaries"] as? [[String: String]], [])
-            return (200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
         }
         let client = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
@@ -104,7 +110,7 @@ final class OrganizationClientTests: XCTestCase {
     }
 
     func testRejectsInvalidJSONAndInsecureNonLoopbackHTTP() async throws {
-        URLProtocolStub.handler = { _ in (200, Data("not-json".utf8)) }
+        URLProtocolStub.handler = { _ in .response(200, Data("not-json".utf8)) }
         let invalidJSONClient = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
             session: makeSession()
@@ -137,13 +143,19 @@ final class OrganizationClientTests: XCTestCase {
 
     func testLoopbackHTTPUsesSixtySecondTimeout() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let deadlines = DurationRecorder()
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.timeoutInterval, 60, accuracy: 0.01)
-            return (200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+            Thread.sleep(forTimeInterval: 0.05)
+            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
         }
         let client = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "http://127.0.0.1:11434/v1/chat/completions")!, model: "local"),
-            session: makeSession()
+            session: makeSession(),
+            timeoutSleeper: { duration in
+                deadlines.append(duration)
+                try await Task.sleep(for: .seconds(1))
+            }
         )
 
         _ = try await client.organize(
@@ -153,13 +165,14 @@ final class OrganizationClientTests: XCTestCase {
             userSelectedCandidateIDs: [],
             apiKey: ""
         )
+        XCTAssertEqual(deadlines.values, [.seconds(60)])
     }
 
     func testCancellationAndTimeoutDoNotReturnLateOutput() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
         URLProtocolStub.handler = { _ in
             Thread.sleep(forTimeInterval: 0.3)
-            return (200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
         }
         let client = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
@@ -178,7 +191,113 @@ final class OrganizationClientTests: XCTestCase {
 
         await XCTAssertThrowsErrorAsync { try await task.value }
 
-        URLProtocolStub.handler = { _ in throw URLError(.timedOut) }
+        let deadlines = DurationRecorder()
+        URLProtocolStub.handler = { _ in
+            Thread.sleep(forTimeInterval: 0.3)
+            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+        }
+        let timeoutClient = OrganizationClient(
+            endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
+            session: makeSession(),
+            timeoutSleeper: { duration in deadlines.append(duration) }
+        )
+        await XCTAssertThrowsErrorAsync {
+            try await timeoutClient.organize(
+                requestID: requestID,
+                segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
+                historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+                userSelectedCandidateIDs: [],
+                apiKey: "secret"
+            )
+        }
+        XCTAssertEqual(deadlines.values, [.seconds(20)])
+    }
+
+    func testRejectsRedirectBeforeAnySecondRequestCanCarryText() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let origin = URL(string: "https://origin.test/exact-chat-endpoint")!
+        let redirected = URL(string: "https://attacker.test/collect")!
+        let recorder = URLRecorder()
+        URLProtocolStub.handler = { request in
+            recorder.append(request.url!)
+            if request.url == origin { return .redirect(redirected) }
+            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+        }
+        let client = OrganizationClient(
+            endpoint: OrganizationEndpoint(baseURL: origin, model: "test-model"),
+            session: makeSession()
+        )
+
+        await XCTAssertThrowsErrorAsync {
+            try await client.organize(
+                requestID: requestID,
+                segments: [try TextSegment(id: "c1", text: "must stay at origin")],
+                historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+                userSelectedCandidateIDs: [],
+                apiKey: "secret"
+            )
+        }
+
+        XCTAssertEqual(recorder.urls, [origin])
+    }
+
+    func testRegeneratesSequentialEphemeralIDsBeforeSendingInternalShapedIDs() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let internalCandidateID = "00000000-0000-0000-0000-000000000201"
+        let recordID = SessionID(rawValue: UUID(uuidString: internalCandidateID)!)
+        URLProtocolStub.handler = { request in
+            let body = try requestBody(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+            let content = try XCTUnwrap(messages.last?["content"] as? String)
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any])
+            XCTAssertEqual(payload["current_segments"] as? [[String: String]], [
+                ["segment_id": "c1", "text": "alpha"],
+                ["segment_id": "c2", "text": "beta"]
+            ])
+            XCTAssertEqual(payload["history_summaries"] as? [[String: String]], [
+                ["candidate_id": "h1", "summary": "selected summary"]
+            ])
+            XCTAssertFalse(String(decoding: body, as: UTF8.self).contains(internalCandidateID))
+            return .response(200, makeValidChatResponse(requestID: requestID))
+        }
+        let client = OrganizationClient(
+            endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
+            session: makeSession()
+        )
+        let suggestions = HistorySuggestions(
+            suggestedSummaries: [HistorySummaryDTO(candidateID: internalCandidateID, summary: "selected summary")],
+            localRecordByCandidateID: [internalCandidateID: recordID]
+        )
+
+        let output = try await client.organize(
+            requestID: requestID,
+            segments: [
+                try TextSegment(id: internalCandidateID, text: "alpha"),
+                try TextSegment(id: "arbitrary-segment", text: "beta")
+            ],
+            historySuggestions: suggestions,
+            userSelectedCandidateIDs: [internalCandidateID],
+            apiKey: "secret"
+        )
+
+        XCTAssertEqual(output.knownRecordLinks.map(\.recordID), [recordID])
+    }
+
+    func testRejectsMismatchedEchoedSourceHash() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        URLProtocolStub.handler = { _ in
+            .response(200, makeValidChatResponse(
+                requestID: requestID,
+                includeLinks: false,
+                sourceTextHash: "wrong"
+            ))
+        }
+        let client = OrganizationClient(
+            endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
+            session: makeSession()
+        )
+
         await XCTAssertThrowsErrorAsync {
             try await client.organize(
                 requestID: requestID,
@@ -187,6 +306,34 @@ final class OrganizationClientTests: XCTestCase {
                 userSelectedCandidateIDs: [],
                 apiKey: "secret"
             )
+        }
+    }
+
+    func testRejectsUnknownOrganizationKeysAtEveryObjectLevel() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let recordID = SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!)
+        let client = OrganizationClient(
+            endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
+            session: makeSession()
+        )
+        let suggestions = HistorySuggestions(
+            suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: "selected summary")],
+            localRecordByCandidateID: ["h1": recordID]
+        )
+
+        for location in UnknownFieldLocation.allCases {
+            URLProtocolStub.handler = { _ in
+                .response(200, makeValidChatResponse(requestID: requestID, unknownFieldAt: location))
+            }
+            await XCTAssertThrowsErrorAsync {
+                try await client.organize(
+                    requestID: requestID,
+                    segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
+                    historySuggestions: suggestions,
+                    userSelectedCandidateIDs: ["h1"],
+                    apiKey: "secret"
+                )
+            }
         }
     }
 
@@ -199,7 +346,12 @@ final class OrganizationClientTests: XCTestCase {
 }
 
 private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
-    typealias Handler = @Sendable (URLRequest) throws -> (Int, Data)
+    enum Response: Sendable {
+        case response(Int, Data)
+        case redirect(URL)
+    }
+
+    typealias Handler = @Sendable (URLRequest) throws -> Response
     nonisolated(unsafe) static var handler: Handler?
 
     private let stateLock = NSLock()
@@ -215,17 +367,30 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
         }
         DispatchQueue.global().async { [self] in
             do {
-                let (status, data) = try handler(request)
+                let result = try handler(request)
                 guard !isStopped else { return }
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: status,
-                    httpVersion: nil,
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                client?.urlProtocol(self, didLoad: data)
-                client?.urlProtocolDidFinishLoading(self)
+                switch result {
+                case let .response(status, data):
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: status,
+                        httpVersion: nil,
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                    client?.urlProtocol(self, didLoad: data)
+                    client?.urlProtocolDidFinishLoading(self)
+                case let .redirect(url):
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 302,
+                        httpVersion: nil,
+                        headerFields: ["Location": url.absoluteString]
+                    )!
+                    var redirectedRequest = request
+                    redirectedRequest.url = url
+                    client?.urlProtocol(self, wasRedirectedTo: redirectedRequest, redirectResponse: response)
+                }
             } catch {
                 client?.urlProtocol(self, didFailWithError: error)
             }
@@ -239,26 +404,60 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     private var isStopped: Bool { stateLock.withLock { stopped } }
 }
 
-private func makeValidChatResponse(requestID: UUID, includeLinks: Bool = true) -> Data {
+private enum UnknownFieldLocation: CaseIterable, Sendable {
+    case topLevel
+    case point
+    case link
+    case connection
+}
+
+private func makeValidChatResponse(
+    requestID: UUID,
+    includeLinks: Bool = true,
+    sourceTextHash: String = "bbfb79e82216bd2db1ad2c507d44ddf80aeb12f64f9562056afe93aad43154d9",
+    unknownFieldAt location: UnknownFieldLocation? = nil
+) -> Data {
+    let topLevelExtra = location == .topLevel ? ",\"unexpected\":true" : ""
+    let pointExtra = location == .point ? ",\"candidate_id\":\"h1\"" : ""
+    let linkExtra = location == .link ? ",\"statement\":\"mixed category\"" : ""
     let links = includeLinks
-        ? "[{\"candidate_id\":\"h1\",\"reason\":\"same topic\",\"source_segment_ids\":[\"c1\"]}]"
+        ? "[{\"candidate_id\":\"h1\",\"reason\":\"same topic\",\"source_segment_ids\":[\"c1\"]\(linkExtra)}]"
+        : "[]"
+    let connections = location == .connection
+        ? "[{\"statement\":\"possible\",\"why_speculative\":\"unconfirmed\",\"source_segment_ids\":[\"c1\"],\"candidate_ids\":[\"h1\"],\"reason\":\"mixed category\"}]"
         : "[]"
     let content = """
     {
       "schema_version": "tsb.organization.output.v1",
       "request_id": "\(requestID.uuidString.lowercased())",
-      "source_text_hash": "bbfb79e82216bd2db1ad2c507d44ddf80aeb12f64f9562056afe93aad43154d9",
+      "source_text_hash": "\(sourceTextHash)",
       "no_result_reason": null,
       "numbered_points": [
-        {"number":1,"text":"alpha","source_segment_ids":["c1"]},
+        {"number":1,"text":"alpha","source_segment_ids":["c1"]\(pointExtra)},
         {"number":2,"text":"beta","source_segment_ids":["c2"]}
       ],
       "known_record_links": \(links),
-      "speculative_connections": []
+      "speculative_connections": \(connections)\(topLevelExtra)
     }
     """
     let outer: [String: Any] = ["choices": [["message": ["role": "assistant", "content": content]]]]
     return try! JSONSerialization.data(withJSONObject: outer)
+}
+
+private final class URLRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedURLs: [URL] = []
+
+    var urls: [URL] { lock.withLock { storedURLs } }
+    func append(_ url: URL) { lock.withLock { storedURLs.append(url) } }
+}
+
+private final class DurationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedValues: [Duration] = []
+
+    var values: [Duration] { lock.withLock { storedValues } }
+    func append(_ value: Duration) { lock.withLock { storedValues.append(value) } }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

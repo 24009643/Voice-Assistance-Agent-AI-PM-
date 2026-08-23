@@ -2,6 +2,8 @@ import CryptoKit
 import Foundation
 
 enum OrganizationValidatorError: Error, Equatable {
+    case invalidResponseShape
+    case unknownResponseField(String)
     case wrongSchemaVersion
     case wrongRequestID
     case wrongInputHash
@@ -30,6 +32,37 @@ struct OrganizationResponseDTO: Decodable, Sendable {
         case numberedPoints = "numbered_points"
         case knownRecordLinks = "known_record_links"
         case speculativeConnections = "speculative_connections"
+    }
+
+    static func decodeStrictly(from data: Data) throws -> Self {
+        let object = try JSONSerialization.jsonObject(with: data)
+        let topLevel = try exactObject(object, keys: [
+            "schema_version", "request_id", "source_text_hash", "no_result_reason",
+            "numbered_points", "known_record_links", "speculative_connections"
+        ])
+        try validateObjects(topLevel["numbered_points"], keys: ["number", "text", "source_segment_ids"])
+        try validateObjects(topLevel["known_record_links"], keys: ["candidate_id", "reason", "source_segment_ids"])
+        try validateObjects(topLevel["speculative_connections"], keys: [
+            "statement", "why_speculative", "source_segment_ids", "candidate_ids"
+        ])
+        return try JSONDecoder().decode(Self.self, from: data)
+    }
+
+    private static func validateObjects(_ value: Any?, keys: Set<String>) throws {
+        guard let objects = value as? [Any] else { throw OrganizationValidatorError.invalidResponseShape }
+        for object in objects { _ = try exactObject(object, keys: keys) }
+    }
+
+    private static func exactObject(_ value: Any, keys: Set<String>) throws -> [String: Any] {
+        guard let object = value as? [String: Any] else {
+            throw OrganizationValidatorError.invalidResponseShape
+        }
+        let actual = Set(object.keys)
+        if let unknown = actual.subtracting(keys).sorted().first {
+            throw OrganizationValidatorError.unknownResponseField(unknown)
+        }
+        guard actual == keys else { throw OrganizationValidatorError.invalidResponseShape }
+        return object
     }
 }
 
