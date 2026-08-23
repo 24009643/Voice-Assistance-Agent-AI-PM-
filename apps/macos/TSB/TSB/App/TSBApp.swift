@@ -2,12 +2,11 @@ import SwiftUI
 
 @main
 struct TSBApp: App {
-    @StateObject private var controller = AppController()
+    @NSApplicationDelegateAdaptor(TSBAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        WindowGroup {
-            PlaceholderView(state: controller.state, onToggle: controller.toggleForDevelopment)
-                .onAppear(perform: controller.start)
+        Settings {
+            SettingsView(model: appDelegate.settingsModel)
         }
     }
 }

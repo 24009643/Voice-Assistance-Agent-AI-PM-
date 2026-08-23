@@ -19,6 +19,10 @@ final class OrganizationSettingsStore {
         return settings
     }
 
+    func hasAPIKey() throws -> Bool {
+        try secretStore.hasSecret()
+    }
+
     func save(_ settings: OrganizationSettings, apiKey: String? = nil) throws {
         if settings.isRemoteDispatchEligible, let apiKey {
             try secretStore.save(apiKey)
