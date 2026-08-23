@@ -24,11 +24,11 @@ final class SessionCoordinator {
         let currentOrganizationSettings: @MainActor () -> OrganizationSettings
         let historySuggestions: @MainActor (SessionID) throws -> HistorySuggestions
         let organize: @MainActor (
-            OrganizationEndpointSettings,
             UUID,
             [TextSegment],
             HistorySuggestions,
-            Set<String>
+            Set<String>,
+            @MainActor (OrganizationEndpointSettings) throws -> Void
         ) async throws -> OrganizationOutput
         let scheduleSecondaryRemoval: @MainActor (
             TimeInterval,
@@ -66,7 +66,6 @@ final class SessionCoordinator {
         let sessionID: SessionID
         let requestID: UUID
         let segments: [TextSegment]
-        let settings: OrganizationSettings
         let historySuggestions: HistorySuggestions
         let selectedCandidateIDs: Set<String>
         let selectedRecordIDs: [SessionID]
@@ -108,9 +107,10 @@ final class SessionCoordinator {
         switch intent {
         case let .setLocalOnly(sessionID, enabled):
             setLocalOnly(enabled, for: sessionID)
-        case let .cancel(sessionID):
-            cancelOrganization(for: sessionID)
-        case let .retry(sessionID):
+        case let .cancel(sessionID, requestID):
+            cancelOrganization(for: sessionID, expectedRequestID: requestID)
+        case let .retry(sessionID, requestID):
+            guard sessions[sessionID]?.organizationRequestID == requestID else { return }
             enqueueOrganization(for: sessionID, selectedRecordIDs: [])
         case let .enrichLinks(sessionID, selectedRecordIDs):
             enqueueOrganization(for: sessionID, selectedRecordIDs: selectedRecordIDs)
@@ -427,6 +427,7 @@ final class SessionCoordinator {
         guard useDeterministic || settings.endpoint?.isLoopback == true || settings.isRemoteDispatchEligible else {
             session.organizationPhase = .authorizationRequired
             session.resultRetainedForDisplay = true
+            session.secondaryRemovalScheduled = false
             sessions[sessionID] = session
             publishSnapshot()
             scheduleSecondaryRemovalIfEligible(sessionID)
@@ -444,6 +445,7 @@ final class SessionCoordinator {
             guard settings.endpoint?.isLoopback == true || settings.canSendUserSelectedHistorySummaries else {
                 session.organizationPhase = .authorizationRequired
                 session.resultRetainedForDisplay = true
+                session.secondaryRemovalScheduled = false
                 sessions[sessionID] = session
                 publishSnapshot()
                 scheduleSecondaryRemovalIfEligible(sessionID)
@@ -474,7 +476,6 @@ final class SessionCoordinator {
             sessionID: sessionID,
             requestID: requestID,
             segments: segments,
-            settings: settings,
             historySuggestions: suggestions,
             selectedCandidateIDs: selectedCandidateIDs,
             selectedRecordIDs: selectedRecordIDs,
@@ -505,13 +506,10 @@ final class SessionCoordinator {
     private func startNextOrganizationIfNeeded() {
         guard activeOrganization == nil, !organizationQueue.isEmpty else { return }
         let job = organizationQueue.removeFirst()
-        guard var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else {
+        guard sessions[job.sessionID]?.organizationRequestID == job.requestID else {
             startNextOrganizationIfNeeded()
             return
         }
-        session.organizationPhase = .organizing
-        sessions[job.sessionID] = session
-        publishSnapshot()
         let task = Task<Void, Never> { @MainActor [weak self] in
             guard let self else { return }
             await self.runOrganization(job)
@@ -520,61 +518,83 @@ final class SessionCoordinator {
     }
 
     private func runOrganization(_ job: OrganizationJob) async {
+        var dispatchJob = job
         do {
             let output: OrganizationOutput
             if job.useDeterministicOrganizer {
+                guard markOrganizationRunning(job) else {
+                    completeOrganizationSlot(job)
+                    return
+                }
                 output = try DeterministicOrganizer().organize(segments: job.segments)
-            } else if let endpoint = job.settings.endpoint {
+            } else {
                 output = try await dependencies.organize(
-                    endpoint,
                     job.requestID,
                     job.segments,
                     job.historySuggestions,
-                    job.selectedCandidateIDs
+                    job.selectedCandidateIDs,
+                    { [weak self] endpoint in
+                        guard let self else { throw CancellationError() }
+                        dispatchJob = self.organizationJob(job, for: endpoint)
+                        try self.prepareRemoteDispatch(dispatchJob)
+                    }
                 )
-            } else {
-                throw OrganizationRuntimeError.missingEndpoint
             }
             guard !Task.isCancelled,
-                  var session = sessions[job.sessionID],
-                  session.organizationRequestID == job.requestID else {
+                  var session = sessions[dispatchJob.sessionID],
+                  session.organizationRequestID == dispatchJob.requestID else {
                 completeOrganizationSlot(job)
                 return
             }
-            let record = organizationRecord(for: job, state: .succeeded, output: output)
+            let record = organizationRecord(for: dispatchJob, state: .succeeded, output: output)
             do {
-                try dependencies.updateOrganization(job.sessionID, record)
+                try dependencies.updateOrganization(dispatchJob.sessionID, record)
                 session.organizationPhase = .organized(record)
-                session.resultRetainedForDisplay = true
-                sessions[job.sessionID] = session
             } catch {
                 session.organizationPhase = .failed("Could not save organization result.")
-                session.resultRetainedForDisplay = true
-                sessions[job.sessionID] = session
             }
+            session.resultRetainedForDisplay = true
+            session.secondaryRemovalScheduled = false
+            sessions[dispatchJob.sessionID] = session
         } catch is CancellationError {
             completeOrganizationSlot(job)
             return
+        } catch OrganizationDispatchError.authorizationRequired {
+            finishFailedOrganization(
+                dispatchJob,
+                errorCode: "authorization_required",
+                persistedPhase: .authorizationRequired,
+                persistenceFailureMessage: "Authorization changed, but could not save failure state."
+            )
+        } catch OrganizationRuntimeError.dispatchStateWriteFailed {
+            finishFailedOrganization(
+                dispatchJob,
+                errorCode: "state_persistence_failed",
+                persistedPhase: .failed("Could not save organization state."),
+                persistenceFailureMessage: "Could not save organization failure state; pending state remains on disk."
+            )
         } catch {
             guard !Task.isCancelled,
-                  var session = sessions[job.sessionID],
-                  session.organizationRequestID == job.requestID else {
+                  sessions[dispatchJob.sessionID]?.organizationRequestID == dispatchJob.requestID else {
                 completeOrganizationSlot(job)
                 return
             }
-            let failed = organizationRecord(for: job, state: .failed, errorCode: "organization_failed")
-            try? dependencies.updateOrganization(job.sessionID, failed)
-            session.organizationPhase = .failed("Organization failed.")
-            session.resultRetainedForDisplay = true
-            sessions[job.sessionID] = session
+            finishFailedOrganization(
+                dispatchJob,
+                errorCode: "organization_failed",
+                persistedPhase: .failed("Organization failed."),
+                persistenceFailureMessage: "Organization failed, but could not save failure state."
+            )
         }
         publishSnapshot()
-        scheduleSecondaryRemovalIfEligible(job.sessionID)
+        scheduleSecondaryRemovalIfEligible(dispatchJob.sessionID)
         completeOrganizationSlot(job)
     }
 
-    private func cancelOrganization(for sessionID: SessionID) {
-        guard var session = sessions[sessionID], session.hasOrganizationWork else { return }
+    private func cancelOrganization(for sessionID: SessionID, expectedRequestID: UUID) {
+        guard var session = sessions[sessionID],
+              session.organizationRequestID == expectedRequestID,
+              session.hasOrganizationWork else { return }
         let oldRequestID = session.organizationRequestID
         let cancelledJob = activeOrganization.flatMap {
             $0.job.sessionID == sessionID && $0.job.requestID == oldRequestID ? $0.job : nil
@@ -585,14 +605,12 @@ final class SessionCoordinator {
         if activeOrganization?.job.sessionID == sessionID,
            activeOrganization?.job.requestID == oldRequestID {
             activeOrganization?.task.cancel()
-            activeOrganization = nil
         }
         let invalidationID = UUID()
         session.organizationRequestID = invalidationID
         session.organizationPhase = .failed("Organization cancelled.")
         session.resultRetainedForDisplay = true
         session.secondaryRemovalScheduled = false
-        sessions[sessionID] = session
         if let cancelledJob {
             let failed = OrganizationRecord(
                 requestID: invalidationID,
@@ -606,17 +624,90 @@ final class SessionCoordinator {
                 errorCode: "cancelled",
                 updatedAt: Date()
             )
-            try? dependencies.updateOrganization(sessionID, failed)
+            do {
+                try dependencies.updateOrganization(sessionID, failed)
+            } catch {
+                session.organizationPhase = .failed("Organization cancelled, but could not save cancellation state.")
+            }
         }
+        sessions[sessionID] = session
         publishSnapshot()
         scheduleSecondaryRemovalIfEligible(sessionID)
-        startNextOrganizationIfNeeded()
+        if activeOrganization?.job.sessionID != sessionID || activeOrganization?.job.requestID != oldRequestID {
+            startNextOrganizationIfNeeded()
+        }
+    }
+
+    private func organizationJob(_ job: OrganizationJob, for endpoint: OrganizationEndpointSettings) -> OrganizationJob {
+        OrganizationJob(
+            sessionID: job.sessionID,
+            requestID: job.requestID,
+            segments: job.segments,
+            historySuggestions: job.historySuggestions,
+            selectedCandidateIDs: job.selectedCandidateIDs,
+            selectedRecordIDs: job.selectedRecordIDs,
+            provider: "openai-compatible",
+            model: endpoint.model,
+            providerKind: endpoint.isLoopback ? .local : .remote,
+            useDeterministicOrganizer: false
+        )
+    }
+
+    private func prepareRemoteDispatch(_ job: OrganizationJob) throws {
+        guard var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else {
+            throw CancellationError()
+        }
+        do {
+            try dependencies.updateOrganization(job.sessionID, organizationRecord(for: job, state: .pending))
+        } catch {
+            throw OrganizationRuntimeError.dispatchStateWriteFailed
+        }
+        session.organizationPhase = .organizing
+        session.secondaryRemovalScheduled = false
+        sessions[job.sessionID] = session
+        if let active = activeOrganization,
+           active.job.sessionID == job.sessionID,
+           active.job.requestID == job.requestID {
+            activeOrganization = (job, active.task)
+        }
+        publishSnapshot()
+    }
+
+    private func markOrganizationRunning(_ job: OrganizationJob) -> Bool {
+        guard var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else { return false }
+        session.organizationPhase = .organizing
+        session.secondaryRemovalScheduled = false
+        sessions[job.sessionID] = session
+        publishSnapshot()
+        return true
+    }
+
+    private func finishFailedOrganization(
+        _ job: OrganizationJob,
+        errorCode: String,
+        persistedPhase: OrganizationPhase,
+        persistenceFailureMessage: String
+    ) {
+        guard var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else { return }
+        do {
+            try dependencies.updateOrganization(
+                job.sessionID,
+                organizationRecord(for: job, state: .failed, errorCode: errorCode)
+            )
+            session.organizationPhase = persistedPhase
+        } catch {
+            session.organizationPhase = .failed(persistenceFailureMessage)
+        }
+        session.resultRetainedForDisplay = true
+        session.secondaryRemovalScheduled = false
+        sessions[job.sessionID] = session
     }
 
     private func completeOrganizationSlot(_ job: OrganizationJob) {
         if activeOrganization?.job.sessionID == job.sessionID,
            activeOrganization?.job.requestID == job.requestID {
             activeOrganization = nil
+            scheduleSecondaryRemovalIfEligible(job.sessionID)
             startNextOrganizationIfNeeded()
         }
     }
@@ -645,6 +736,7 @@ final class SessionCoordinator {
         guard var session = sessions[sessionID] else { return }
         session.organizationPhase = .failed(message)
         session.resultRetainedForDisplay = true
+        session.secondaryRemovalScheduled = false
         sessions[sessionID] = session
         publishSnapshot()
         scheduleSecondaryRemovalIfEligible(sessionID)
@@ -666,7 +758,19 @@ final class SessionCoordinator {
     }
 
     func recoverInterruptedOrganizations() {
-        guard let records = try? dependencies.loadPersistedRecords() else { return }
+        let records: [TranscriptRecord]
+        do {
+            records = try dependencies.loadPersistedRecords()
+        } catch {
+            snapshot = AppSnapshot(
+                status: .failed,
+                elapsedMilliseconds: 0,
+                previewText: "",
+                message: "Could not inspect interrupted organization state."
+            )
+            return
+        }
+        var recoveryWriteFailed = false
         for record in records {
             guard let organization = record.organization, organization.state == .pending else { continue }
             let interrupted = OrganizationRecord(
@@ -681,7 +785,19 @@ final class SessionCoordinator {
                 errorCode: "interrupted",
                 updatedAt: Date()
             )
-            try? dependencies.updateOrganization(record.id, interrupted)
+            do {
+                try dependencies.updateOrganization(record.id, interrupted)
+            } catch {
+                recoveryWriteFailed = true
+            }
+        }
+        if recoveryWriteFailed {
+            snapshot = AppSnapshot(
+                status: .failed,
+                elapsedMilliseconds: 0,
+                previewText: "",
+                message: "Could not mark interrupted organization as failed."
+            )
         }
     }
 
@@ -721,7 +837,7 @@ final class SessionCoordinator {
         guard mainSessionID != sessionID,
               var session = sessions[sessionID],
               !session.isProcessing,
-              !session.hasOrganizationWork,
+              !hasOrganizationWork(sessionID, session: session),
               session.resultRetainedForDisplay,
               !session.secondaryRemovalScheduled else { return }
         session.secondaryRemovalScheduled = true
@@ -730,12 +846,14 @@ final class SessionCoordinator {
         sessions[sessionID] = session
         dependencies.scheduleSecondaryRemoval(1.2) { [weak self] in
             guard let self,
-                  self.mainSessionID != sessionID,
                   var current = self.sessions[sessionID],
                   current.organizationRequestID == requestID,
-                  current.organizationPhase == phase,
+                  current.organizationPhase == phase else { return }
+            current.secondaryRemovalScheduled = false
+            self.sessions[sessionID] = current
+            guard self.mainSessionID != sessionID,
                   !current.isProcessing,
-                  !current.hasOrganizationWork,
+                  !self.hasOrganizationWork(sessionID, session: current),
                   current.resultRetainedForDisplay else { return }
             current.resultRetainedForDisplay = false
             self.sessions[sessionID] = current
@@ -750,8 +868,14 @@ final class SessionCoordinator {
         guard let session = sessions[sessionID] else { return false }
         return session.status != .recording
             && !session.isProcessing
-            && !session.hasOrganizationWork
+            && !hasOrganizationWork(sessionID, session: session)
             && !session.resultRetainedForDisplay
+    }
+
+    private func hasOrganizationWork(_ sessionID: SessionID, session: Session) -> Bool {
+        session.hasOrganizationWork
+            || activeOrganization?.job.sessionID == sessionID
+            || organizationQueue.contains { $0.sessionID == sessionID }
     }
 
     private func ownsProcessing(_ sessionID: SessionID) -> Bool {
@@ -771,6 +895,7 @@ final class SessionCoordinator {
                     previewText: $0.previewText,
                     message: $0.message,
                     organizationPhase: $0.organizationPhase,
+                    organizationRequestID: $0.organizationRequestID,
                     suggestedRecords: $0.suggestedRecords
                 )
             }
@@ -781,6 +906,7 @@ final class SessionCoordinator {
             message: main.message,
             audioLevel: main.audioLevel,
             organizationPhase: main.organizationPhase,
+            organizationRequestID: main.organizationRequestID,
             suggestedRecords: main.suggestedRecords,
             secondaryProcessing: Array(secondary),
             canStartRecording: processingSessionCount < 3
@@ -797,5 +923,9 @@ final class SessionCoordinator {
 }
 
 private enum OrganizationRuntimeError: Error {
-    case missingEndpoint
+    case dispatchStateWriteFailed
+}
+
+enum OrganizationDispatchError: Error {
+    case authorizationRequired
 }

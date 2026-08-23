@@ -493,8 +493,8 @@ final class SessionCoordinatorTests: XCTestCase {
         let failedRequestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
         let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
 
-        await harness.coordinator.handle(.retry(sessionID: sessionID))
-        await harness.waitUntilOrganizationUpdateCount(4)
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: failedRequestID))
+        await harness.waitUntilOrganizationUpdateCount(6)
 
         XCTAssertEqual(harness.copyCount, 1)
         XCTAssertNotEqual(failedRequestID, harness.organizationUpdates.last?.organization.requestID)
@@ -519,7 +519,8 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.scheduledSecondaryRemovals.isEmpty)
 
         let olderID = try XCTUnwrap(harness.coordinator.snapshot.secondaryProcessing.single?.id)
-        await harness.coordinator.handle(.cancel(sessionID: olderID))
+        let requestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+        await harness.coordinator.handle(.cancel(sessionID: olderID, requestID: requestID))
         harness.completeOrganization()
     }
 
@@ -562,6 +563,34 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
     }
 
+    func testFailedPreparationRearmsSecondaryRemovalWhenOlderTerminalTimerIsPending() async throws {
+        let selectedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(
+            transcript: "organized before preparation failure",
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true)
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let organizedSessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.waitUntilSecondaryRemovalScheduled()
+
+        harness.setHistorySuggestionsError(TestError.disk)
+        await harness.coordinator.handle(.enrichLinks(
+            sessionID: organizedSessionID,
+            selectedRecordIDs: [selectedID]
+        ))
+        await Task.yield()
+
+        XCTAssertEqual(harness.scheduledSecondaryRemovals.count, 2)
+        guard harness.scheduledSecondaryRemovals.count == 2 else { return }
+        harness.runScheduledSecondaryRemoval(at: 0)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.id, organizedSessionID)
+        harness.runScheduledSecondaryRemoval(at: 1)
+        XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
+    }
+
     func testLocalOnlyFrozenAtStopUsesDeterministicOrganizerAndNeverDispatchesRemote() async throws {
         let harness = CoordinatorHarness(
             transcript: "one sentence.",
@@ -593,7 +622,7 @@ final class SessionCoordinatorTests: XCTestCase {
         let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
         let runningRequestID = try XCTUnwrap(harness.organizationInputs.single?.requestID)
 
-        await harness.coordinator.handle(.cancel(sessionID: sessionID))
+        await harness.coordinator.handle(.cancel(sessionID: sessionID, requestID: runningRequestID))
         let cancelledRequestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
         harness.completeOrganization()
         await Task.yield()
@@ -620,10 +649,10 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.coordinator.handle(.toggleRecording)
         await harness.coordinator.handle(.toggleRecording)
         await harness.finishRecording(at: 1)
-        await harness.waitUntilOrganizationUpdateCount(2)
+        await harness.waitUntilOrganizationUpdateCount(3)
 
         XCTAssertEqual(harness.organizationInputs.count, 1)
-        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .pending])
+        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .pending, .pending])
         XCTAssertTrue(harness.scheduledSecondaryRemovals.isEmpty)
 
         harness.completeOrganization(at: 0)
@@ -631,6 +660,85 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationInputs.count, 2)
         harness.completeOrganization(at: 1)
         await harness.waitUntilOrganizationFinishes()
+    }
+
+    func testCancellingActiveRequestKeepsSlotUntilCancellationInsensitiveCallExits() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "cancel slot",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let activeSessionID = harness.startedSessionIDs[0]
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilOrganizationUpdateCount(3)
+
+        let activeRequestID = try XCTUnwrap(harness.organizationUpdates.first?.organization.requestID)
+        await harness.coordinator.handle(.cancel(sessionID: activeSessionID, requestID: activeRequestID))
+        await Task.yield()
+
+        XCTAssertEqual(harness.organizationInputs.count, 1)
+        XCTAssertEqual(harness.maximumOrganizationCallCount, 1)
+        XCTAssertTrue(harness.scheduledSecondaryRemovals.isEmpty)
+
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationStarts(count: 2)
+        await harness.waitUntilSecondaryRemovalScheduled()
+        XCTAssertEqual(harness.maximumOrganizationCallCount, 1)
+        harness.completeOrganization(at: 1)
+    }
+
+    func testQueuedRequestUsesEndpointConfiguredWhenItsSlotIsClaimed() async throws {
+        let endpointA = remoteOrganizationSettings(baseURL: "https://a.example.test/v1/chat/completions")
+        let endpointB = remoteOrganizationSettings(baseURL: "https://b.example.test/v1/chat/completions")
+        let harness = CoordinatorHarness(
+            transcript: "queued settings",
+            organizationSettings: endpointA,
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilOrganizationUpdateCount(3)
+
+        harness.setOrganizationSettings(endpointB)
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationStarts(count: 2)
+
+        XCTAssertEqual(harness.organizationInputs[1].endpoint.baseURL.host, "b.example.test")
+        harness.completeOrganization(at: 1)
+    }
+
+    func testRevokingConsentBeforeQueuedSlotPreventsItsTextDispatch() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "must remain local after revoke",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilOrganizationUpdateCount(3)
+        let queuedSessionID = harness.startedSessionIDs[1]
+
+        harness.setOrganizationSettings(OrganizationSettings())
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationUpdateCount(5)
+
+        XCTAssertEqual(harness.organizationInputs.count, 1)
+        XCTAssertEqual(harness.organizationUpdates.last?.sessionID, queuedSessionID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .failed)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.errorCode, "authorization_required")
     }
 
     func testRetryInvalidatesOlderRunningCallbackAndUsesFrozenSettingsPerRequest() async throws {
@@ -647,7 +755,7 @@ final class SessionCoordinatorTests: XCTestCase {
         let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
         let oldRequestID = try XCTUnwrap(harness.organizationInputs.single?.requestID)
         harness.setOrganizationSettings(secondSettings)
-        await harness.coordinator.handle(.retry(sessionID: sessionID))
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: oldRequestID))
         let retryRequestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
 
         harness.completeOrganization(at: 0)
@@ -659,6 +767,34 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationInputs.map(\.endpoint.model), ["first-model", "second-model"])
         XCTAssertEqual(harness.organizationUpdates.filter { $0.organization.state == .succeeded }.map(\.organization.requestID), [retryRequestID])
         XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testStaleCancelAndRetryForOlderRequestCannotAffectNewerRequest() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "stale action",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let requestA = try XCTUnwrap(harness.organizationUpdates.first?.organization.requestID)
+
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: requestA))
+        let requestB = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+        let updateCount = harness.organizationUpdates.count
+
+        await harness.coordinator.handle(.cancel(sessionID: sessionID, requestID: requestA))
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: requestA))
+
+        XCTAssertNotEqual(requestA, requestB)
+        XCTAssertEqual(harness.organizationUpdates.count, updateCount)
+
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationStarts(count: 2)
+        XCTAssertEqual(harness.organizationInputs[1].requestID, requestB)
+        harness.completeOrganization(at: 1)
     }
 
     func testLoopbackEndpointDispatchesAsLocalProcessing() async throws {
@@ -697,7 +833,7 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.runOneSession()
         await harness.waitUntilOrganizationFinishes()
 
-        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .succeeded])
+        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .pending, .succeeded])
         guard case let .organized(record) = harness.coordinator.snapshot.organizationPhase else {
             return XCTFail("Expected organized main snapshot")
         }
@@ -729,7 +865,7 @@ final class SessionCoordinatorTests: XCTestCase {
         ])
         let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
         await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
-        await harness.waitUntilOrganizationUpdateCount(4)
+        await harness.waitUntilOrganizationUpdateCount(6)
 
         XCTAssertEqual(harness.organizationInputs.first?.selectedCandidateIDs, [])
         XCTAssertEqual(harness.organizationInputs.last?.selectedCandidateIDs, ["h1"])
@@ -749,6 +885,64 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(harness.organizationInputs.isEmpty)
         XCTAssertEqual(harness.organizationUpdates.single?.organization.state, .failed)
         XCTAssertEqual(harness.organizationUpdates.single?.organization.errorCode, "interrupted")
+    }
+
+    func testModelFailureWriteErrorDoesNotClaimFailedStateWasPersisted() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "model failure persistence",
+            organizationSettings: remoteOrganizationSettings(),
+            organizationErrors: [TestError.organization],
+            organizationWriteFailures: [2]
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationWriteAttemptCount(3)
+
+        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .pending])
+        XCTAssertEqual(
+            harness.coordinator.snapshot.organizationPhase,
+            .failed("Organization failed, but could not save failure state.")
+        )
+    }
+
+    func testCancellationWriteErrorDoesNotClaimCancellationWasPersisted() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "cancel persistence",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true,
+            organizationWriteFailures: [2]
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let requestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+
+        await harness.coordinator.handle(.cancel(sessionID: sessionID, requestID: requestID))
+
+        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .pending])
+        XCTAssertEqual(
+            harness.coordinator.snapshot.organizationPhase,
+            .failed("Organization cancelled, but could not save cancellation state.")
+        )
+        harness.completeOrganization()
+    }
+
+    func testLaunchRecoveryWriteErrorSurfacesUnrecoveredPendingState() throws {
+        let pending = makePendingOrganizationRecord()
+        let harness = CoordinatorHarness(
+            transcript: "unused",
+            organizationWriteFailures: [0],
+            persistedRecords: [makeTranscriptRecord(organization: pending)]
+        )
+
+        harness.coordinator.recoverInterruptedOrganizations()
+
+        XCTAssertTrue(harness.organizationUpdates.isEmpty)
+        XCTAssertEqual(
+            harness.coordinator.snapshot.message,
+            "Could not mark interrupted organization as failed."
+        )
     }
 
     func testAudioLevelIsBoundedAndRapidUpdatesAreThrottled() async throws {
@@ -807,8 +1001,10 @@ private final class CoordinatorHarness {
     private let copyResult: Bool
     private var organizationSettings: OrganizationSettings
     private let organizationErrors: [Error?]
+    private let organizationWriteFailures: Set<Int>
     private let persistedRecords: [TranscriptRecord]
     private let historySuggestions: HistorySuggestions
+    private var historySuggestionsError: Error?
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
     private var onPreview: [(@MainActor (SessionID, String) -> Void)] = []
@@ -830,7 +1026,10 @@ private final class CoordinatorHarness {
     private(set) var savedRecords: [TranscriptRecord] = []
     private(set) var deliveryStatuses: [DeliveryStatus] = []
     private(set) var organizationInputs: [OrganizationInput] = []
+    private(set) var organizationWriteAttempts: [(sessionID: SessionID, organization: OrganizationRecord)] = []
     private(set) var organizationUpdates: [(sessionID: SessionID, organization: OrganizationRecord)] = []
+    private(set) var activeOrganizationCallCount = 0
+    private(set) var maximumOrganizationCallCount = 0
     private(set) var timeline: [String] = []
     private(set) var scheduledSecondaryRemovals: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
 
@@ -849,8 +1048,10 @@ private final class CoordinatorHarness {
         organizationSettings: OrganizationSettings = OrganizationSettings(),
         suspendsOrganization: Bool = false,
         organizationErrors: [Error?] = [],
+        organizationWriteFailures: Set<Int> = [],
         persistedRecords: [TranscriptRecord] = [],
-        historySuggestions: HistorySuggestions = HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
+        historySuggestions: HistorySuggestions = HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+        historySuggestionsError: Error? = nil
     ) {
         self.transcript = transcript
         self.cleanedText = cleanedText
@@ -864,8 +1065,10 @@ private final class CoordinatorHarness {
         self.organizationSettings = organizationSettings
         self.suspendsOrganization = suspendsOrganization
         self.organizationErrors = organizationErrors
+        self.organizationWriteFailures = organizationWriteFailures
         self.persistedRecords = persistedRecords
         self.historySuggestions = historySuggestions
+        self.historySuggestionsError = historySuggestionsError
     }
 
     private func makeCoordinator() -> SessionCoordinator {
@@ -934,17 +1137,31 @@ private final class CoordinatorHarness {
                     self?.persistedRecords ?? []
                 },
                 updateOrganization: { [weak self] sessionID, organization in
-                    self?.organizationUpdates.append((sessionID, organization))
-                    self?.timeline.append("organization:\(organization.state.rawValue)")
+                    guard let self else { throw TestError.deallocated }
+                    let attempt = self.organizationWriteAttempts.count
+                    self.organizationWriteAttempts.append((sessionID, organization))
+                    if self.organizationWriteFailures.contains(attempt) { throw TestError.disk }
+                    self.organizationUpdates.append((sessionID, organization))
+                    self.timeline.append("organization:\(organization.state.rawValue)")
                 },
                 currentOrganizationSettings: { [weak self] in
                     self?.organizationSettings ?? OrganizationSettings()
                 },
                 historySuggestions: { [weak self] _ in
-                    self?.historySuggestions ?? HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
+                    if let error = self?.historySuggestionsError { throw error }
+                    return self?.historySuggestions ?? HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
                 },
-                organize: { [weak self] endpoint, requestID, segments, suggestions, selectedCandidateIDs in
+                organize: { [weak self] requestID, segments, suggestions, selectedCandidateIDs, willDispatch in
                     guard let self else { throw TestError.deallocated }
+                    let settings = self.organizationSettings
+                    guard let endpoint = settings.endpoint,
+                          endpoint.isLoopback || settings.isRemoteDispatchEligible,
+                          selectedCandidateIDs.isEmpty
+                            || endpoint.isLoopback
+                            || settings.canSendUserSelectedHistorySummaries else {
+                        throw OrganizationDispatchError.authorizationRequired
+                    }
+                    try willDispatch(endpoint)
                     let callIndex = self.organizationInputs.count
                     self.organizationInputs.append(OrganizationInput(
                         endpoint: endpoint,
@@ -954,6 +1171,12 @@ private final class CoordinatorHarness {
                         selectedCandidateIDs: selectedCandidateIDs
                     ))
                     self.timeline.append("organize")
+                    self.activeOrganizationCallCount += 1
+                    self.maximumOrganizationCallCount = max(
+                        self.maximumOrganizationCallCount,
+                        self.activeOrganizationCallCount
+                    )
+                    defer { self.activeOrganizationCallCount -= 1 }
                     if callIndex < self.organizationErrors.count, let error = self.organizationErrors[callIndex] {
                         throw error
                     }
@@ -1007,6 +1230,10 @@ private final class CoordinatorHarness {
 
     func setOrganizationSettings(_ settings: OrganizationSettings) {
         organizationSettings = settings
+    }
+
+    func setHistorySuggestionsError(_ error: Error?) {
+        historySuggestionsError = error
     }
 
     func failRecording(at index: Int? = nil) async {
@@ -1083,6 +1310,14 @@ private final class CoordinatorHarness {
         XCTFail("Timed out waiting for organization persistence")
     }
 
+    func waitUntilOrganizationWriteAttemptCount(_ count: Int) async {
+        for _ in 0..<100 {
+            if organizationWriteAttempts.count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for organization persistence attempt")
+    }
+
     func completeOrganization(at index: Int = 0) {
         let segments = organizationInputs[index].segments
         organizationContinuations[index]?.resume(returning: makeOrganizationOutput(for: segments))
@@ -1117,10 +1352,14 @@ private enum TestError: Error {
     case deallocated
 }
 
-private func remoteOrganizationSettings(model: String = "test-model", allowsHistory: Bool = false) -> OrganizationSettings {
+private func remoteOrganizationSettings(
+    baseURL: String = "https://example.test/v1/chat/completions",
+    model: String = "test-model",
+    allowsHistory: Bool = false
+) -> OrganizationSettings {
     OrganizationSettings(
         endpoint: try! OrganizationEndpointSettings(
-            baseURL: URL(string: "https://example.test/v1/chat/completions")!,
+            baseURL: URL(string: baseURL)!,
             model: model
         ),
         cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,

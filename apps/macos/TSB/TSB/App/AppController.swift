@@ -109,8 +109,18 @@ final class AppController: ObservableObject {
                 historySuggestions: { sessionID in
                     try HistorySelector().suggestions(for: store.load(id: sessionID), from: store.list())
                 },
-                organize: { endpoint, requestID, segments, suggestions, selectedCandidateIDs in
-                    try await OrganizationClient(endpoint: OrganizationEndpoint(
+                organize: { requestID, segments, suggestions, selectedCandidateIDs, willDispatch in
+                    let settings = organizationSettingsStore.load()
+                    guard let endpoint = settings.endpoint,
+                          endpoint.isLoopback || settings.isRemoteDispatchEligible,
+                          selectedCandidateIDs.isEmpty
+                            || endpoint.isLoopback
+                            || settings.canSendUserSelectedHistorySummaries else {
+                        throw OrganizationDispatchError.authorizationRequired
+                    }
+                    let apiKey = endpoint.isLoopback ? "" : try organizationSecretStore.load() ?? ""
+                    try willDispatch(endpoint)
+                    return try await OrganizationClient(endpoint: OrganizationEndpoint(
                         baseURL: endpoint.baseURL,
                         model: endpoint.model
                     )).organize(
@@ -118,7 +128,7 @@ final class AppController: ObservableObject {
                         segments: segments,
                         historySuggestions: suggestions,
                         userSelectedCandidateIDs: selectedCandidateIDs,
-                        apiKey: try organizationSecretStore.load() ?? ""
+                        apiKey: apiKey
                     )
                 },
                 scheduleSecondaryRemoval: { delay, action in
