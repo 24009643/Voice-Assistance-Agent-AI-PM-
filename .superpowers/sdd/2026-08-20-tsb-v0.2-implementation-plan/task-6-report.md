@@ -302,3 +302,69 @@ Post-test gates:
 - The existing multiple-matching-destination warning, onnxruntime `Versions/Current` symlink warning, test-host `linkd.autoShortcut` diagnostics, AppIntents registration diagnostics, and harmless audio-format test diagnostic remain non-fatal.
 - The full suite's redirect test uses its synthetic `URLProtocolStub` and reserved `.test` endpoints; no live provider, real API credential, real Keychain secret, microphone action, or external service was used.
 - No unresolved functional concern remains in Fix Round 2 scope. Real display/notch hardware, assistive-technology, and visual acceptance remain Task 8's device gate.
+
+---
+
+# Fix Round 3 — close island display edge cases (2026-08-24)
+
+Round 3 closes the final raw-empty delivery control edge and removes the panel's duplicate latest-result presentation cache. The panel now retains one latest `AppSnapshot` and derives presence, session identity, and a width-fitted presentation from that source of truth.
+
+## RED/GREEN evidence
+
+The raw-empty delivered fixture and the direct raw-copy assertion were added before production changes. Both were run together:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+  -only-testing:TSBTests/IslandPresentationTests/testStatusControlsOfferCopyOriginalOnlyWhenRawTextExists \
+  -only-testing:TSBTests/IslandPresentationTests/testStatusRenderingUsesCleanedDraftWhileRawTextRemainsSeparate test
+```
+
+RED result: `** TEST FAILED **`; 2 tests executed, 1 failure. The raw-copy assertion passed, proving `.copyChamber(.original)` already emitted the independently specified raw literal instead of cleaned text. The raw-empty delivered fixture produced the expected `XCTAssertFalse` failure because `.localDelivered` still unconditionally exposed “复制原文”.
+
+Minimal GREEN: `.localDelivered` now starts with only the dismiss control and inserts “复制原文” only when `snapshot.originalText` is nonempty. The same command then passed 2/2.
+
+The Ponytail step was a behavior-preserving refactor after GREEN. `NotchOverlayPanel.latestResult` was deleted; all presence checks and `latestResultSessionID` derive from the single `latestResultSnapshot`, while reopen and current-screen reattachment rebuild presentations from snapshots using `screenWidth`. Existing overlay coverage protects secondary-result identity, collapse/reopen, screen reflow, stale generation, and fallback hit testing.
+
+## Files changed in Fix Round 3
+
+- `apps/macos/TSB/TSB/System/Notch/NotchOverlayPanel.swift`
+- `apps/macos/TSB/TSB/Views/Notch/IslandPresentation.swift`
+- `apps/macos/TSB/TSBTests/System/IslandPresentationTests.swift`
+- `.superpowers/sdd/2026-08-20-tsb-v0.2-implementation-plan/task-6-report.md`
+
+## Final verification
+
+Focused Presentation + Overlay gate:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+  -only-testing:TSBTests/IslandPresentationTests \
+  -only-testing:TSBTests/OverlayGenerationTests test
+```
+
+Result: `** TEST SUCCEEDED **`; 23 tests, 0 failures (`IslandPresentationTests` 14, `OverlayGenerationTests` 9).
+
+The full suite was then run exactly once for Round 3:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+```
+
+Result: `** TEST SUCCEEDED **`; 206 tests, 0 failures in 20.663 seconds.
+
+Post-test gates:
+
+- `git diff --check`: exit 0.
+- Dependency/project scan: clean.
+- Notch UI/system boundary scan: clean.
+- Production credential-pattern scan: clean.
+- Before the report, the code/test diff was a net deletion: 20 insertions and 21 deletions. No dependency, new abstraction, or second latest-result store was added.
+
+## Warnings and concerns
+
+- Existing onnxruntime symlink, multiple-destination, AppIntents/linkd, and synthetic audio-format diagnostics remain non-fatal.
+- The full suite's reserved `.test` redirect fixture remains synthetic; no live provider, external service, real credential, real Keychain secret, or microphone action was used.
+- No unresolved functional concern remains within Fix Round 3 scope.

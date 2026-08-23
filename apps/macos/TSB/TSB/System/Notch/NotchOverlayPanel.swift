@@ -64,7 +64,6 @@ final class NotchOverlayPanel {
     private var generation = OverlayGeneration(0)
     private var currentPresentation: IslandPresentation?
     private var currentSnapshot: AppSnapshot?
-    private var latestResult: IslandPresentation?
     private var latestResultSnapshot: AppSnapshot?
     private var isCollapsed = false
 
@@ -132,7 +131,7 @@ final class NotchOverlayPanel {
     }
 
     var latestResultSessionID: SessionID? {
-        latestResult?.targetSessionID
+        latestResultSnapshot?.sessionID
     }
 
     func update(_ snapshot: AppSnapshot) {
@@ -141,7 +140,7 @@ final class NotchOverlayPanel {
         let presentation = IslandPresentation.make(
             for: snapshot,
             screenWidth: screenWidth,
-            hasLatestResult: latestResult != nil
+            hasLatestResult: latestResultSnapshot != nil
         )
         if let secondary = snapshot.secondaryProcessing.first(where: Self.isCompletedResult) {
             let secondarySnapshot = AppSnapshot(
@@ -155,20 +154,14 @@ final class NotchOverlayPanel {
                 organizationRequestID: secondary.organizationRequestID,
                 suggestedRecords: secondary.suggestedRecords
             )
-            let secondaryResult = IslandPresentation.make(
-                for: secondarySnapshot,
-                screenWidth: screenWidth
-            )
             latestResultSnapshot = secondarySnapshot
-            latestResult = secondaryResult
         }
         if presentation.mode == .organized
             || presentation.mode == .localDelivered
             || (presentation.mode == .failed && !presentation.originalText.isEmpty) {
             latestResultSnapshot = snapshot
-            latestResult = presentation
         }
-        if presentation.mode == .idle, latestResult == nil, !hasHardwareNotch {
+        if presentation.mode == .idle, latestResultSnapshot == nil, !hasHardwareNotch {
             generation = generation.next()
             currentPresentation = presentation
             window?.ignoresMouseEvents = true
@@ -189,9 +182,6 @@ final class NotchOverlayPanel {
         self.screen = screen
         screenWidth = visibleWidth ?? screen.visibleFrame.width
         hasHardwareNotch = hardwareNotchOverride ?? (screen.isBuiltin && screen.hasNotch)
-        if let latestResultSnapshot {
-            latestResult = IslandPresentation.make(for: latestResultSnapshot, screenWidth: screenWidth)
-        }
         if isCollapsed {
             showIdle()
             return
@@ -200,9 +190,9 @@ final class NotchOverlayPanel {
             let presentation = IslandPresentation.make(
                 for: currentSnapshot,
                 screenWidth: screenWidth,
-                hasLatestResult: latestResult != nil
+                hasLatestResult: latestResultSnapshot != nil
             )
-            if presentation.mode == .idle, latestResult == nil, !hasHardwareNotch {
+            if presentation.mode == .idle, latestResultSnapshot == nil, !hasHardwareNotch {
                 currentPresentation = presentation
                 window?.ignoresMouseEvents = true
                 window?.orderOut(nil)
@@ -249,7 +239,6 @@ final class NotchOverlayPanel {
                 isCollapsed = false
                 currentSnapshot = latestResultSnapshot
                 let latestResult = IslandPresentation.make(for: latestResultSnapshot, screenWidth: screenWidth)
-                self.latestResult = latestResult
                 show(latestResult)
             }
         default:
@@ -267,7 +256,7 @@ final class NotchOverlayPanel {
         let idle = IslandPresentation.make(
             for: AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil),
             screenWidth: screenWidth,
-            hasLatestResult: latestResult != nil
+            hasLatestResult: latestResultSnapshot != nil
         )
         show(idle)
     }

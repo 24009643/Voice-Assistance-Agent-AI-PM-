@@ -280,10 +280,11 @@ struct IslandPresentation: Equatable, Sendable {
             }
             return result
         case .localDelivered:
-            return [
-                control(.copyChamber(.original), "复制原文", "手动复制本地原文"),
-                control(.dismiss, "收起", "收起灵动岛"),
-            ]
+            var result = [control(.dismiss, "收起", "收起灵动岛")]
+            if !snapshot.originalText.isEmpty {
+                result.insert(control(.copyChamber(.original), "复制原文", "手动复制本地原文"), at: 0)
+            }
+            return result
         case .organized:
             var result: [IslandControl] = []
             if layout == .singleChamber {

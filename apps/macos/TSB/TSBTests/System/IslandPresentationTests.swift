@@ -134,6 +134,10 @@ final class IslandPresentationTests: XCTestCase {
             XCTAssertEqual(presentation.mode, testCase.mode)
             XCTAssertEqual(IslandView.statusDetailText(for: presentation), testCase.cleaned)
             XCTAssertNotEqual(IslandView.statusDetailText(for: presentation), testCase.raw)
+            XCTAssertEqual(
+                presentation.intent(for: .copyChamber(.original)),
+                .copy(testCase.raw)
+            )
         }
     }
 
@@ -141,6 +145,11 @@ final class IslandPresentationTests: XCTestCase {
         let emptyRawSnapshots = [
             snapshot(status: .transcribing, previewText: "live draft"),
             snapshot(status: .failed, message: "Could not start recording."),
+            snapshot(
+                status: .delivered,
+                previewText: "cleaned delivered",
+                message: "已复制 · 按 ⌘V 粘贴"
+            ),
         ]
         let rawSnapshots = [
             snapshot(
