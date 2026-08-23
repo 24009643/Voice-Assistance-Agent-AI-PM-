@@ -24,20 +24,21 @@ final class OrganizationSettingsStore {
     }
 
     func save(_ settings: OrganizationSettings, apiKey: String? = nil) throws {
+        let data = try JSONEncoder().encode(settings)
         if settings.isRemoteDispatchEligible, let apiKey {
             try secretStore.save(apiKey)
-        }
-        defaults.set(try JSONEncoder().encode(settings), forKey: Self.storageKey)
-        if !settings.isRemoteDispatchEligible {
+        } else if !settings.isRemoteDispatchEligible {
             try secretStore.delete()
         }
+        defaults.set(data, forKey: Self.storageKey)
     }
 
     func revokeCloudConsent() throws {
         var settings = load()
         settings.cloudConsentVersion = nil
         settings.allowUserSelectedHistorySummaries = false
-        try save(settings)
+        defaults.set(try JSONEncoder().encode(settings), forKey: Self.storageKey)
+        try secretStore.delete()
     }
 
     func delete() throws {

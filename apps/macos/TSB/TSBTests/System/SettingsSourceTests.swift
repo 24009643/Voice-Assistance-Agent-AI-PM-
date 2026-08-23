@@ -158,6 +158,47 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
     }
 
+    func testLoopbackSaveCommitsOnlyAfterSecretDeletionAndCanRetry() throws {
+        let fixture = makeFixture()
+        defer { fixture.cleanup() }
+        let originalSecret = UUID().uuidString
+        let originalSettings = try remoteSettings(model: "remote-model", historyConsent: true)
+        try fixture.store.save(originalSettings, apiKey: originalSecret)
+        let failingStore = OrganizationSettingsStore(
+            defaults: fixture.defaults,
+            secretStore: KeychainSecretStore(
+                service: fixture.service,
+                account: fixture.account,
+                deleteItem: { _ in errSecAuthFailed }
+            )
+        )
+        let model = SettingsModel(store: failingStore)
+        model.draft.baseURL = "http://127.0.0.1:11434/v1/chat/completions"
+        model.draft.model = "local-model"
+
+        model.save()
+
+        XCTAssertEqual(model.status, .failed)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertEqual(fixture.store.load(), originalSettings)
+        XCTAssertTrue(fixture.store.load().isRemoteDispatchEligible)
+        XCTAssertTrue(fixture.store.load().canSendUserSelectedHistorySummaries)
+        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertTrue(model.hasPersistedAPIKey)
+
+        let retry = SettingsModel(store: fixture.store)
+        retry.draft.baseURL = "http://127.0.0.1:11434/v1/chat/completions"
+        retry.draft.model = "local-model"
+        retry.save()
+
+        XCTAssertEqual(retry.status, .saved)
+        XCTAssertEqual(fixture.store.load().endpoint?.model, "local-model")
+        XCTAssertTrue(fixture.store.load().endpoint?.isLoopback == true)
+        XCTAssertFalse(fixture.store.load().isRemoteDispatchEligible)
+        XCTAssertFalse(fixture.store.load().canSendUserSelectedHistorySummaries)
+        XCTAssertNil(try fixture.secretStore.load())
+    }
+
     func testCancelReloadsPersistedDraftWithoutAnyWrite() throws {
         let fixture = makeFixture()
         defer { fixture.cleanup() }
@@ -225,6 +266,13 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(fixture.store.load(), OrganizationSettings())
         XCTAssertTrue(model.hasPersistedAPIKey)
         XCTAssertNotNil(try fixture.secretStore.load())
+
+        let retry = SettingsModel(store: fixture.store)
+        retry.deleteProfile()
+
+        XCTAssertEqual(retry.status, .deleted)
+        XCTAssertFalse(retry.hasPersistedAPIKey)
+        XCTAssertNil(try fixture.secretStore.load())
     }
 
     func testDeleteRemovesProfileAndKeyBeforeClaimingSuccess() throws {
@@ -263,6 +311,48 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertFalse(model.hasPersistedAPIKey)
         XCTAssertNil(try fixture.secretStore.load())
         XCTAssertNotNil(fixture.store.load().endpoint)
+    }
+
+    func testRevokeDeleteFailureBlocksDispatchWhileKeepingEndpointAndKeyRetryable() throws {
+        let fixture = makeFixture()
+        defer { fixture.cleanup() }
+        let originalSecret = UUID().uuidString
+        let originalSettings = try remoteSettings(model: "remote-model", historyConsent: true)
+        try fixture.store.save(originalSettings, apiKey: originalSecret)
+        let failingStore = OrganizationSettingsStore(
+            defaults: fixture.defaults,
+            secretStore: KeychainSecretStore(
+                service: fixture.service,
+                account: fixture.account,
+                deleteItem: { _ in errSecAuthFailed }
+            )
+        )
+        let model = SettingsModel(store: failingStore)
+
+        model.revokeCloudAccess()
+
+        let revokedSettings = fixture.store.load()
+        XCTAssertEqual(model.status, .failed)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertEqual(revokedSettings.endpoint, originalSettings.endpoint)
+        XCTAssertFalse(revokedSettings.isRemoteDispatchEligible)
+        XCTAssertFalse(revokedSettings.canSendUserSelectedHistorySummaries)
+        XCTAssertTrue(model.hasPersistedAPIKey)
+        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: fixture.store.load,
+            loadAPIKey: fixture.secretStore.load
+        ))
+
+        let retry = SettingsModel(store: fixture.store)
+        retry.revokeCloudAccess()
+
+        XCTAssertEqual(retry.status, .revoked)
+        XCTAssertEqual(fixture.store.load().endpoint, originalSettings.endpoint)
+        XCTAssertFalse(fixture.store.load().isRemoteDispatchEligible)
+        XCTAssertFalse(retry.hasPersistedAPIKey)
+        XCTAssertNil(try fixture.secretStore.load())
     }
 
     func testLoopbackHTTPSemanticsDoNotRequireCloudConsentOrAKey() throws {
