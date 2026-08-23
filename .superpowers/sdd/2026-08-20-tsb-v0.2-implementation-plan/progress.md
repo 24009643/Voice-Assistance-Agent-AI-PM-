@@ -47,3 +47,4 @@
 - Task 2: complete (commits `fc03967..c8533c1`, review clean with 1 deferred minor).
 - Task 3 implementer: commit `b05495b`; focused/full suites reported passing; review found two Critical privacy gaps and three Important timeout/schema/correctness gaps.
 - Task 3: Fix Round 1 implemented and verified locally; redirect test crash root cause corrected, focused 17/17 and full 143/143 passing, review follow-up pending.
+- Task 3: Fix Round 2 strengthened cancellation/timeout evidence with started-request, stop, winner, and late-handler gates; focused 18/18 and full 144/144 passing, review follow-up pending.

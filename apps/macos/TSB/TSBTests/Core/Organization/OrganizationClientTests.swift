@@ -5,6 +5,7 @@ import XCTest
 final class OrganizationClientTests: XCTestCase {
     override func tearDown() {
         URLProtocolStub.handler = nil
+        URLProtocolStub.stopHandler = nil
         super.tearDown()
     }
 
@@ -168,12 +169,16 @@ final class OrganizationClientTests: XCTestCase {
         XCTAssertEqual(deadlines.values, [.seconds(60)])
     }
 
-    func testCancellationAndTimeoutDoNotReturnLateOutput() async throws {
+    func testCancellationStopsStartedRequestBeforeLateHandlerOutput() async throws {
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let lifecycle = RequestLifecycle()
         URLProtocolStub.handler = { _ in
-            Thread.sleep(forTimeInterval: 0.3)
+            lifecycle.requestStarted.fulfill()
+            lifecycle.waitForRelease()
+            lifecycle.lateHandlerOutput.fulfill()
             return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
         }
+        URLProtocolStub.stopHandler = { lifecycle.stopObserved() }
         let client = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
             session: makeSession()
@@ -187,21 +192,42 @@ final class OrganizationClientTests: XCTestCase {
                 apiKey: "secret"
             )
         }
+
+        defer { lifecycle.release() }
+        await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
         task.cancel()
-
+        await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
+        guard lifecycle.didStop else {
+            lifecycle.release()
+            await XCTAssertThrowsErrorAsync { try await task.value }
+            return
+        }
         await XCTAssertThrowsErrorAsync { try await task.value }
+        lifecycle.release()
+        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
+    }
 
+    func testTimeoutStopsStartedRequestBeforeLateHandlerOutput() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        let lifecycle = RequestLifecycle()
         let deadlines = DurationRecorder()
         URLProtocolStub.handler = { _ in
-            Thread.sleep(forTimeInterval: 0.3)
+            lifecycle.requestStarted.fulfill()
+            lifecycle.waitForRelease()
+            lifecycle.lateHandlerOutput.fulfill()
             return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
         }
+        URLProtocolStub.stopHandler = { lifecycle.stopObserved() }
         let timeoutClient = OrganizationClient(
             endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
             session: makeSession(),
-            timeoutSleeper: { duration in deadlines.append(duration) }
+            timeoutSleeper: { duration in
+                deadlines.append(duration)
+                lifecycle.waitForTimeout()
+            }
         )
-        await XCTAssertThrowsErrorAsync {
+
+        let task = Task {
             try await timeoutClient.organize(
                 requestID: requestID,
                 segments: [try TextSegment(id: "c1", text: "alpha"), try TextSegment(id: "c2", text: "beta")],
@@ -210,7 +236,27 @@ final class OrganizationClientTests: XCTestCase {
                 apiKey: "secret"
             )
         }
+
+        defer { lifecycle.release() }
+        await fulfillment(of: [lifecycle.requestStarted], timeout: 1)
+        lifecycle.startTimeout()
+        await fulfillment(of: [lifecycle.requestStopped], timeout: 1)
+        guard lifecycle.didStop else {
+            lifecycle.release()
+            await XCTAssertThrowsErrorAsync { try await task.value }
+            return
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Expected timeout")
+        } catch let error as URLError {
+            XCTAssertEqual(error.code, .timedOut)
+        } catch {
+            XCTFail("Expected timedOut, got \(error)")
+        }
         XCTAssertEqual(deadlines.values, [.seconds(20)])
+        lifecycle.release()
+        await fulfillment(of: [lifecycle.lateHandlerOutput], timeout: 1)
     }
 
     func testRejectsRedirectBeforeAnySecondRequestCanCarryText() async throws {
@@ -353,6 +399,7 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
 
     typealias Handler = @Sendable (URLRequest) throws -> Response
     nonisolated(unsafe) static var handler: Handler?
+    nonisolated(unsafe) static var stopHandler: (@Sendable () -> Void)?
 
     private let stateLock = NSLock()
     private var stopped = false
@@ -398,7 +445,12 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
     }
 
     override func stopLoading() {
-        stateLock.withLock { stopped = true }
+        let didStop = stateLock.withLock { () -> Bool in
+            guard !stopped else { return false }
+            stopped = true
+            return true
+        }
+        if didStop { Self.stopHandler?() }
     }
 
     private var isStopped: Bool { stateLock.withLock { stopped } }
@@ -458,6 +510,32 @@ private final class DurationRecorder: @unchecked Sendable {
 
     var values: [Duration] { lock.withLock { storedValues } }
     func append(_ value: Duration) { lock.withLock { storedValues.append(value) } }
+}
+
+private final class RequestLifecycle: @unchecked Sendable {
+    let requestStarted = XCTestExpectation(description: "request started")
+    let requestStopped = XCTestExpectation(description: "request stopped")
+    let lateHandlerOutput = XCTestExpectation(description: "late handler output")
+
+    private let releaseGate = DispatchSemaphore(value: 0)
+    private let timeout = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var stopped = false
+
+    var didStop: Bool { lock.withLock { stopped } }
+
+    func waitForRelease() { releaseGate.wait() }
+    func release() { releaseGate.signal() }
+    func waitForTimeout() { timeout.wait() }
+    func startTimeout() { timeout.signal() }
+    func stopObserved() {
+        let shouldFulfill = lock.withLock { () -> Bool in
+            guard !stopped else { return false }
+            stopped = true
+            return true
+        }
+        if shouldFulfill { requestStopped.fulfill() }
+    }
 }
 
 private func requestBody(_ request: URLRequest) throws -> Data {

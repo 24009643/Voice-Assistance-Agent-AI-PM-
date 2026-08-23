@@ -79,3 +79,42 @@ Result: exit 0.
 ### Residual concern
 
 The existing onnxruntime `Versions/Current` symlink warning remains unrelated to this boundary and does not affect the 17 focused or 143 full passing tests.
+
+## Fix Round 2 — gated cancellation evidence
+
+### Root cause and mutation
+
+The earlier cancellation test cancelled before proving that a request existed, let its test timeout fire immediately, and only observed an eventual error. It could therefore pass without proving a started network request lost to cancellation or a deadline. The new tests use a protocol-owned start gate, stop callback, release gate, and late-handler-output signal. They catch the mutation `case .timedOut: throw URLError(.cancelled)`: the deadline must win with `.timedOut`, after the request has started and before its blocked handler is released.
+
+Removing the explicit `group.cancelAll()` did not make a valid RED: Swift cancels unfinished task-group children when the throwing group scope exits. The test deliberately asserts the observable URLSession effect (`stopLoading`) instead of treating that redundant call as the behavior contract.
+
+### RED / GREEN evidence
+
+```text
+RED (temporary timeout-winner mutation to URLError.cancelled):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput test
+Result: exit 65; 1 failing test, ordinary assertion failure because the observed error was cancelled instead of timedOut.
+
+GREEN (restored URLError.timedOut):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testCancellationStopsStartedRequestBeforeLateHandlerOutput -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput -resultBundlePath /tmp/tsb-task3-round2-gated.xcresult test
+Result: exit 0; 2 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests -only-testing:TSBTests/OrganizationValidatorTests -only-testing:TSBTests/DeterministicOrganizerTests -resultBundlePath /tmp/tsb-task3-round2-focused.xcresult test
+Result: exit 0; 18 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -resultBundlePath /tmp/tsb-task3-round2-full.xcresult test
+Result: exit 0; 144 passed, 0 failed.
+
+git diff --check
+Result: exit 0.
+```
+
+### Coverage added
+
+- Caller cancellation occurs only after the custom protocol has recorded request start; it then must observe `stopLoading`, throw, and remain unable to return the released late handler response.
+- Timeout is released only after request start; it must observe `stopLoading`, return `URLError.timedOut`, and remain unable to return the released late handler response.
+
+### Files changed
+
+- `OrganizationClientTests.swift`
+- this report and `progress.md`
