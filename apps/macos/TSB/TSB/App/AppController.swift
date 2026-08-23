@@ -31,6 +31,10 @@ final class AppController: ObservableObject {
         let sessionsDirectory = TranscriptStore.defaultDirectory
         let recorder = AudioRecordingService(sessionsDirectory: sessionsDirectory)
         let store = TranscriptStore(directory: sessionsDirectory)
+        let organizationSettingsStore = OrganizationSettingsStore()
+        let organizationSecretStore = KeychainSecretStore()
+        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTest.XCTestCase") != nil
         let clipboard = ClipboardService.system
         let notchOverlay = NSScreen.findScreenForNotch().map(NotchOverlayPanel.init)
         let escapeMonitor = EscapeKeyMonitor(
@@ -54,11 +58,12 @@ final class AppController: ObservableObject {
 
         let coordinator = SessionCoordinator(
             dependencies: .init(
-                startRecording: { sessionID, onPreview, onFinished, onFailed in
+                startRecording: { sessionID, onPreview, onLevel, onFinished, onFailed in
                     let feed = livePreview.start(sessionID: sessionID, onPreview: onPreview)
                     try recorder.start(
                         sessionID: sessionID,
                         onPCMChunk: feed,
+                        onLevel: onLevel,
                         onFailed: onFailed,
                         onFinished: onFinished
                     )
@@ -91,6 +96,31 @@ final class AppController: ObservableObject {
                 copy: { text in
                     clipboard.copy(text)
                 },
+                loadPersistedRecords: {
+                    guard !isRunningTests else { return [] }
+                    return try store.list()
+                },
+                updateOrganization: { sessionID, organization in
+                    try store.updateOrganization(id: sessionID, to: organization)
+                },
+                currentOrganizationSettings: {
+                    organizationSettingsStore.load()
+                },
+                historySuggestions: { sessionID in
+                    try HistorySelector().suggestions(for: store.load(id: sessionID), from: store.list())
+                },
+                organize: { endpoint, requestID, segments, suggestions, selectedCandidateIDs in
+                    try await OrganizationClient(endpoint: OrganizationEndpoint(
+                        baseURL: endpoint.baseURL,
+                        model: endpoint.model
+                    )).organize(
+                        requestID: requestID,
+                        segments: segments,
+                        historySuggestions: suggestions,
+                        userSelectedCandidateIDs: selectedCandidateIDs,
+                        apiKey: try organizationSecretStore.load() ?? ""
+                    )
+                },
                 scheduleSecondaryRemoval: { delay, action in
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                         action()
@@ -117,6 +147,7 @@ final class AppController: ObservableObject {
     }
 
     func start() {
+        coordinator.recoverInterruptedOrganizations()
         if let error = hotkey.start() {
             state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: error.message)
             notchOverlay?.update(state.snapshot)

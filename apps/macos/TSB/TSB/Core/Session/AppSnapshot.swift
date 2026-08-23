@@ -1,10 +1,50 @@
 import Foundation
 
+enum OrganizationPhase: Equatable, Sendable {
+    case notRequested
+    case authorizationRequired
+    case localOnly
+    case queued
+    case organizing
+    case organized(OrganizationRecord)
+    case failed(String)
+}
+
+enum OrganizationIntent: Equatable, Sendable {
+    case setLocalOnly(sessionID: SessionID, enabled: Bool)
+    case cancel(sessionID: SessionID)
+    case retry(sessionID: SessionID)
+    case enrichLinks(sessionID: SessionID, selectedRecordIDs: Set<SessionID>)
+}
+
+struct SuggestedRecordSnapshot: Equatable, Sendable, Identifiable {
+    let id: SessionID
+    let summary: String
+}
+
 struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
     let id: SessionID
     let status: SessionStatus
     let previewText: String
     let message: String
+    let organizationPhase: OrganizationPhase
+    let suggestedRecords: [SuggestedRecordSnapshot]
+
+    init(
+        id: SessionID,
+        status: SessionStatus,
+        previewText: String,
+        message: String,
+        organizationPhase: OrganizationPhase = .notRequested,
+        suggestedRecords: [SuggestedRecordSnapshot] = []
+    ) {
+        self.id = id
+        self.status = status
+        self.previewText = previewText
+        self.message = message
+        self.organizationPhase = organizationPhase
+        self.suggestedRecords = suggestedRecords
+    }
 }
 
 struct AppSnapshot: Equatable, Sendable {
@@ -12,6 +52,9 @@ struct AppSnapshot: Equatable, Sendable {
     let elapsedMilliseconds: Int
     let previewText: String
     let message: String?
+    let audioLevel: Float
+    let organizationPhase: OrganizationPhase
+    let suggestedRecords: [SuggestedRecordSnapshot]
     let secondaryProcessing: [SecondaryProcessingSnapshot]
     let canStartRecording: Bool
 
@@ -20,6 +63,9 @@ struct AppSnapshot: Equatable, Sendable {
         elapsedMilliseconds: Int,
         previewText: String,
         message: String?,
+        audioLevel: Float = 0,
+        organizationPhase: OrganizationPhase = .notRequested,
+        suggestedRecords: [SuggestedRecordSnapshot] = [],
         secondaryProcessing: [SecondaryProcessingSnapshot] = [],
         canStartRecording: Bool = true
     ) {
@@ -27,6 +73,9 @@ struct AppSnapshot: Equatable, Sendable {
         self.elapsedMilliseconds = elapsedMilliseconds
         self.previewText = previewText
         self.message = message
+        self.audioLevel = audioLevel
+        self.organizationPhase = organizationPhase
+        self.suggestedRecords = suggestedRecords
         self.secondaryProcessing = secondaryProcessing
         self.canStartRecording = canStartRecording
     }

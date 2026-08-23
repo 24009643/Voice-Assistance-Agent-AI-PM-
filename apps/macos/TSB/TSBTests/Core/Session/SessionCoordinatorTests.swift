@@ -29,7 +29,8 @@ final class SessionCoordinatorTests: XCTestCase {
             status: .delivered,
             elapsedMilliseconds: 1_000,
             previewText: "原始文本",
-            message: "已复制 · 按 ⌘V 粘贴"
+            message: "已复制 · 按 ⌘V 粘贴",
+            organizationPhase: .authorizationRequired
         ))
     }
 
@@ -459,6 +460,320 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.savedRecords.single?.finalSource, .senseVoice)
         XCTAssertEqual(harness.copiedTexts, ["SenseVoice only"])
     }
+
+    func testOrganizationStartsAfterCopiedStatusAndReceivesOnlyCleanedText() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "original secret source",
+            cleanedText: "cleaned organization input",
+            organizationSettings: remoteOrganizationSettings()
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationInputs.single?.segments.map(\.text), ["cleaned organization input"])
+        XCTAssertFalse(harness.organizationInputs.single?.segments.map(\.text).contains("original secret source") == true)
+        XCTAssertFalse(harness.organizationInputs.single?.segments.map(\.text).contains(harness.audioURL.path) == true)
+        XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "saved")), try XCTUnwrap(harness.timeline.firstIndex(of: "copied")))
+        XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "copied")), try XCTUnwrap(harness.timeline.firstIndex(of: "delivery:copied")))
+        XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "delivery:copied")), try XCTUnwrap(harness.timeline.firstIndex(of: "organization:pending")))
+        XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "organization:pending")), try XCTUnwrap(harness.timeline.firstIndex(of: "organize")))
+        XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testOrganizationFailureAndRetryNeverCopyAgainAndUseNewRequestID() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "retry me",
+            organizationSettings: remoteOrganizationSettings(),
+            organizationErrors: [TestError.organization, nil]
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let failedRequestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+
+        await harness.coordinator.handle(.retry(sessionID: sessionID))
+        await harness.waitUntilOrganizationUpdateCount(4)
+
+        XCTAssertEqual(harness.copyCount, 1)
+        XCTAssertNotEqual(failedRequestID, harness.organizationUpdates.last?.organization.requestID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .succeeded)
+    }
+
+    func testOrganizationDoesNotConsumeASRCapacityAndNewRecordingKeepsOlderOrganizingSession() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "first",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        await harness.coordinator.handle(.toggleRecording)
+
+        XCTAssertEqual(harness.startedSessionIDs.count, 2)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertTrue(harness.coordinator.snapshot.canStartRecording)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.organizationPhase, .organizing)
+        XCTAssertTrue(harness.scheduledSecondaryRemovals.isEmpty)
+
+        let olderID = try XCTUnwrap(harness.coordinator.snapshot.secondaryProcessing.single?.id)
+        await harness.coordinator.handle(.cancel(sessionID: olderID))
+        harness.completeOrganization()
+    }
+
+    func testLateOlderOrganizationPersistsToOlderSessionWithoutReplacingNewMain() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "older",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let olderID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.toggleRecording)
+        harness.completeOrganization()
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationUpdates.last?.sessionID, olderID)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.id, olderID)
+        guard case .organized = harness.coordinator.snapshot.secondaryProcessing.single?.organizationPhase else {
+            return XCTFail("Expected the older organized result in the secondary snapshot")
+        }
+    }
+
+    func testOrganizedMainSchedulesBoundedHideOnlyAfterNewRecordingMakesItSecondary() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "organized before next recording",
+            organizationSettings: remoteOrganizationSettings()
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.waitUntilSecondaryRemovalScheduled()
+
+        XCTAssertEqual(harness.scheduledSecondaryRemovals.single?.delay, 1.2)
+        guard !harness.scheduledSecondaryRemovals.isEmpty else { return }
+        harness.runScheduledSecondaryRemoval(at: 0)
+        XCTAssertTrue(harness.coordinator.snapshot.secondaryProcessing.isEmpty)
+    }
+
+    func testLocalOnlyFrozenAtStopUsesDeterministicOrganizerAndNeverDispatchesRemote() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "one sentence.",
+            organizationSettings: remoteOrganizationSettings()
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: false))
+        await harness.finishRecording()
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.output?.numberedPoints.map(\.text), ["one sentence."])
+    }
+
+    func testCancelOrganizationInvalidatesLateResponseWithoutCancellingCaptureArtifacts() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "keep delivered text",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let runningRequestID = try XCTUnwrap(harness.organizationInputs.single?.requestID)
+
+        await harness.coordinator.handle(.cancel(sessionID: sessionID))
+        let cancelledRequestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+        harness.completeOrganization()
+        await Task.yield()
+
+        XCTAssertNotEqual(runningRequestID, cancelledRequestID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .failed)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.errorCode, "cancelled")
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .remote)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.model, "test-model")
+        XCTAssertEqual(harness.cancelCount, 0)
+        XCTAssertFalse(harness.audioWasDeleted)
+        XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testOnlyOneModelRequestRunsWhileLaterSessionIsPersistedPending() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "queued",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilOrganizationUpdateCount(2)
+
+        XCTAssertEqual(harness.organizationInputs.count, 1)
+        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .pending])
+        XCTAssertTrue(harness.scheduledSecondaryRemovals.isEmpty)
+
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationStarts(count: 2)
+        XCTAssertEqual(harness.organizationInputs.count, 2)
+        harness.completeOrganization(at: 1)
+        await harness.waitUntilOrganizationFinishes()
+    }
+
+    func testRetryInvalidatesOlderRunningCallbackAndUsesFrozenSettingsPerRequest() async throws {
+        let firstSettings = remoteOrganizationSettings(model: "first-model")
+        let secondSettings = remoteOrganizationSettings(model: "second-model")
+        let harness = CoordinatorHarness(
+            transcript: "retry while running",
+            organizationSettings: firstSettings,
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let oldRequestID = try XCTUnwrap(harness.organizationInputs.single?.requestID)
+        harness.setOrganizationSettings(secondSettings)
+        await harness.coordinator.handle(.retry(sessionID: sessionID))
+        let retryRequestID = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationStarts(count: 2)
+        harness.completeOrganization(at: 1)
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertNotEqual(oldRequestID, retryRequestID)
+        XCTAssertEqual(harness.organizationInputs.map(\.endpoint.model), ["first-model", "second-model"])
+        XCTAssertEqual(harness.organizationUpdates.filter { $0.organization.state == .succeeded }.map(\.organization.requestID), [retryRequestID])
+        XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testLoopbackEndpointDispatchesAsLocalProcessing() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "loopback",
+            organizationSettings: loopbackOrganizationSettings()
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationInputs.count, 1)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
+    }
+
+    func testCopiedStatusPersistenceFailureDoesNotAutoOrganize() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "delivered locally",
+            statusWriteError: TestError.disk,
+            organizationSettings: remoteOrganizationSettings()
+        )
+
+        await harness.runOneSession()
+
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertTrue(harness.organizationUpdates.isEmpty)
+        XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testSuccessfulOrganizationPersistsAndPublishesMainSnapshot() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "organized main",
+            organizationSettings: remoteOrganizationSettings()
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationUpdates.map(\.organization.state), [.pending, .succeeded])
+        guard case let .organized(record) = harness.coordinator.snapshot.organizationPhase else {
+            return XCTFail("Expected organized main snapshot")
+        }
+        XCTAssertEqual(record, harness.organizationUpdates.last?.organization)
+        XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testEnrichmentSendsOnlyExactUserSelectedSuggestedRecordIDs() async throws {
+        let selectedID = SessionID(rawValue: UUID())
+        let unselectedID = SessionID(rawValue: UUID())
+        let suggestions = HistorySuggestions(
+            suggestedSummaries: [
+                HistorySummaryDTO(candidateID: "h1", summary: "selected"),
+                HistorySummaryDTO(candidateID: "h2", summary: "not selected")
+            ],
+            localRecordByCandidateID: ["h1": selectedID, "h2": unselectedID]
+        )
+        let harness = CoordinatorHarness(
+            transcript: "enrich",
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true),
+            historySuggestions: suggestions
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        XCTAssertEqual(harness.coordinator.snapshot.suggestedRecords, [
+            SuggestedRecordSnapshot(id: selectedID, summary: "selected"),
+            SuggestedRecordSnapshot(id: unselectedID, summary: "not selected")
+        ])
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        await harness.waitUntilOrganizationUpdateCount(4)
+
+        XCTAssertEqual(harness.organizationInputs.first?.selectedCandidateIDs, [])
+        XCTAssertEqual(harness.organizationInputs.last?.selectedCandidateIDs, ["h1"])
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.selectedRecordIDs, [selectedID])
+    }
+
+    func testLaunchMarksPersistedPendingOrganizationInterruptedWithoutRedispatch() throws {
+        let pending = makePendingOrganizationRecord()
+        let harness = CoordinatorHarness(
+            transcript: "unused",
+            organizationSettings: remoteOrganizationSettings(),
+            persistedRecords: [makeTranscriptRecord(organization: pending)]
+        )
+
+        harness.coordinator.recoverInterruptedOrganizations()
+
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.organizationUpdates.single?.organization.state, .failed)
+        XCTAssertEqual(harness.organizationUpdates.single?.organization.errorCode, "interrupted")
+    }
+
+    func testAudioLevelIsBoundedAndRapidUpdatesAreThrottled() async throws {
+        let harness = CoordinatorHarness(transcript: "level")
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishAudioLevel(2)
+        await Task.yield()
+        let snapshotCount = harness.timeline.count
+        harness.publishAudioLevel(0.4)
+        await Task.yield()
+
+        XCTAssertEqual(harness.coordinator.snapshot.audioLevel, 1)
+        XCTAssertEqual(harness.timeline.count, snapshotCount)
+    }
+
+    func testNonfiniteAudioLevelPublishesSafeZero() async {
+        let harness = CoordinatorHarness(transcript: "level")
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishAudioLevel(.nan)
+        await Task.yield()
+
+        XCTAssertEqual(harness.coordinator.snapshot.audioLevel, 0)
+    }
 }
 
 @MainActor
@@ -472,19 +787,35 @@ private final class CoordinatorHarness {
         case deliveryStatusUpdated
     }
 
+    struct OrganizationInput {
+        let endpoint: OrganizationEndpointSettings
+        let requestID: UUID
+        let segments: [TextSegment]
+        let historySuggestions: HistorySuggestions
+        let selectedCandidateIDs: Set<String>
+    }
+
     private let transcript: String
+    private let cleanedText: String?
     private let streamingText: String
     private let transcriptionError: Error?
     private let saveError: Error?
     private let statusWriteError: Error?
     private let cleanupError: Error?
     private let suspendsTranscription: Bool
+    private let suspendsOrganization: Bool
     private let copyResult: Bool
+    private var organizationSettings: OrganizationSettings
+    private let organizationErrors: [Error?]
+    private let persistedRecords: [TranscriptRecord]
+    private let historySuggestions: HistorySuggestions
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
     private var onPreview: [(@MainActor (SessionID, String) -> Void)] = []
+    private var onLevel: [(@Sendable (Float) -> Void)] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
-    private let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
+    private var organizationContinuations: [UnsafeContinuation<OrganizationOutput, Never>?] = []
+    let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
     private(set) var events: [Event] = []
     private(set) var stopCount = 0
@@ -498,6 +829,8 @@ private final class CoordinatorHarness {
     private(set) var copiedTexts: [String] = []
     private(set) var savedRecords: [TranscriptRecord] = []
     private(set) var deliveryStatuses: [DeliveryStatus] = []
+    private(set) var organizationInputs: [OrganizationInput] = []
+    private(set) var organizationUpdates: [(sessionID: SessionID, organization: OrganizationRecord)] = []
     private(set) var timeline: [String] = []
     private(set) var scheduledSecondaryRemovals: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
 
@@ -505,15 +838,22 @@ private final class CoordinatorHarness {
 
     init(
         transcript: String,
+        cleanedText: String? = nil,
         streamingText: String = "",
         transcriptionError: Error? = nil,
         saveError: Error? = nil,
         statusWriteError: Error? = nil,
         cleanupError: Error? = nil,
         suspendsTranscription: Bool = false,
-        copyResult: Bool = true
+        copyResult: Bool = true,
+        organizationSettings: OrganizationSettings = OrganizationSettings(),
+        suspendsOrganization: Bool = false,
+        organizationErrors: [Error?] = [],
+        persistedRecords: [TranscriptRecord] = [],
+        historySuggestions: HistorySuggestions = HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
     ) {
         self.transcript = transcript
+        self.cleanedText = cleanedText
         self.streamingText = streamingText
         self.transcriptionError = transcriptionError
         self.saveError = saveError
@@ -521,15 +861,21 @@ private final class CoordinatorHarness {
         self.cleanupError = cleanupError
         self.suspendsTranscription = suspendsTranscription
         self.copyResult = copyResult
+        self.organizationSettings = organizationSettings
+        self.suspendsOrganization = suspendsOrganization
+        self.organizationErrors = organizationErrors
+        self.persistedRecords = persistedRecords
+        self.historySuggestions = historySuggestions
     }
 
     private func makeCoordinator() -> SessionCoordinator {
         SessionCoordinator(
             dependencies: .init(
-                startRecording: { [weak self] sessionID, onPreview, onFinished, onFailed in
+                startRecording: { [weak self] sessionID, onPreview, onLevel, onFinished, onFailed in
                     self?.events.append(.recordingStarted)
                     self?.startedSessionIDs.append(sessionID)
                     self?.onPreview.append(onPreview)
+                    self?.onLevel.append(onLevel)
                     self?.onFinished.append(onFinished)
                     self?.onFailed.append(onFailed)
                 },
@@ -562,7 +908,7 @@ private final class CoordinatorHarness {
                 clean: { [weak self] source in
                     guard let self else { throw TestError.deallocated }
                     if let cleanupError = self.cleanupError { throw cleanupError }
-                    return CleanResult(text: source.trimmingCharacters(in: .whitespacesAndNewlines), edits: [])
+                    return CleanResult(text: self.cleanedText ?? source.trimmingCharacters(in: .whitespacesAndNewlines), edits: [])
                 },
                 save: { [weak self] record in
                     guard let self else { throw TestError.deallocated }
@@ -575,12 +921,48 @@ private final class CoordinatorHarness {
                     if let statusWriteError = self?.statusWriteError { throw statusWriteError }
                     self?.events.append(.deliveryStatusUpdated)
                     self?.deliveryStatuses.append(status)
+                    self?.timeline.append("delivery:\(status.rawValue)")
                 },
                 copy: { [weak self] text in
                     self?.events.append(.copied)
                     self?.copyCount += 1
                     self?.copiedTexts.append(text)
+                    self?.timeline.append("copied")
                     return self?.copyResult ?? false
+                },
+                loadPersistedRecords: { [weak self] in
+                    self?.persistedRecords ?? []
+                },
+                updateOrganization: { [weak self] sessionID, organization in
+                    self?.organizationUpdates.append((sessionID, organization))
+                    self?.timeline.append("organization:\(organization.state.rawValue)")
+                },
+                currentOrganizationSettings: { [weak self] in
+                    self?.organizationSettings ?? OrganizationSettings()
+                },
+                historySuggestions: { [weak self] _ in
+                    self?.historySuggestions ?? HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
+                },
+                organize: { [weak self] endpoint, requestID, segments, suggestions, selectedCandidateIDs in
+                    guard let self else { throw TestError.deallocated }
+                    let callIndex = self.organizationInputs.count
+                    self.organizationInputs.append(OrganizationInput(
+                        endpoint: endpoint,
+                        requestID: requestID,
+                        segments: segments,
+                        historySuggestions: suggestions,
+                        selectedCandidateIDs: selectedCandidateIDs
+                    ))
+                    self.timeline.append("organize")
+                    if callIndex < self.organizationErrors.count, let error = self.organizationErrors[callIndex] {
+                        throw error
+                    }
+                    if self.suspendsOrganization {
+                        return await withUnsafeContinuation { continuation in
+                            self.organizationContinuations.append(continuation)
+                        }
+                    }
+                    return makeOrganizationOutput(for: segments)
                 },
                 scheduleSecondaryRemoval: { [weak self] delay, action in
                     self?.scheduledSecondaryRemovals.append((delay, action))
@@ -616,6 +998,15 @@ private final class CoordinatorHarness {
     func publishPreview(_ text: String, at index: Int? = nil) {
         let target = index ?? onPreview.count - 1
         onPreview[target](startedSessionIDs[target], text)
+    }
+
+    func publishAudioLevel(_ level: Float, at index: Int? = nil) {
+        let target = index ?? onLevel.count - 1
+        onLevel[target](level)
+    }
+
+    func setOrganizationSettings(_ settings: OrganizationSettings) {
+        organizationSettings = settings
     }
 
     func failRecording(at index: Int? = nil) async {
@@ -668,6 +1059,36 @@ private final class CoordinatorHarness {
         XCTFail("Timed out waiting for recording capacity")
     }
 
+    func waitUntilOrganizationStarts(count: Int = 1) async {
+        for _ in 0..<100 {
+            if organizationInputs.count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for organization to start")
+    }
+
+    func waitUntilOrganizationFinishes() async {
+        for _ in 0..<100 {
+            if let state = organizationUpdates.last?.organization.state, state != .pending { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for organization to finish")
+    }
+
+    func waitUntilOrganizationUpdateCount(_ count: Int) async {
+        for _ in 0..<100 {
+            if organizationUpdates.count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for organization persistence")
+    }
+
+    func completeOrganization(at index: Int = 0) {
+        let segments = organizationInputs[index].segments
+        organizationContinuations[index]?.resume(returning: makeOrganizationOutput(for: segments))
+        organizationContinuations[index] = nil
+    }
+
     func runScheduledSecondaryRemoval(at index: Int) {
         scheduledSecondaryRemovals[index].action()
     }
@@ -692,7 +1113,71 @@ private enum TestError: Error {
     case disk
     case transcription
     case cleanup
+    case organization
     case deallocated
+}
+
+private func remoteOrganizationSettings(model: String = "test-model", allowsHistory: Bool = false) -> OrganizationSettings {
+    OrganizationSettings(
+        endpoint: try! OrganizationEndpointSettings(
+            baseURL: URL(string: "https://example.test/v1/chat/completions")!,
+            model: model
+        ),
+        cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+        allowUserSelectedHistorySummaries: allowsHistory
+    )
+}
+
+private func loopbackOrganizationSettings() -> OrganizationSettings {
+    OrganizationSettings(
+        endpoint: try! OrganizationEndpointSettings(
+            baseURL: URL(string: "http://127.0.0.1:11434/v1/chat/completions")!,
+            model: "local-model"
+        )
+    )
+}
+
+private func makeOrganizationOutput(for segments: [TextSegment]) -> OrganizationOutput {
+    OrganizationOutput(
+        noResultReason: segments.isEmpty ? .insufficientContent : nil,
+        numberedPoints: segments.enumerated().map {
+            NumberedPoint(number: $0.offset + 1, text: $0.element.text, sourceSegmentIDs: [$0.element.id])
+        },
+        knownRecordLinks: [],
+        speculativeConnections: []
+    )
+}
+
+private func makePendingOrganizationRecord() -> OrganizationRecord {
+    OrganizationRecord(
+        requestID: UUID(),
+        inputTextSHA256: String(repeating: "0", count: 64),
+        state: .pending,
+        provider: "openai-compatible",
+        model: "test-model",
+        providerKind: .remote,
+        selectedRecordIDs: [],
+        output: nil,
+        errorCode: nil,
+        updatedAt: Date(timeIntervalSince1970: 1)
+    )
+}
+
+private func makeTranscriptRecord(organization: OrganizationRecord?) -> TranscriptRecord {
+    TranscriptRecord(
+        id: SessionID(rawValue: UUID()),
+        ordinal: SessionOrdinal(rawValue: 1),
+        createdAt: Date(timeIntervalSince1970: 1),
+        durationMilliseconds: 1_000,
+        detectedLanguages: ["zh"],
+        originalText: "original",
+        localCleanedText: "cleaned",
+        edits: [],
+        deliveryStatus: .copied,
+        outcome: .success,
+        finalSource: .senseVoice,
+        organization: organization
+    )
 }
 
 private extension Array {
