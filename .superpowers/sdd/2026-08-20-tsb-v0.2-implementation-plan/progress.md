@@ -54,3 +54,6 @@
 - Task 3: fix round 5/5 (0 addressed, 1 open — the dedicated unreported-stop regression is a test-of-test and does not drive the shared early-exit guards; commits `70189a1..c01da54`).
 - Task 3: parked — dedicated cancellation cleanup regression does not prove the shared early-exit drain — Ruling: the finding is real test-quality debt but does not weaken the reviewed production redirect, timeout, cancellation, hash, ID or strict-schema boundary that Tasks 4–7 consume; carry it into Task 8 and the final whole-branch review, and do not declare v0.2 complete until it is deleted or replaced by a real-path test — cost if wrong: a future cancellation-cleanup regression could escape the focused suite even though current production behavior is unchanged.
 - Task 3: complete (commits `c8533c1..c01da54`, 1 parked for mandatory Task 8/final-review resolution).
+- Task 4 implementer: commit `a3978af`; focused 9/9 and full 154/154 reported passing; review found two Important Keychain/consent-contract gaps.
+- Task 4: fix round 1/5 (3 addressed, 0 open — atomic Keychain replacement, shared request/consent contract, binding test; commits `a3978af..fdb5d45`).
+- Task 4: complete (commits `fb75b0b..fdb5d45`, review clean; controller full-suite exit 0 and production credential-pattern scan clean).
