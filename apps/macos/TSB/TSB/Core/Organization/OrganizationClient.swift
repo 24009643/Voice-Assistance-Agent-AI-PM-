@@ -1,5 +1,10 @@
 import Foundation
 
+enum OrganizationRequestContract {
+    static let consentVersion = 1
+    static let schemaVersion = "tsb.organization.request.v\(consentVersion)"
+}
+
 struct OrganizationEndpoint: Equatable, Sendable {
     let baseURL: URL
     let model: String
@@ -55,7 +60,7 @@ struct OrganizationClient: Sendable {
         }
         let inputTextSHA256 = OrganizationValidator.inputTextSHA256(for: canonicalSegments)
         let payload = OrganizationRequestDTO(
-            schemaVersion: "tsb.organization.request.v1",
+            schemaVersion: OrganizationRequestContract.schemaVersion,
             requestID: requestID.uuidString.lowercased(),
             sourceTextHash: inputTextSHA256,
             currentSegments: canonicalSegments.map { .init(segmentID: $0.id, text: $0.text) },

@@ -16,6 +16,11 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         )
     }
 
+    func testConsentVersionMatchesOrganizationRequestContract() {
+        XCTAssertEqual(OrganizationSettings.currentCloudConsentVersion, OrganizationRequestContract.consentVersion)
+        XCTAssertEqual(OrganizationRequestContract.schemaVersion, "tsb.organization.request.v1")
+    }
+
     func testHistorySummariesRequireSeparateConsent() throws {
         let endpoint = try remoteEndpoint()
         let withoutHistoryConsent = OrganizationSettings(

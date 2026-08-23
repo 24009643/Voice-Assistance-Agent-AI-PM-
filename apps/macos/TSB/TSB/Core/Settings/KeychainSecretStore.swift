@@ -9,18 +9,30 @@ enum KeychainSecretStoreError: Error, Equatable {
 struct KeychainSecretStore {
     private let service: String
     private let account: String
+    private let update: (CFDictionary, CFDictionary) -> OSStatus
+    private let add: (CFDictionary) -> OSStatus
 
-    init(service: String = AppIdentity.keychainService, account: String = "organization-api-key") {
+    init(
+        service: String = AppIdentity.keychainService,
+        account: String = "organization-api-key",
+        update: @escaping (CFDictionary, CFDictionary) -> OSStatus = { SecItemUpdate($0, $1) },
+        add: @escaping (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
+    ) {
         self.service = service
         self.account = account
+        self.update = update
+        self.add = add
     }
 
     func save(_ secret: String) throws {
-        try delete()
+        let data = Data(secret.utf8)
+        let status = update(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecSuccess { return }
+        guard status == errSecItemNotFound else { throw KeychainSecretStoreError.unexpectedStatus(status) }
         var query = baseQuery
-        query[kSecValueData as String] = Data(secret.utf8)
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeychainSecretStoreError.unexpectedStatus(status) }
+        query[kSecValueData as String] = data
+        let addStatus = add(query as CFDictionary)
+        guard addStatus == errSecSuccess else { throw KeychainSecretStoreError.unexpectedStatus(addStatus) }
     }
 
     func load() throws -> String? {

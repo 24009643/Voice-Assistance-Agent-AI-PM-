@@ -47,7 +47,7 @@ struct OrganizationEndpointSettings: Equatable, Codable, Sendable {
 }
 
 struct OrganizationSettings: Equatable, Codable, Sendable {
-    static let currentCloudConsentVersion = 1
+    static let currentCloudConsentVersion = OrganizationRequestContract.consentVersion
 
     var endpoint: OrganizationEndpointSettings?
     var cloudConsentVersion: Int?
