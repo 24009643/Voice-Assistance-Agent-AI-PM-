@@ -422,6 +422,10 @@ final class SessionCoordinator {
 
     private func enqueueOrganization(for sessionID: SessionID, selectedRecordIDs requestedRecordIDs: Set<SessionID>) {
         guard var session = sessions[sessionID], let transcript = session.transcript else { return }
+        let requestID = UUID()
+        session.organizationRequestID = requestID
+        session.secondaryRemovalScheduled = false
+        sessions[sessionID] = session
         let settings = dependencies.currentOrganizationSettings()
         let useDeterministic = session.localOnly
         guard useDeterministic || settings.endpoint?.isLoopback == true || settings.isRemoteDispatchEligible else {
@@ -469,7 +473,6 @@ final class SessionCoordinator {
             failOrganizationPreparation(sessionID, message: "Nothing to organize.")
             return
         }
-        let requestID = UUID()
         let endpoint = settings.endpoint
         let providerKind: ProviderKind = useDeterministic || endpoint?.isLoopback == true ? .local : .remote
         let job = OrganizationJob(

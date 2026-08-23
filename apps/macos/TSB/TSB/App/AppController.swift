@@ -10,6 +10,11 @@ final class AppState: ObservableObject {
 
 @MainActor
 final class AppController: ObservableObject {
+    struct OrganizationDispatchSnapshot {
+        let endpoint: OrganizationEndpointSettings
+        let apiKey: String
+    }
+
     let state: AppState
 
     private let coordinator: SessionCoordinator
@@ -25,6 +30,25 @@ final class AppController: ObservableObject {
             self?.receive(intent)
         }
     )
+
+    static func makeOrganizationDispatchSnapshot(
+        selectedCandidateIDs: Set<String>,
+        loadSettings: () -> OrganizationSettings,
+        loadAPIKey: () throws -> String?
+    ) throws -> OrganizationDispatchSnapshot {
+        let settings = loadSettings()
+        guard let endpoint = settings.endpoint,
+              endpoint.isLoopback || settings.isRemoteDispatchEligible,
+              selectedCandidateIDs.isEmpty
+                || endpoint.isLoopback
+                || settings.canSendUserSelectedHistorySummaries else {
+            throw OrganizationDispatchError.authorizationRequired
+        }
+        return OrganizationDispatchSnapshot(
+            endpoint: endpoint,
+            apiKey: endpoint.isLoopback ? "" : try loadAPIKey() ?? ""
+        )
+    }
 
     init() {
         let state = AppState()
@@ -110,25 +134,21 @@ final class AppController: ObservableObject {
                     try HistorySelector().suggestions(for: store.load(id: sessionID), from: store.list())
                 },
                 organize: { requestID, segments, suggestions, selectedCandidateIDs, willDispatch in
-                    let settings = organizationSettingsStore.load()
-                    guard let endpoint = settings.endpoint,
-                          endpoint.isLoopback || settings.isRemoteDispatchEligible,
-                          selectedCandidateIDs.isEmpty
-                            || endpoint.isLoopback
-                            || settings.canSendUserSelectedHistorySummaries else {
-                        throw OrganizationDispatchError.authorizationRequired
-                    }
-                    let apiKey = endpoint.isLoopback ? "" : try organizationSecretStore.load() ?? ""
-                    try willDispatch(endpoint)
+                    let dispatch = try Self.makeOrganizationDispatchSnapshot(
+                        selectedCandidateIDs: selectedCandidateIDs,
+                        loadSettings: organizationSettingsStore.load,
+                        loadAPIKey: organizationSecretStore.load
+                    )
+                    try willDispatch(dispatch.endpoint)
                     return try await OrganizationClient(endpoint: OrganizationEndpoint(
-                        baseURL: endpoint.baseURL,
-                        model: endpoint.model
+                        baseURL: dispatch.endpoint.baseURL,
+                        model: dispatch.endpoint.model
                     )).organize(
                         requestID: requestID,
                         segments: segments,
                         historySuggestions: suggestions,
                         userSelectedCandidateIDs: selectedCandidateIDs,
-                        apiKey: apiKey
+                        apiKey: dispatch.apiKey
                     )
                 },
                 scheduleSecondaryRemoval: { delay, action in

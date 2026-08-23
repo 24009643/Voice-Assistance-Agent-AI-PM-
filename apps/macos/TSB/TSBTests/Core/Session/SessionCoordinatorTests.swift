@@ -25,12 +25,14 @@ final class SessionCoordinatorTests: XCTestCase {
             try XCTUnwrap(harness.timeline.firstIndex(of: "saved")),
             try XCTUnwrap(harness.timeline.firstIndex(of: "snapshot:delivered"))
         )
+        let authorizationAttemptID = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
         XCTAssertEqual(harness.coordinator.snapshot, AppSnapshot(
             status: .delivered,
             elapsedMilliseconds: 1_000,
             previewText: "原始文本",
             message: "已复制 · 按 ⌘V 粘贴",
-            organizationPhase: .authorizationRequired
+            organizationPhase: .authorizationRequired,
+            organizationRequestID: authorizationAttemptID
         ))
     }
 
@@ -501,6 +503,45 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .succeeded)
     }
 
+    func testAuthorizationRequiredPublishesAttemptIDAndRetriesAfterSettingsSaved() async throws {
+        let harness = CoordinatorHarness(transcript: "authorize then retry")
+
+        await harness.runOneSession()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let unauthorizedAttemptID = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
+        XCTAssertEqual(harness.coordinator.snapshot.organizationPhase, .authorizationRequired)
+
+        harness.setOrganizationSettings(remoteOrganizationSettings())
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: unauthorizedAttemptID))
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertNotEqual(unauthorizedAttemptID, harness.organizationUpdates.last?.organization.requestID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .succeeded)
+    }
+
+    func testInitialPendingWriteFailurePublishesAttemptIDAndCanRetry() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "persist then retry",
+            organizationSettings: remoteOrganizationSettings(),
+            organizationWriteFailures: [0]
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationWriteAttemptCount(1)
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let failedAttemptID = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
+        XCTAssertEqual(
+            harness.coordinator.snapshot.organizationPhase,
+            .failed("Could not save organization state.")
+        )
+
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: failedAttemptID))
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertNotEqual(failedAttemptID, harness.organizationUpdates.last?.organization.requestID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .succeeded)
+    }
+
     func testOrganizationDoesNotConsumeASRCapacityAndNewRecordingKeepsOlderOrganizingSession() async throws {
         let harness = CoordinatorHarness(
             transcript: "first",
@@ -698,6 +739,7 @@ final class SessionCoordinatorTests: XCTestCase {
         let harness = CoordinatorHarness(
             transcript: "queued settings",
             organizationSettings: endpointA,
+            organizationAPIKey: "synthetic-key-for-a",
             suspendsOrganization: true
         )
 
@@ -708,11 +750,12 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.finishRecording(at: 1)
         await harness.waitUntilOrganizationUpdateCount(3)
 
-        harness.setOrganizationSettings(endpointB)
+        harness.setOrganizationDispatch(settings: endpointB, apiKey: "synthetic-key-for-b")
         harness.completeOrganization(at: 0)
         await harness.waitUntilOrganizationStarts(count: 2)
 
         XCTAssertEqual(harness.organizationInputs[1].endpoint.baseURL.host, "b.example.test")
+        XCTAssertEqual(harness.organizationInputs[1].apiKey, "synthetic-key-for-b")
         harness.completeOrganization(at: 1)
     }
 
@@ -731,7 +774,7 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.waitUntilOrganizationUpdateCount(3)
         let queuedSessionID = harness.startedSessionIDs[1]
 
-        harness.setOrganizationSettings(OrganizationSettings())
+        harness.setOrganizationDispatch(settings: OrganizationSettings(), apiKey: "must-not-load")
         harness.completeOrganization(at: 0)
         await harness.waitUntilOrganizationUpdateCount(5)
 
@@ -739,6 +782,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationUpdates.last?.sessionID, queuedSessionID)
         XCTAssertEqual(harness.organizationUpdates.last?.organization.state, .failed)
         XCTAssertEqual(harness.organizationUpdates.last?.organization.errorCode, "authorization_required")
+        XCTAssertEqual(harness.organizationSecretLoadCount, 1)
     }
 
     func testRetryInvalidatesOlderRunningCallbackAndUsesFrozenSettingsPerRequest() async throws {
@@ -983,6 +1027,7 @@ private final class CoordinatorHarness {
 
     struct OrganizationInput {
         let endpoint: OrganizationEndpointSettings
+        let apiKey: String
         let requestID: UUID
         let segments: [TextSegment]
         let historySuggestions: HistorySuggestions
@@ -1000,6 +1045,7 @@ private final class CoordinatorHarness {
     private let suspendsOrganization: Bool
     private let copyResult: Bool
     private var organizationSettings: OrganizationSettings
+    private var organizationAPIKey: String
     private let organizationErrors: [Error?]
     private let organizationWriteFailures: Set<Int>
     private let persistedRecords: [TranscriptRecord]
@@ -1026,6 +1072,7 @@ private final class CoordinatorHarness {
     private(set) var savedRecords: [TranscriptRecord] = []
     private(set) var deliveryStatuses: [DeliveryStatus] = []
     private(set) var organizationInputs: [OrganizationInput] = []
+    private(set) var organizationSecretLoadCount = 0
     private(set) var organizationWriteAttempts: [(sessionID: SessionID, organization: OrganizationRecord)] = []
     private(set) var organizationUpdates: [(sessionID: SessionID, organization: OrganizationRecord)] = []
     private(set) var activeOrganizationCallCount = 0
@@ -1046,6 +1093,7 @@ private final class CoordinatorHarness {
         suspendsTranscription: Bool = false,
         copyResult: Bool = true,
         organizationSettings: OrganizationSettings = OrganizationSettings(),
+        organizationAPIKey: String = "synthetic-key",
         suspendsOrganization: Bool = false,
         organizationErrors: [Error?] = [],
         organizationWriteFailures: Set<Int> = [],
@@ -1063,6 +1111,7 @@ private final class CoordinatorHarness {
         self.suspendsTranscription = suspendsTranscription
         self.copyResult = copyResult
         self.organizationSettings = organizationSettings
+        self.organizationAPIKey = organizationAPIKey
         self.suspendsOrganization = suspendsOrganization
         self.organizationErrors = organizationErrors
         self.organizationWriteFailures = organizationWriteFailures
@@ -1153,18 +1202,19 @@ private final class CoordinatorHarness {
                 },
                 organize: { [weak self] requestID, segments, suggestions, selectedCandidateIDs, willDispatch in
                     guard let self else { throw TestError.deallocated }
-                    let settings = self.organizationSettings
-                    guard let endpoint = settings.endpoint,
-                          endpoint.isLoopback || settings.isRemoteDispatchEligible,
-                          selectedCandidateIDs.isEmpty
-                            || endpoint.isLoopback
-                            || settings.canSendUserSelectedHistorySummaries else {
-                        throw OrganizationDispatchError.authorizationRequired
-                    }
-                    try willDispatch(endpoint)
+                    let dispatch = try AppController.makeOrganizationDispatchSnapshot(
+                        selectedCandidateIDs: selectedCandidateIDs,
+                        loadSettings: { self.organizationSettings },
+                        loadAPIKey: {
+                            self.organizationSecretLoadCount += 1
+                            return self.organizationAPIKey
+                        }
+                    )
+                    try willDispatch(dispatch.endpoint)
                     let callIndex = self.organizationInputs.count
                     self.organizationInputs.append(OrganizationInput(
-                        endpoint: endpoint,
+                        endpoint: dispatch.endpoint,
+                        apiKey: dispatch.apiKey,
                         requestID: requestID,
                         segments: segments,
                         historySuggestions: suggestions,
@@ -1230,6 +1280,11 @@ private final class CoordinatorHarness {
 
     func setOrganizationSettings(_ settings: OrganizationSettings) {
         organizationSettings = settings
+    }
+
+    func setOrganizationDispatch(settings: OrganizationSettings, apiKey: String) {
+        organizationSettings = settings
+        organizationAPIKey = apiKey
     }
 
     func setHistorySuggestionsError(_ error: Error?) {
