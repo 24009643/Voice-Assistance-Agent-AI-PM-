@@ -50,3 +50,4 @@
 - Task 3: Fix Round 2 strengthened cancellation/timeout evidence with started-request, stop, winner, and late-handler gates; focused 18/18 and full 144/144 passing, review follow-up pending.
 - Task 3: Fix Round 3 bounded task-result observation after protocol release; focused 18/18 and full 144/144 passing, review follow-up pending.
 - Task 3: Fix Round 4 removed the unretained result watcher and bounded owned-task cleanup; focused 18/18 and full 144/144 passing, review follow-up pending.
+- Task 3: Fix Round 5 drains owned tasks on unreported-stop early exits; focused 19/19 and full 145/145 passing, review follow-up pending.

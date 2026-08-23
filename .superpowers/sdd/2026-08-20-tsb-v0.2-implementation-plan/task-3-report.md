@@ -182,3 +182,35 @@ Result: exit 0.
 
 - `OrganizationClientTests.swift`
 - this report and `progress.md`
+
+## Fix Round 5 — early-exit owned-task drain
+
+### Root cause and fix
+
+Both `didStop == false` guards cancelled their owned task and returned without waiting for its completion signal. They now use the same bounded cleanup as the timeout path: cancel, release the completion gate, and await `completed.expectation`. The regression test records a real protocol stop callback while intentionally withholding its local stop report; a held completion can finish only through this early-exit drain.
+
+### RED / GREEN evidence
+
+```text
+RED (temporary removal of the early-exit completion release/wait):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testCancellationDrainsOwnedTaskWhenStopIsNotReported test
+Result: exit 65; 1 ordinary postcondition failure, with the test defer releasing the held completion rather than hanging.
+
+GREEN (restored early-exit completion drain):
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests/testCancellationStopsStartedRequestBeforeLateHandlerOutput -only-testing:TSBTests/OrganizationClientTests/testTimeoutStopsStartedRequestBeforeLateHandlerOutput -only-testing:TSBTests/OrganizationClientTests/testCancellationDrainsOwnedTaskWhenStopIsNotReported -resultBundlePath /tmp/tsb-task3-round5-gated.xcresult test
+Result: exit 0; 3 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/OrganizationClientTests -only-testing:TSBTests/OrganizationValidatorTests -only-testing:TSBTests/DeterministicOrganizerTests -resultBundlePath /tmp/tsb-task3-round5-focused.xcresult test
+Result: exit 0; 19 passed, 0 failed.
+
+xcodebuild -quiet -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO -resultBundlePath /tmp/tsb-task3-round5-full.xcresult test
+Result: exit 0; 145 passed, 0 failed.
+
+git diff --check
+Result: exit 0.
+```
+
+### Files changed
+
+- `OrganizationClientTests.swift`
+- this report and `progress.md`
