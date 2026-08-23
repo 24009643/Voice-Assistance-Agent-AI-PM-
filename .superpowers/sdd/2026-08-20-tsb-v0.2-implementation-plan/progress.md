@@ -66,3 +66,6 @@
 - Task 6: fix round 2/5 (two Important addressed; commit `06c3ae0`; focused 87/87 and full 206/206 reported passing); scoped re-review approved with two nonblocking edge/cache Minors.
 - Task 6: fix round 3/5 (all remaining Minors addressed, duplicate presentation cache deleted; commit `959b3f9`; focused 23/23 and full 206/206 reported passing; scoped re-review clean).
 - Task 6: complete (commits `59056ac..959b3f9`, review clean; controller full suite 206/206, production credential-pattern scan clean; no live provider, real Keychain secret, microphone or external network access).
+- Task 7 implementer: commit `dc546f1`; focused 22/22 and full 219/219 reported passing; review found one Important partial-commit mismatch for ordinary remote-to-loopback Save while approving Settings-only lifecycle, BYOK UI and destructive fail-closed semantics.
+- Task 7: fix round 1/5 (ordinary noneligible Save made failure-consistent; Revoke/Delete retain explicit fail-closed ordering; commit `c9e6e02`; focused 35/35 and full 221/221 reported passing; scoped re-review clean).
+- Task 7: complete (commits `893708a..c9e6e02`, review clean; controller full suite 221/221 and production credential-pattern scan clean; Settings implements real Save/Cancel/Delete/Revoke and never reads a real secret into the UI).
