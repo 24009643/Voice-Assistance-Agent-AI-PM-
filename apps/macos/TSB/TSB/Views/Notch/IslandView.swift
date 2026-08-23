@@ -102,8 +102,9 @@ struct IslandView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(statusColor)
                     .lineLimit(1)
-                if !presentation.originalText.isEmpty {
-                    Text(presentation.originalText)
+                let detailText = Self.statusDetailText(for: presentation)
+                if !detailText.isEmpty {
+                    Text(detailText)
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.68))
                         .lineLimit(1)
@@ -367,5 +368,9 @@ struct IslandView: View {
         reduceMotion
             ? .easeOut(duration: 0.12)
             : .spring(response: 0.28, dampingFraction: 0.86)
+    }
+
+    static func statusDetailText(for presentation: IslandPresentation) -> String {
+        presentation.draft
     }
 }

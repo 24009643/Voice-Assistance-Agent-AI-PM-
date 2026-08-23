@@ -271,10 +271,10 @@ struct IslandPresentation: Equatable, Sendable {
                 ),
             ]
         case .organizing:
-            var result = [
-                control(.copyChamber(.original), "复制原文", "手动复制本地原文"),
-                control(.dismiss, "收起", "收起灵动岛"),
-            ]
+            var result = [control(.dismiss, "收起", "收起灵动岛")]
+            if !snapshot.originalText.isEmpty {
+                result.insert(control(.copyChamber(.original), "复制原文", "手动复制本地原文"), at: 0)
+            }
             if let requestID = snapshot.organizationRequestID {
                 result.insert(control(.cancelOrganization(requestID), "停止等待", "停止等待整理结果"), at: 0)
             }
@@ -300,10 +300,10 @@ struct IslandPresentation: Equatable, Sendable {
             result.append(control(.dismiss, "收起", "收起灵动岛"))
             return result
         case .failed:
-            var result = [
-                control(.copyChamber(.original), "复制原文", "手动复制保留的本地原文"),
-                control(.dismiss, "收起", "收起灵动岛"),
-            ]
+            var result = [control(.dismiss, "收起", "收起灵动岛")]
+            if !snapshot.originalText.isEmpty {
+                result.insert(control(.copyChamber(.original), "复制原文", "手动复制保留的本地原文"), at: 0)
+            }
             if let requestID = snapshot.organizationRequestID,
                case .failed = snapshot.organizationPhase {
                 result.insert(control(.retryOrganization(requestID), "重试", "重试整理"), at: 0)

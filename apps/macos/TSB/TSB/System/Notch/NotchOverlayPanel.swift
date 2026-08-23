@@ -54,6 +54,7 @@ struct OverlayGeneration: Equatable, Sendable {
 @MainActor
 final class NotchOverlayPanel {
     private var screen: NSScreen
+    private var screenWidth: CGFloat
     private var hasHardwareNotch: Bool
     private let hardwareNotchOverride: Bool?
     private let onIntent: (IslandIntent) -> Void
@@ -62,7 +63,10 @@ final class NotchOverlayPanel {
     private var hostingView: NSHostingView<IslandView>?
     private var generation = OverlayGeneration(0)
     private var currentPresentation: IslandPresentation?
+    private var currentSnapshot: AppSnapshot?
     private var latestResult: IslandPresentation?
+    private var latestResultSnapshot: AppSnapshot?
+    private var isCollapsed = false
 
     convenience init(screen: NSScreen, onIntent: @escaping (IslandIntent) -> Void) {
         self.init(
@@ -96,6 +100,7 @@ final class NotchOverlayPanel {
         hasHardwareNotch: Bool? = nil
     ) {
         self.screen = screen
+        self.screenWidth = screen.visibleFrame.width
         self.hardwareNotchOverride = hasHardwareNotch
         self.hasHardwareNotch = hasHardwareNotch ?? (screen.isBuiltin && screen.hasNotch)
         self.onIntent = onIntent
@@ -108,6 +113,14 @@ final class NotchOverlayPanel {
 
     var presentedMode: IslandMode? {
         currentPresentation?.mode
+    }
+
+    var presentedLayout: IslandLayout? {
+        currentPresentation?.layout
+    }
+
+    var presentedSize: CGSize? {
+        currentPresentation?.size
     }
 
     var isIgnoringMouseEvents: Bool {
@@ -123,31 +136,36 @@ final class NotchOverlayPanel {
     }
 
     func update(_ snapshot: AppSnapshot) {
+        currentSnapshot = snapshot
+        isCollapsed = false
         let presentation = IslandPresentation.make(
             for: snapshot,
-            screenWidth: screen.visibleFrame.width,
+            screenWidth: screenWidth,
             hasLatestResult: latestResult != nil
         )
         if let secondary = snapshot.secondaryProcessing.first(where: Self.isCompletedResult) {
-            let secondaryResult = IslandPresentation.make(
-                for: AppSnapshot(
-                   sessionID: secondary.id,
-                   status: secondary.status,
-                   elapsedMilliseconds: 0,
-                   previewText: secondary.previewText,
-                   originalText: secondary.originalText,
-                   message: secondary.message,
-                   organizationPhase: secondary.organizationPhase,
-                   organizationRequestID: secondary.organizationRequestID,
-                   suggestedRecords: secondary.suggestedRecords
-                ),
-                screenWidth: screen.visibleFrame.width
+            let secondarySnapshot = AppSnapshot(
+                sessionID: secondary.id,
+                status: secondary.status,
+                elapsedMilliseconds: 0,
+                previewText: secondary.previewText,
+                originalText: secondary.originalText,
+                message: secondary.message,
+                organizationPhase: secondary.organizationPhase,
+                organizationRequestID: secondary.organizationRequestID,
+                suggestedRecords: secondary.suggestedRecords
             )
+            let secondaryResult = IslandPresentation.make(
+                for: secondarySnapshot,
+                screenWidth: screenWidth
+            )
+            latestResultSnapshot = secondarySnapshot
             latestResult = secondaryResult
         }
         if presentation.mode == .organized
             || presentation.mode == .localDelivered
             || (presentation.mode == .failed && !presentation.originalText.isEmpty) {
+            latestResultSnapshot = snapshot
             latestResult = presentation
         }
         if presentation.mode == .idle, latestResult == nil, !hasHardwareNotch {
@@ -167,16 +185,30 @@ final class NotchOverlayPanel {
         scheduleHide(after: 0.25)
     }
 
-    func reattach(to screen: NSScreen) {
+    func reattach(to screen: NSScreen, visibleWidth: CGFloat? = nil) {
         self.screen = screen
+        screenWidth = visibleWidth ?? screen.visibleFrame.width
         hasHardwareNotch = hardwareNotchOverride ?? (screen.isBuiltin && screen.hasNotch)
-        if let currentPresentation {
-            if currentPresentation.mode == .idle, latestResult == nil, !hasHardwareNotch {
+        if let latestResultSnapshot {
+            latestResult = IslandPresentation.make(for: latestResultSnapshot, screenWidth: screenWidth)
+        }
+        if isCollapsed {
+            showIdle()
+            return
+        }
+        if let currentSnapshot {
+            let presentation = IslandPresentation.make(
+                for: currentSnapshot,
+                screenWidth: screenWidth,
+                hasLatestResult: latestResult != nil
+            )
+            if presentation.mode == .idle, latestResult == nil, !hasHardwareNotch {
+                currentPresentation = presentation
                 window?.ignoresMouseEvents = true
                 window?.orderOut(nil)
                 return
             }
-            show(currentPresentation)
+            show(presentation)
         }
     }
 
@@ -213,7 +245,13 @@ final class NotchOverlayPanel {
             guard currentPresentation?.mode != .idle else { return }
             showIdle()
         case .reopenLatest:
-            if let latestResult { show(latestResult) }
+            if let latestResultSnapshot {
+                isCollapsed = false
+                currentSnapshot = latestResultSnapshot
+                let latestResult = IslandPresentation.make(for: latestResultSnapshot, screenWidth: screenWidth)
+                self.latestResult = latestResult
+                show(latestResult)
+            }
         default:
             if let intent = currentPresentation?.intent(
                 for: action,
@@ -225,9 +263,10 @@ final class NotchOverlayPanel {
     }
 
     private func showIdle() {
+        isCollapsed = true
         let idle = IslandPresentation.make(
             for: AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil),
-            screenWidth: screen.visibleFrame.width,
+            screenWidth: screenWidth,
             hasLatestResult: latestResult != nil
         )
         show(idle)

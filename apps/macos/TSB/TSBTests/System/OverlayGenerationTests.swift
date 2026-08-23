@@ -175,6 +175,52 @@ final class OverlayGenerationTests: XCTestCase {
         XCTAssertEqual(callbacks, 1)
     }
 
+    @MainActor
+    func testOrganizedPresentationReflowsOnNarrowReattachAndLatestReopensNarrow() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let sessionID = SessionID(rawValue: UUID())
+        let panel = NotchOverlayPanel(screen: screen, onIntent: { _ in })
+        panel.reattach(to: screen, visibleWidth: 1_440)
+        panel.update(AppSnapshot(
+            sessionID: sessionID,
+            status: .delivered,
+            elapsedMilliseconds: 0,
+            previewText: "cleaned organized result",
+            originalText: "raw organized result",
+            message: "已复制 · 按 ⌘V 粘贴",
+            organizationPhase: .organized(organizedRecord())
+        ))
+
+        XCTAssertEqual(panel.presentedLayout, .threeChambers)
+        panel.reattach(to: screen, visibleWidth: 620)
+        XCTAssertEqual(panel.presentedLayout, .singleChamber)
+        XCTAssertEqual(panel.presentedSize, CGSize(width: 596, height: 154))
+
+        panel.perform(.dismiss)
+        panel.perform(.reopenLatest)
+
+        XCTAssertEqual(panel.presentedLayout, .singleChamber)
+        XCTAssertEqual(panel.presentedSize, CGSize(width: 596, height: 154))
+        XCTAssertEqual(panel.latestResultSessionID, sessionID)
+    }
+
+    @MainActor
+    func testScreenObserverDeinitRemovesItsNotificationCallback() {
+        let center = NotificationCenter()
+        var callbacks = 0
+        weak var releasedObserver: ScreenParameterObserver?
+
+        do {
+            let observer = ScreenParameterObserver(center: center) { callbacks += 1 }
+            releasedObserver = observer
+            observer.start()
+        }
+
+        XCTAssertNil(releasedObserver)
+        center.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        XCTAssertEqual(callbacks, 0)
+    }
+
     private func organizedRecord() -> OrganizationRecord {
         OrganizationRecord(
             requestID: UUID(),

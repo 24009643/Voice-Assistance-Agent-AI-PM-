@@ -216,3 +216,89 @@ Post-test gates:
 - The existing onnxruntime `Versions/Current` framework-symlink warning, AppIntents metadata-skip warning, multiple matching macOS destinations warning, and test-host `linkd.autoShortcut` diagnostics remain non-fatal.
 - No new dependency, recorder/store/network ownership in UI, full-screen click shield, live provider call, real API credential, real microphone action, or real Keychain secret access was introduced.
 - No unresolved functional concern remains within Fix Round 1 scope; real multi-display/notch hardware and full assistive-technology acceptance remain Task 8's device gate.
+
+---
+
+# Fix Round 2 — reflow truthful island status (2026-08-24)
+
+Round 2 fixes two presentation-truth gaps without adding a store or changing the coordinator boundary. Status rows now describe the locally cleaned text that was automatically copied, while the original chamber and its explicit copy action remain raw. Screen reattachment now rebuilds both the visible and retained-latest presentations from their bounded `AppSnapshot` inputs at the new visible width.
+
+## RED/GREEN evidence
+
+Each production change followed a named focused RED and its smallest GREEN:
+
+| Finding | RED evidence | GREEN evidence |
+| --- | --- | --- |
+| Cleaned status detail vs raw original | `testStatusRenderingUsesCleanedDraftWhileRawTextRemainsSeparate` failed to compile because the actual `IslandView.statusDetailText` rendering seam did not exist (`IslandView has no member statusDetailText`). | 1/1 passed. For raw != cleaned samples in `localDelivered`, `organizing`, and `failed`, the status row resolves `presentation.draft`; `presentation.originalText` remains distinct. |
+| Honest original-copy controls | `testStatusControlsOfferCopyOriginalOnlyWhenRawTextExists` ran RED with two failed `XCTAssertFalse` assertions for raw-empty transcribing and start-failure snapshots. | 1/1 passed. Organizing/failed status controls include “复制原文” only when raw text is nonempty; real raw organizing/failure results retain the control. |
+| Width-aware screen reattachment | `testOrganizedPresentationReflowsOnNarrowReattachAndLatestReopensNarrow` failed to compile because the panel exposed no layout/size state and `reattach` accepted no controlled visible width. | 1/1 passed. A controlled 1,440-point organized presentation starts in three chambers, reattaches at 620 points as one chamber at `596 x 154`, and remains narrow after dismiss/reopen with the same latest session ID. |
+| Observer lifetime | `testScreenObserverDeinitRemovesItsNotificationCallback` passed 1/1 after being added: the observer is released without explicit stop and a later screen notification invokes no callback. The existing explicit-stop notification test also remains green. |
+| Actual Reduce Motion choices | The production-view test was tightened from non-nil checks to exact choices. | 1/1 passed: normal island motion is the existing spring; reduced motion is the non-spring 0.12-second ease-out; normal waveform motion is 0.08-second ease-out and the reduced waveform animation is `nil`. |
+
+Representative focused command shape for each cycle:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+  -only-testing:TSBTests/<test-case> test
+```
+
+The status tests assert independently specified cleaned/raw literals. The reflow test fixes its starting width at 1,440 points rather than relying on the test machine's screen. Residual `try XCTUnwrap(IslandPresentation.make(...))` and unnecessary `throws` were removed after `make` became total.
+
+## Invariants and production mapping
+
+- `IslandView.statusContent` uses the production `statusDetailText` seam, which returns cleaned `draft`; it no longer renders raw `originalText` as the local-delivered/organizing/failed detail line.
+- Raw text remains the original chamber source and the only text emitted by `.copyChamber(.original)`. Automatic delivery still concerns cleaned local text; no organized result is automatically copied.
+- `NotchOverlayPanel` keeps only the current snapshot and one latest-result snapshot, matching the existing bounded latest-result policy. It owns no recorder, transcript store, network client, secret, or new UI state framework.
+- On screen reattachment, the panel records the new visible width, rebuilds the retained latest presentation, and rebuilds the current presentation from its snapshot. Collapsed state stays collapsed, and reopening reconstructs the latest result at the new width.
+- A raw-empty organizing or failed state cannot expose a copy button whose action would resolve to `nil`; raw-preserving terminal failures still expose the manual recovery action.
+- The interaction evidence is accurately scoped: tests cross production presentation/view-action/panel routing seams and coordinator mapping where applicable, but do not claim a live SwiftUI click or a separately instantiated AppController integration harness.
+
+## Files changed in Fix Round 2
+
+- `apps/macos/TSB/TSB/System/Notch/NotchOverlayPanel.swift`
+- `apps/macos/TSB/TSB/Views/Notch/IslandPresentation.swift`
+- `apps/macos/TSB/TSB/Views/Notch/IslandView.swift`
+- `apps/macos/TSB/TSBTests/System/IslandPresentationTests.swift`
+- `apps/macos/TSB/TSBTests/System/OverlayGenerationTests.swift`
+- `.superpowers/sdd/2026-08-20-tsb-v0.2-implementation-plan/task-6-report.md`
+
+## Final verification
+
+The Xcode project was regenerated first. An initial command omitted the brief's `CODE_SIGNING_ALLOWED=NO` setting and stopped before tests because the unit-test bundle has no signing Info.plist; rerunning with the specified setting entered and completed the gate.
+
+Combined focused gate:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO \
+  -only-testing:TSBTests/OverlayGenerationTests \
+  -only-testing:TSBTests/IslandPresentationTests \
+  -only-testing:TSBTests/IslandFrameTests \
+  -only-testing:TSBTests/SessionCoordinatorTests test
+```
+
+Result: `** TEST SUCCEEDED **`; 87 tests, 0 failures (`OverlayGenerationTests` 9, `IslandPresentationTests` 14, `IslandFrameTests` 4, `SessionCoordinatorTests` 60).
+
+The full suite was then run exactly once for Round 2:
+
+```bash
+xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+```
+
+Result: `** TEST SUCCEEDED **`; 206 tests, 0 failures in 20.627 seconds.
+
+Post-test gates:
+
+- `git diff --check`: exit 0.
+- Dependency/project scan: no `Package.swift`, `Package.resolved`, `project.yml`, `project.pbxproj`, Podfile, or Cartfile delta.
+- UI boundary scan: no URLSession, OrganizationClient, Keychain, ClipboardService, TranscriptStore, AudioRecordingService, AVAudio, or Network reference in the notch UI/system directories.
+- Production credential-pattern scan: clean.
+- Static interaction/accessibility scan continues to find the compact nonactivating panel, dynamic hit testing, native Button/Picker/Toggle/DragGesture controls, VoiceOver labels, Reduce Motion selection, and the native screen-parameter notification in production files.
+
+## Warnings and concerns
+
+- The existing multiple-matching-destination warning, onnxruntime `Versions/Current` symlink warning, test-host `linkd.autoShortcut` diagnostics, AppIntents registration diagnostics, and harmless audio-format test diagnostic remain non-fatal.
+- The full suite's redirect test uses its synthetic `URLProtocolStub` and reserved `.test` endpoints; no live provider, real API credential, real Keychain secret, microphone action, or external service was used.
+- No unresolved functional concern remains in Fix Round 2 scope. Real display/notch hardware, assistive-technology, and visual acceptance remain Task 8's device gate.
