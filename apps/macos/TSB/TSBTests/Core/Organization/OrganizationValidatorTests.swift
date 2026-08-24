@@ -148,6 +148,28 @@ final class OrganizationValidatorTests: XCTestCase {
         XCTAssertEqual(unstructured.noResultReason, .noReliableStructure)
     }
 
+    func testUserVisibleTextMustBeNonemptyAfterTrimming() throws {
+        for json in [
+            validJSON(pointText: "   "),
+            validJSON(linkReason: "   "),
+            validJSON(speculativeStatement: "   "),
+            validJSON(speculativeRationale: "   ")
+        ] {
+            XCTAssertThrowsError(try makeValidator().validate(try decodeResponse(json)))
+        }
+
+        let output = try makeValidator().validate(try decodeResponse(validJSON(
+            pointText: " point ",
+            linkReason: " reason ",
+            speculativeStatement: " statement ",
+            speculativeRationale: " rationale "
+        )))
+        XCTAssertEqual(output.numberedPoints.map(\.text), ["point"])
+        XCTAssertEqual(output.knownRecordLinks.map(\.reason), ["reason"])
+        XCTAssertEqual(output.speculativeConnections.map(\.statement), ["statement"])
+        XCTAssertEqual(output.speculativeConnections.map(\.whySpeculative), ["rationale"])
+    }
+
     private func makeValidator() throws -> OrganizationValidator {
         OrganizationValidator(
             requestID: requestID,
@@ -190,7 +212,11 @@ final class OrganizationValidatorTests: XCTestCase {
         pointNumber: Int = 1,
         sourceSegmentIDs: String = "[\"c1\"]",
         candidateID: String = "h1",
-        speculativeCandidateIDs: String = "[\"h1\"]"
+        speculativeCandidateIDs: String = "[\"h1\"]",
+        pointText: String = "alpha",
+        linkReason: String = "same topic",
+        speculativeStatement: String = "possible",
+        speculativeRationale: String = "unconfirmed"
     ) -> String {
         """
         {
@@ -199,15 +225,15 @@ final class OrganizationValidatorTests: XCTestCase {
           "source_text_hash": "\(sourceTextHash)",
           "no_result_reason": null,
           "numbered_points": [
-            {"number": \(pointNumber), "text": "alpha", "source_segment_ids": \(sourceSegmentIDs)}
+            {"number": \(pointNumber), "text": "\(pointText)", "source_segment_ids": \(sourceSegmentIDs)}
           ],
           "known_record_links": [
-            {"candidate_id": "\(candidateID)", "reason": "same topic", "source_segment_ids": ["c1"]}
+            {"candidate_id": "\(candidateID)", "reason": "\(linkReason)", "source_segment_ids": ["c1"]}
           ],
           "speculative_connections": [
             {
-              "statement": "possible",
-              "why_speculative": "unconfirmed",
+              "statement": "\(speculativeStatement)",
+              "why_speculative": "\(speculativeRationale)",
               "source_segment_ids": ["c1"],
               "candidate_ids": \(speculativeCandidateIDs)
             }

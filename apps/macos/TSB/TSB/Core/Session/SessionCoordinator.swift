@@ -74,7 +74,6 @@ final class SessionCoordinator {
         var provider: String
         var model: String
         var providerKind: ProviderKind
-        var useDeterministicOrganizer: Bool
     }
 
     private let dependencies: Dependencies
@@ -558,8 +557,7 @@ final class SessionCoordinator {
             localOnly: session.localOnly,
             provider: useDeterministic ? "deterministic" : "openai-compatible",
             model: useDeterministic ? "local-points" : endpoint?.model ?? "",
-            providerKind: providerKind,
-            useDeterministicOrganizer: useDeterministic
+            providerKind: providerKind
         )
         let pending = organizationRecord(for: job, state: .pending)
         do {
@@ -598,34 +596,25 @@ final class SessionCoordinator {
         var dispatchJob = job
         do {
             let output: OrganizationOutput
-            if job.useDeterministicOrganizer && !job.localOnly {
-                guard markOrganizationRunning(job) else {
-                    completeOrganizationSlot(job)
-                    return
-                }
-                output = try DeterministicOrganizer().organize(segments: job.segments)
-            } else {
-                do {
-                    output = try await dependencies.organize(
-                        job.requestID,
-                        job.segments,
-                        job.historySuggestions,
-                        job.selectedCandidateIDs,
-                        job.localOnly,
-                        { [weak self] endpoint in
-                            guard let self else { throw CancellationError() }
-                            dispatchJob = self.organizationJob(job, for: endpoint)
-                            try self.prepareRemoteDispatch(dispatchJob)
-                        }
-                    )
-                } catch OrganizationDispatchError.deterministicFallback {
-                    dispatchJob.provider = "deterministic"
-                    dispatchJob.model = "local-points"
-                    dispatchJob.providerKind = .local
-                    dispatchJob.useDeterministicOrganizer = true
-                    try prepareRemoteDispatch(dispatchJob)
-                    output = try DeterministicOrganizer().organize(segments: dispatchJob.segments)
-                }
+            do {
+                output = try await dependencies.organize(
+                    job.requestID,
+                    job.segments,
+                    job.historySuggestions,
+                    job.selectedCandidateIDs,
+                    job.localOnly,
+                    { [weak self] endpoint in
+                        guard let self else { throw CancellationError() }
+                        dispatchJob = self.organizationJob(job, for: endpoint)
+                        try self.prepareRemoteDispatch(dispatchJob)
+                    }
+                )
+            } catch OrganizationDispatchError.deterministicFallback {
+                dispatchJob.provider = "deterministic"
+                dispatchJob.model = "local-points"
+                dispatchJob.providerKind = .local
+                try prepareRemoteDispatch(dispatchJob)
+                output = try DeterministicOrganizer().organize(segments: dispatchJob.segments)
             }
             guard !Task.isCancelled,
                   var session = sessions[dispatchJob.sessionID],
@@ -736,8 +725,7 @@ final class SessionCoordinator {
             localOnly: job.localOnly,
             provider: "openai-compatible",
             model: endpoint.model,
-            providerKind: endpoint.isLoopback ? .local : .remote,
-            useDeterministicOrganizer: false
+            providerKind: endpoint.isLoopback ? .local : .remote
         )
     }
 
@@ -759,15 +747,6 @@ final class SessionCoordinator {
             activeOrganization = (job, active.task)
         }
         publishSnapshot()
-    }
-
-    private func markOrganizationRunning(_ job: OrganizationJob) -> Bool {
-        guard var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else { return false }
-        session.organizationPhase = .organizing
-        session.secondaryRemovalScheduled = false
-        sessions[job.sessionID] = session
-        publishSnapshot()
-        return true
     }
 
     private func finishFailedOrganization(

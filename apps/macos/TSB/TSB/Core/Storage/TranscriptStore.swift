@@ -9,7 +9,6 @@ final class TranscriptStore {
         .appendingPathComponent("TSB/Sessions", isDirectory: true)
 
     private let directory: URL
-    private(set) var skippedRecordCount = 0
 
     init(directory: URL = TranscriptStore.defaultDirectory) {
         self.directory = directory
@@ -163,7 +162,6 @@ final class TranscriptStore {
     }
 
     private func reportSkippedRecord() {
-        skippedRecordCount += 1
         NSLog("TSB: skipped malformed or unsafe transcript record")
     }
 }

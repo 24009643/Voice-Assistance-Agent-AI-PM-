@@ -163,27 +163,41 @@ struct OrganizationValidator {
             throw OrganizationValidatorError.unexpectedNoResultReason
         }
 
+        let numberedPoints = try response.numberedPoints.map {
+            NumberedPoint(
+                number: $0.number,
+                text: try trimmedNonempty($0.text),
+                sourceSegmentIDs: $0.sourceSegmentIDs
+            )
+        }
+        let knownRecordLinks = try response.knownRecordLinks.map {
+            try CandidateRecordLink(
+                candidateID: $0.candidateID,
+                reason: trimmedNonempty($0.reason),
+                sourceSegmentIDs: $0.sourceSegmentIDs
+            ).resolve(using: recordByCandidateID)
+        }
+        let speculativeConnections = try response.speculativeConnections.map { connection in
+            SpeculativeConnection(
+                statement: try trimmedNonempty(connection.statement),
+                whySpeculative: try trimmedNonempty(connection.whySpeculative),
+                sourceSegmentIDs: connection.sourceSegmentIDs,
+                relatedRecordIDs: connection.candidateIDs.compactMap { recordByCandidateID[$0] }
+            )
+        }
+
         return OrganizationOutput(
             noResultReason: response.noResultReason,
-            numberedPoints: response.numberedPoints.map {
-                NumberedPoint(number: $0.number, text: $0.text, sourceSegmentIDs: $0.sourceSegmentIDs)
-            },
-            knownRecordLinks: try response.knownRecordLinks.map {
-                try CandidateRecordLink(
-                    candidateID: $0.candidateID,
-                    reason: $0.reason,
-                    sourceSegmentIDs: $0.sourceSegmentIDs
-                ).resolve(using: recordByCandidateID)
-            },
-            speculativeConnections: response.speculativeConnections.map { connection in
-                SpeculativeConnection(
-                    statement: connection.statement,
-                    whySpeculative: connection.whySpeculative,
-                    sourceSegmentIDs: connection.sourceSegmentIDs,
-                    relatedRecordIDs: connection.candidateIDs.compactMap { recordByCandidateID[$0] }
-                )
-            }
+            numberedPoints: numberedPoints,
+            knownRecordLinks: knownRecordLinks,
+            speculativeConnections: speculativeConnections
         )
+    }
+
+    private func trimmedNonempty(_ text: String) throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw OrganizationValidatorError.invalidResponseShape }
+        return trimmed
     }
 
     static func inputTextSHA256(for segments: [TextSegment]) -> String {

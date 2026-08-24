@@ -144,7 +144,6 @@ final class TranscriptStoreTests: XCTestCase {
         let store = TranscriptStore(directory: directory)
 
         XCTAssertEqual(try store.list(), [])
-        XCTAssertEqual(store.skippedRecordCount, 3)
     }
 
     func testUpdateDeliveryStatusAtomicallyRewritesTheSavedRecord() throws {
