@@ -322,8 +322,9 @@ struct IslandPresentation: Equatable, Sendable {
     }
 
     private static func autoHideDelay(for snapshot: AppSnapshot, mode: IslandMode) -> TimeInterval? {
-        guard (mode == .localDelivered && snapshot.message == localCopySuccessMessage)
-                || snapshot.status == .cancelled,
+        if snapshot.status == .cancelled { return 1.2 }
+        guard mode == .localDelivered,
+              snapshot.message == localCopySuccessMessage,
               snapshot.suggestedRecords.isEmpty,
               !snapshot.secondaryProcessing.contains(where: { item in
                   item.status == .recording

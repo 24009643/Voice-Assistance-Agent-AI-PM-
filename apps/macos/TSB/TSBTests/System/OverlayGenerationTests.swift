@@ -92,6 +92,41 @@ final class OverlayGenerationTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledRecordingFeedbackCollapsesWithActiveSecondaryWork() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        var scheduled: [(TimeInterval, @MainActor () -> Void)] = []
+        let panel = NotchOverlayPanel(
+            screen: screen,
+            onIntent: { _ in },
+            schedule: { delay, action in scheduled.append((delay, action)) }
+        )
+
+        panel.update(AppSnapshot(
+            status: .cancelled,
+            elapsedMilliseconds: 0,
+            previewText: "",
+            message: "Recording cancelled.",
+            secondaryProcessing: [
+                SecondaryProcessingSnapshot(
+                    id: SessionID(rawValue: UUID()),
+                    status: .delivered,
+                    previewText: "older result",
+                    message: "整理中",
+                    organizationPhase: .organizing
+                ),
+            ]
+        ))
+
+        XCTAssertEqual(scheduled.count, 1)
+        XCTAssertEqual(scheduled[0].0, 1.2)
+
+        scheduled[0].1()
+
+        XCTAssertTrue(panel.isVisible)
+        XCTAssertEqual(panel.presentedMode, .idle)
+    }
+
+    @MainActor
     func testCompletedSecondaryResultIsRetainedWithItsOwnSessionID() throws {
         let screen = try XCTUnwrap(NSScreen.screens.first)
         let secondaryID = SessionID(rawValue: UUID())
