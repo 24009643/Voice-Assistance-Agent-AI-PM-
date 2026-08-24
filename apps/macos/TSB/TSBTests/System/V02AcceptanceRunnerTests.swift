@@ -116,6 +116,34 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertNil(controller.state.snapshot.sessionID)
     }
 
+    func testRunnerWithUnavailableParaformerModelStopsBeforeEvidenceAndRecording() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let wavURL = directory.appendingPathComponent("input.wav")
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        try Data().write(to: wavURL)
+        let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+
+        V02AcceptanceRunner.startIfConfigured(
+            controller: harness.controller,
+            environment: [
+                "TSB_V02_ACCEPTANCE_RUN": "1",
+                "TSB_V02_ACCEPTANCE_WAV": wavURL.path,
+                "TSB_V02_ACCEPTANCE_OUTPUT": outputURL.path,
+                "TSB_V02_ACCEPTANCE_CYCLES": "1"
+            ],
+            microphonePermissionGranted: { true }
+        )
+        await harness.drainCallbacks()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertEqual(harness.startCount, 0)
+        XCTAssertEqual(harness.controller.state.snapshot.status, .idle)
+        XCTAssertNil(harness.controller.state.snapshot.sessionID)
+    }
+
     func testPlaybackFailureCancelsProductionSessionBeforeFailureRowAndRejectsLateFinishedAudio() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)

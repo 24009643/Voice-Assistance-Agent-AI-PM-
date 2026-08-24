@@ -236,7 +236,8 @@ final class V02AcceptanceRunner {
         microphonePermissionGranted: () -> Bool = { MicrophonePermission.isGranted }
     ) {
         guard let configuration = V02AcceptanceConfiguration.parse(environment: environment),
-              microphonePermissionGranted() else { return }
+              microphonePermissionGranted(),
+              (try? ParaformerModelLocation.developmentLocation(environment: environment)) != nil else { return }
         let runner = V02AcceptanceRunner(configuration: configuration, controller: controller)
         Task { @MainActor in
             await runner.run()
