@@ -4,9 +4,9 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: automated gates passed at `245/245`; release **BLOCKED / manual incomplete**
+- Status: automated gates passed at `246/246`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Evidence-sync HEAD: `753b517998227f9e927a50f48791499d78416b7e`
+- Evidence-sync HEAD: `a8fb57262e51a5eaaa910701d1dc49a83c9164a8`
 - Commit: this record is committed with `test(v0.2): record island and organization acceptance`
 - Date: 2026-08-24
 
@@ -95,12 +95,12 @@ Result before and after target-Mac acceptance: `git diff --check` passed and the
 
 ## Runner cleanup and gate adjudication sync
 
-- Runner cleanup commits `23d7406..753b517` are `implemented`, `review-clean`, and `passed-automated`. The exact-HEAD offline clean snapshot passed `245/245`; the fresh Debug build also passed. This does not imply target-device or manual proof.
+- Runner cleanup commits `23d7406..753b517` remain `implemented`, `review-clean`, and `passed-automated`. The Task 7 exact-HEAD offline clean snapshot passed `246/246`; the fresh Debug build also passed. This does not imply target-device or manual proof beyond the focused Task 7 field-integrity check.
 - Desktop-hosted source reads were obstructed by TCC (`kTCCServiceSystemPolicyAllFiles`, `authValue=0`). Validation used an exact-HEAD `/tmp` source snapshot with the existing dependency lock; no Full Disk Access was requested or granted. This is an evidence-environment fact, not a product permission requirement.
 - V02-M02 is `passed-manual (adjudicated)`: three intentionally successful product cycles each had one persisted record, one automatic local copy, immediate clipboard equality and zero organization recopy. Failure attempts are excluded from the passing-cycle count.
 - V02-M08 is `blocked`: production parser/validator/persistence/zero-history behavior was observed, but the acceptance window made `3` Provider requests versus exactly `1` allowed. Direct smoke and loopback evidence do not substitute.
 - Historical Critical runner incident remains recorded: `3 vs 1` Provider requests, `5 vs 3` records and `5 vs 3` automatic local copies. The runner code is now review-clean/passed-automated; target-device closure is not claimed. Two extra records remain without deletion authorization, and the stopped no-key localhost profile requires action-time confirmation before permanent deletion.
-- Task 7 Settings Model-field integrity is reopened as `Important`: Password autofill changed Model before restoration. Code remediation and manual field-semantics verification are required before any new Provider run.
+- Task 7 Settings Model-field integrity is `passed-manual` for this focused subgate: after user-operated Password AutoFill, non-sensitive Base URL and Model sentinels were unchanged; API Key remained secure/masked and `未保存`; Cancel restored persisted local fields and blank/`未保存` key state. Fix commit `a8fb572` is `implemented`, `review-clean`, and `passed-automated`; independent re-review found Critical 0, Important 0, Minor 0. No Save/Delete/Revoke, Provider, or other prohibited side effect occurred. This does not clear V02-M08 or release completion.
 
 ## Automated privacy and adversarial coverage
 
@@ -181,7 +181,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 passed, while M07 remains pending and M08, M09 and M10 remain blocked. The historical Critical runner incident and the reopened Important Task 7 Model-field integrity subgate remain open. The exact-HEAD automated `245/245` result and Debug build do not promote manual, Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
+`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed, while M07 remains pending and M08, M09 and M10 remain blocked. The historical Critical runner incident remains open. The exact-HEAD automated `246/246` result and Debug build do not promote Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
 
 ## Rollback
 
