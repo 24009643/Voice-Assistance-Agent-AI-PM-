@@ -47,7 +47,7 @@ final class OrganizationClientTests: XCTestCase {
 
             let wireText = String(decoding: body, as: UTF8.self)
             for forbiddenValue in [
-                "header-only-secret", "zh-CN", "sensitive-keyword", "2026-08-20",
+                "header-only-secret", "zh-CN", "fixture-key", "2026-08-20",
                 "/private/audio.wav", "00000000-0000-0000-0000-000000000201",
                 "full old transcript", "clipboard contents"
             ] {
