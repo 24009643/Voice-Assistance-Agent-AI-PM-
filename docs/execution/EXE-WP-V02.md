@@ -4,9 +4,9 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: automated gates and real-microphone gate passed; release **blocked / manual incomplete**
+- Status: automated gates passed at `245/245`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Tested baseline: `c2b904f`
+- Evidence-sync HEAD: `753b517998227f9e927a50f48791499d78416b7e`
 - Commit: this record is committed with `test(v0.2): record island and organization acceptance`
 - Date: 2026-08-24
 
@@ -93,6 +93,15 @@ git status --short
 
 Result before and after target-Mac acceptance: `git diff --check` passed and the worktree was clean before this evidence update.
 
+## Runner cleanup and gate adjudication sync
+
+- Runner cleanup commits `23d7406..753b517` are `implemented`, `review-clean`, and `passed-automated`. The exact-HEAD offline clean snapshot passed `245/245`; the fresh Debug build also passed. This does not imply target-device or manual proof.
+- Desktop-hosted source reads were obstructed by TCC (`kTCCServiceSystemPolicyAllFiles`, `authValue=0`). Validation used an exact-HEAD `/tmp` source snapshot with the existing dependency lock; no Full Disk Access was requested or granted. This is an evidence-environment fact, not a product permission requirement.
+- V02-M02 is `passed-manual (adjudicated)`: three intentionally successful product cycles each had one persisted record, one automatic local copy, immediate clipboard equality and zero organization recopy. Failure attempts are excluded from the passing-cycle count.
+- V02-M08 is `blocked`: production parser/validator/persistence/zero-history behavior was observed, but the acceptance window made `3` Provider requests versus exactly `1` allowed. Direct smoke and loopback evidence do not substitute.
+- Historical Critical runner incident remains recorded: `3 vs 1` Provider requests, `5 vs 3` records and `5 vs 3` automatic local copies. The runner code is now review-clean/passed-automated; target-device closure is not claimed. Two extra records remain without deletion authorization, and the stopped no-key localhost profile requires action-time confirmation before permanent deletion.
+- Task 7 Settings Model-field integrity is reopened as `Important`: Password autofill changed Model before restoration. Code remediation and manual field-semantics verification are required before any new Provider run.
+
 ## Automated privacy and adversarial coverage
 
 - The executable outbound test asserts the exact outer keys (`model`, `messages`, `response_format`) and exact inner keys (`schema_version`, `request_id`, `source_text_hash`, `current_segments`, `history_summaries`).
@@ -110,9 +119,9 @@ Do not paste transcript bodies, keys or absolute session paths into this record.
 
 | Cycle | Language | Real session ID | `record.json` metadata | `audio.wav` metadata | Immediate clipboard equals `localCleanedText` | Clipboard unchanged after organization | Result |
 |---|---|---|---|---|---|---|---|
-| 1 | Mandarin | `893903F7-9140-4D62-8968-EE27A2E8D6DB` | `deliveryStatus=copied`; original/SenseVoice/local-cleaned non-empty; cleaned UTF-8 length 421 | 16 kHz, mono, Int16; 85.8 s | SHA-256 equal | Not exercised; organization required authorization | M01 pass / M02 pending |
-| 2 | Cantonese | `7FFB491A-682D-4E15-B693-D11DBF9669C0` | `deliveryStatus=copied`; original/SenseVoice/local-cleaned non-empty; cleaned UTF-8 length 401 | 16 kHz, mono, Int16; 48.2 s | SHA-256 equal | Not exercised; organization required authorization | M01 pass / M02 pending |
-| 3 | Chinese-English mix | `E43B5101-C530-49CE-A090-928B98873B1E` | `deliveryStatus=copied`; original/SenseVoice/local-cleaned non-empty; cleaned UTF-8 length 99 | 16 kHz, mono, Int16; 10.9 s | SHA-256 equal | Not exercised; organization required authorization | M01 pass / M02 pending |
+| 1 | Mandarin | `893903F7-9140-4D62-8968-EE27A2E8D6DB` | `deliveryStatus=copied`; original/SenseVoice/local-cleaned non-empty; cleaned UTF-8 length 421 | 16 kHz, mono, Int16; 85.8 s | SHA-256 equal | Not exercised in this worksheet | M01 pass; M02 adjudicated separately |
+| 2 | Cantonese | `7FFB491A-682D-4E15-B693-D11DBF9669C0` | `deliveryStatus=copied`; original/SenseVoice/local-cleaned non-empty; cleaned UTF-8 length 401 | 16 kHz, mono, Int16; 48.2 s | SHA-256 equal | Not exercised in this worksheet | M01 pass; M02 adjudicated separately |
+| 3 | Chinese-English mix | `E43B5101-C530-49CE-A090-928B98873B1E` | `deliveryStatus=copied`; original/SenseVoice/local-cleaned non-empty; cleaned UTF-8 length 99 | 16 kHz, mono, Int16; 10.9 s | SHA-256 equal | Not exercised in this worksheet | M01 pass; M02 adjudicated separately |
 
 The three inputs were locally generated acceptance speech played through the target Mac speakers and captured through the real microphone path. No transcript body is recorded here.
 
@@ -128,7 +137,7 @@ The three inputs were locally generated acceptance speech played through the tar
 | Keyboard | The visible acceptance-only toggle exercised the production recording controller; automated Option-Space injection did not reach the Carbon global hotkey, and app-targeted Escape injection did not cancel an active recording. Real Option-Space/Escape remain pending | partial-manual |
 | VoiceOver | Status, actions and “推测” label readout | pending-manual |
 | Reduce Motion | Island and waveform behavior | pending-manual |
-| Controlled DeepSeek-compatible call | The matching Passwords item was user-unlocked and read without exposing the secret. Exactly one direct `https://api.deepseek.com/chat/completions` smoke used `deepseek-v4-flash`, synthetic mixed-language text, `max_tokens=300`, and no audio/path/history/transcript/memory content. It returned HTTP 200, `finish_reason=stop`, JSON fields `summary`, `points`, `known_links`, `speculative_links`, and 186 prompt + 174 completion tokens. The temporary credential variable/reference was unset and no persistent copy was found in TSB, source or logs. This response shape is not the production `OrganizationClient` DTO, so the production parser/validator path was not exercised | partial-manual |
+| Controlled DeepSeek-compatible call | Historical direct smoke only; it used synthetic text and did not exercise the production parser/validator DTO. It is not a substitute for the blocked M08 one-request production boundary | historical / non-substitutive |
 
 ### Target-Mac island observations
 
@@ -172,7 +181,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` The three-session real-microphone chain, concurrent-new-recording gate, per-session local-only zero-request gate, loopback HTTP 401 fail-closed gate and island collapse/reopen/copy gate passed. One direct DeepSeek privacy/credential smoke passed, but the production organizer parser/validator path was not exercised. Offline, timeout and malformed response also showed fail-closed local-record behavior; a real invalid-provider credential was intentionally not consumed because the production-path 401 boundary already covers the authentication-failure gate. Completion is still blocked by the remaining configured-organization repetitions, production organizer/provider integration, real Option-Space/Escape plus VoiceOver/Reduce Motion acceptance, a qualified/annotated 30-record semantic Golden Set, and the 100-cycle/timing gates.
+`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 passed, while M07 remains pending and M08, M09 and M10 remain blocked. The historical Critical runner incident and the reopened Important Task 7 Model-field integrity subgate remain open. The exact-HEAD automated `245/245` result and Debug build do not promote manual, Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
 
 ## Rollback
 
