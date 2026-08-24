@@ -116,6 +116,60 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertNil(controller.state.snapshot.sessionID)
     }
 
+    func testPlaybackFailureCancelsProductionSessionBeforeFailureRowAndRejectsLateFinishedAudio() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let wavURL = directory.appendingPathComponent("invalid.wav")
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        try Data().write(to: wavURL)
+        let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+        let runner = V02AcceptanceRunner(
+            configuration: V02AcceptanceConfiguration(wavURL: wavURL, outputURL: outputURL, cycles: 1),
+            controller: harness.controller,
+            store: harness.store,
+            pasteboard: NSPasteboard(name: .init("V02AcceptanceRunnerTests.\(UUID().uuidString)"))
+        )
+
+        await runner.run()
+        let rows = try String(contentsOf: outputURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+        XCTAssertEqual(rows.first?["result_category"] as? String, "playback_failed")
+
+        await harness.deliverLateFinishedAudio()
+
+        XCTAssertEqual(harness.stopCount, 0)
+        XCTAssertEqual(harness.cancelCount, 1)
+        XCTAssertTrue(try harness.store.list().isEmpty)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.organizationDispatchCount, 0)
+    }
+
+    func testFailureCleanupAfterIntentionalStopInvalidatesLateOrganizationResultWithoutRecopy() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = RunnerFailureHarness(
+            recordsDirectory: directory.appendingPathComponent("records"),
+            suspendsOrganization: true
+        )
+
+        await harness.deliverOneSession()
+        let sessionID = try XCTUnwrap(harness.state.snapshot.sessionID)
+        await harness.controller.cancelForDevelopment(sessionID: sessionID)
+        harness.completeOrganization()
+        await harness.drainCallbacks()
+
+        XCTAssertEqual(harness.organizationDispatchCount, 1)
+        XCTAssertEqual(harness.copyCount, 1)
+        XCTAssertEqual(try harness.store.list().count, 1)
+        XCTAssertEqual(try harness.store.load(id: sessionID).organization?.state, .failed)
+        XCTAssertEqual(try harness.store.load(id: sessionID).organization?.errorCode, "cancelled")
+    }
+
     func testWriterCreatesOnlyNewFilesWithoutModifyingExistingOrSymlinkSentinels() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
@@ -340,5 +394,121 @@ final class V02AcceptanceRunnerTests: XCTestCase {
     private func encodedKeys(_ data: Data) throws -> [String] {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         return object.keys.sorted()
+    }
+}
+
+@MainActor
+private final class RunnerFailureHarness {
+    let state = AppState()
+    let store: TranscriptStore
+    private var onFinished: ((RecordedAudio) -> Void)?
+    private let suspendsOrganization: Bool
+    private var organizationContinuation: UnsafeContinuation<OrganizationOutput, Never>?
+    private(set) var stopCount = 0
+    private(set) var cancelCount = 0
+    private(set) var copyCount = 0
+    private(set) var organizationDispatchCount = 0
+
+    private(set) lazy var coordinator = SessionCoordinator(
+        dependencies: .init(
+            startRecording: { [weak self] _, _, _, onFinished, _ in
+                self?.onFinished = onFinished
+            },
+            stopRecording: { [weak self] in self?.stopCount += 1 },
+            cancelRecording: { [weak self] _ in self?.cancelCount += 1 },
+            finishPreview: { _ in "late local text" },
+            cancelPreview: { _ in },
+            transcribe: { _ in
+                TranscriptionResult(text: "late local text", detectedLanguage: "zh", eventTags: [], latencyMilliseconds: 1)
+            },
+            clean: { CleanResult(text: $0, edits: []) },
+            save: { [weak self] record in try self?.store.save(record) },
+            updateDeliveryStatus: { [weak self] sessionID, status in
+                try self?.store.updateDeliveryStatus(id: sessionID, to: status)
+            },
+            copy: { [weak self] _ in
+                self?.copyCount += 1
+                return true
+            },
+            loadPersistedRecords: { [] },
+            updateOrganization: { [weak self] sessionID, organization in
+                try self?.store.updateOrganization(id: sessionID, to: organization)
+            },
+            currentOrganizationSettings: {
+                OrganizationSettings(endpoint: try! OrganizationEndpointSettings(
+                    baseURL: URL(string: "http://127.0.0.1:1/v1/chat/completions")!,
+                    model: "test-local"
+                ))
+            },
+            historySuggestions: { _ in
+                HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
+            },
+            organize: { [weak self] _, segments, _, _, willDispatch in
+                try willDispatch(try OrganizationEndpointSettings(
+                    baseURL: URL(string: "http://127.0.0.1:1/v1/chat/completions")!,
+                    model: "test-local"
+                ))
+                self?.organizationDispatchCount += 1
+                let output = OrganizationOutput(
+                    noResultReason: nil,
+                    numberedPoints: segments.enumerated().map {
+                        NumberedPoint(number: $0.offset + 1, text: $0.element.text, sourceSegmentIDs: [$0.element.id])
+                    },
+                    knownRecordLinks: [],
+                    speculativeConnections: []
+                )
+                guard self?.suspendsOrganization == true else { return output }
+                return await withUnsafeContinuation { self?.organizationContinuation = $0 }
+            },
+            scheduleSecondaryRemoval: { _, _ in }
+        ),
+        onSnapshot: { [weak state] snapshot in state?.snapshot = snapshot }
+    )
+
+    private(set) lazy var controller = AppController(state: state, coordinator: coordinator)
+
+    init(recordsDirectory: URL, suspendsOrganization: Bool = false) {
+        store = TranscriptStore(directory: recordsDirectory)
+        self.suspendsOrganization = suspendsOrganization
+    }
+
+    func deliverLateFinishedAudio() async {
+        onFinished?(RecordedAudio(
+            url: FileManager.default.temporaryDirectory.appendingPathComponent("V02AcceptanceRunnerTests-late.wav"),
+            durationMilliseconds: 1
+        ))
+        await drainCallbacks()
+    }
+
+    func deliverOneSession() async {
+        controller.toggleForDevelopment()
+        await wait { self.state.snapshot.status == .recording }
+        controller.toggleForDevelopment()
+        await wait { self.stopCount == 1 }
+        await deliverLateFinishedAudio()
+        await wait { self.organizationDispatchCount == 1 }
+    }
+
+    func completeOrganization() {
+        let segments = [try! TextSegment(id: "c1", text: "late local text")]
+        organizationContinuation?.resume(returning: OrganizationOutput(
+            noResultReason: nil,
+            numberedPoints: [NumberedPoint(number: 1, text: "late local text", sourceSegmentIDs: [segments[0].id])],
+            knownRecordLinks: [],
+            speculativeConnections: []
+        ))
+        organizationContinuation = nil
+    }
+
+    func drainCallbacks() async {
+        for _ in 0..<100 { await Task.yield() }
+    }
+
+    private func wait(until condition: () -> Bool) async {
+        for _ in 0..<100 {
+            if condition() { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for runner harness state")
     }
 }

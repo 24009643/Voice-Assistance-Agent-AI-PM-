@@ -20,6 +20,7 @@ final class AppController: ObservableObject {
     private let coordinator: SessionCoordinator
     private let escapeMonitor: EscapeKeyMonitor
     private let modelError: String?
+    private let bypassesMicrophonePermissionForDevelopment: Bool
     private var notchOverlay: NotchOverlayPanel?
     private let manualCopy: (String) -> Bool
     private var screenParameterObserver: ScreenParameterObserver?
@@ -187,6 +188,7 @@ final class AppController: ObservableObject {
         self.coordinator = coordinator
         self.escapeMonitor = escapeMonitor
         self.modelError = modelError
+        self.bypassesMicrophonePermissionForDevelopment = false
         self.notchOverlay = nil
         self.manualCopy = { clipboard.copy($0) }
         self.screenParameterObserver = nil
@@ -205,6 +207,21 @@ final class AppController: ObservableObject {
             self?.dispatch(.cancelRecording)
         }
     }
+
+#if DEBUG
+    init(state: AppState, coordinator: SessionCoordinator) {
+        self.state = state
+        self.coordinator = coordinator
+        self.escapeMonitor = EscapeKeyMonitor(
+            eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
+        )
+        self.modelError = nil
+        self.bypassesMicrophonePermissionForDevelopment = true
+        self.notchOverlay = nil
+        self.manualCopy = { _ in false }
+        self.screenParameterObserver = nil
+    }
+#endif
 
     func start() {
         screenParameterObserver?.start()
@@ -229,7 +246,21 @@ final class AppController: ObservableObject {
     }
 
     func toggleForDevelopment() {
-        receive(.toggleRecording)
+        guard bypassesMicrophonePermissionForDevelopment else {
+            receive(.toggleRecording)
+            return
+        }
+        enqueue { [weak self] in
+            self?.coordinator.handleToggleRecording()
+        }
+    }
+
+    func cancelForDevelopment(sessionID: SessionID) async {
+        guard state.snapshot.sessionID == sessionID else { return }
+        await coordinator.handle(.cancelRecording)
+        guard state.snapshot.sessionID == sessionID,
+              let requestID = state.snapshot.organizationRequestID else { return }
+        await coordinator.handle(.cancel(sessionID: sessionID, requestID: requestID))
     }
 
     private func receive(_ intent: UserIntent) {

@@ -250,7 +250,7 @@ final class V02AcceptanceRunner {
         self.pasteboard = pasteboard
     }
 
-    private func run() async {
+    func run() async {
         guard let writer = try? V02JSONLWriter(url: configuration.outputURL) else { return }
         observation = controller.state.$snapshot.sink { @MainActor [weak self] snapshot in
             self?.observe(snapshot)
@@ -294,44 +294,34 @@ final class V02AcceptanceRunner {
         controller.toggleForDevelopment()
         guard await wait(until: { self.capture?.sessionID != nil || self.capture?.failureCategory != nil }, seconds: 10),
               capture?.sessionID != nil else {
-            failIfNeeded("recording_start_timeout")
-            return evidence()
+            return await failureEvidence("recording_start_timeout")
         }
 
         guard let player = try? AVAudioPlayer(contentsOf: configuration.wavURL), player.play() else {
-            capture?.failureCategory = "playback_failed"
-            stopRecordingIfNeeded()
-            return evidence()
+            return await failureEvidence("playback_failed")
         }
         let playbackTimeout = Int64(min(max(ceil(player.duration) + 5, 10), 300))
         guard await wait(until: { !player.isPlaying }, seconds: playbackTimeout) else {
             player.stop()
-            capture?.failureCategory = "playback_timeout"
-            stopRecordingIfNeeded()
-            return evidence()
+            return await failureEvidence("playback_timeout")
         }
         guard capture?.firstPreviewInstant != nil else {
-            capture?.failureCategory = "preview_missing"
-            stopRecordingIfNeeded()
-            return evidence()
+            return await failureEvidence("preview_missing")
         }
 
         capture?.stopInstant = clock.now
         controller.toggleForDevelopment()
         guard await wait(until: { self.capture?.localFinalInstant != nil || self.capture?.failureCategory != nil }, seconds: 30),
               capture?.localFinalInstant != nil else {
-            failIfNeeded("local_final_timeout")
-            return evidence()
+            return await failureEvidence("local_final_timeout")
         }
         guard await wait(until: { self.capture?.deliveredInstant != nil || self.capture?.failureCategory != nil }, seconds: 30),
               capture?.deliveredInstant != nil else {
-            failIfNeeded("delivery_timeout")
-            return evidence()
+            return await failureEvidence("delivery_timeout")
         }
         guard await wait(until: { self.capture?.terminalCategory != "missing" || self.capture?.failureCategory != nil }, seconds: 30),
               capture?.terminalCategory != "missing" else {
-            failIfNeeded("organization_timeout")
-            return evidence()
+            return await failureEvidence("organization_timeout")
         }
 
         if capture?.recordDelta != 1 || capture?.deliveryStatus != DeliveryStatus.copied.rawValue {
@@ -468,12 +458,21 @@ final class V02AcceptanceRunner {
         capture?.failureCategory = category
     }
 
-    private func stopRecordingIfNeeded() {
-        guard let sessionID = capture?.sessionID,
-              controller.state.snapshot.sessionID == sessionID,
-              controller.state.snapshot.status == .recording else { return }
-        capture?.stopInstant = clock.now
-        controller.toggleForDevelopment()
+    private func failureEvidence(_ category: String) async -> V02AcceptanceCycleEvidence {
+        failIfNeeded(category)
+        guard let sessionID = capture?.sessionID else { return evidence() }
+        await controller.cancelForDevelopment(sessionID: sessionID)
+        _ = await wait(until: {
+            let snapshot = self.controller.state.snapshot
+            guard snapshot.sessionID == sessionID else { return true }
+            let sessionIsTerminal = snapshot.status != .recording
+                && snapshot.status != .transcribing
+                && snapshot.status != .saving
+            let organizationIsTerminal = snapshot.organizationPhase != .queued
+                && snapshot.organizationPhase != .organizing
+            return sessionIsTerminal && organizationIsTerminal
+        }, seconds: 5)
+        return evidence()
     }
 
     private func milliseconds(
