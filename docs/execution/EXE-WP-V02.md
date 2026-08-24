@@ -118,13 +118,13 @@ The three inputs were locally generated acceptance speech played through the tar
 
 | Scenario | Required evidence | Result |
 |---|---|---|
-| Start new recording during older organization | Both session IDs, timestamps and main-island ownership | pending-manual |
-| Per-session local-only | Session ID and runtime proof of zero remote request | pending-manual |
-| Offline | Local save/copy, failure UI and retry observation | pending-manual |
-| Invalid key | Local save/copy, authorization failure and retry observation | pending-manual |
-| Timeout | Local save/copy, timeout UI and late-result suppression observation | pending-manual |
-| Malformed response | Local save/copy, validation failure and retry observation | pending-manual |
-| Three chambers / collapse / reopen | Full-screen capture proved notch-attached recording and authorization-required result states; configured three chambers/collapse/reopen are still pending | partial-manual |
+| Start new recording during older organization | Old `335D9384-A0A6-45EF-9DEC-3B1FA36E0870` entered `/timeout`; new `ACF4A2B5-C240-42F6-B1BE-FC56FAE434FE` started 13.7 s later while the request was active; the main island visibly switched to the new recording and showed its local-only `恢复整理` action; the new session succeeded locally and the old later failed without overwriting it | pass |
+| Per-session local-only | `BD8ADD43-B400-4F93-A796-7A6E0029F69D`; stub `/success` request count stayed 1→1; deterministic/local-points organization succeeded and clipboard remained equal | pass |
+| Offline | `D4BD3980-6627-46C1-8B6B-87A1BCF68106`; connection-refused endpoint; local record stayed `copied`, organization `failed`, error code present, clipboard equal; Retry UI not separately captured | partial-manual |
+| Invalid key | Keychain authorization prevented configuring the isolated synthetic remote key; runtime observation not executed | blocked |
+| Timeout | `24DA965E-346C-4DB6-AAE8-900D804C9B68`; one 60 s request; local record stayed `copied`, organization `failed`, clipboard equal, state remained failed after the delayed server response; Retry UI not separately captured | partial-manual |
+| Malformed response | `EB3A5FA9-B420-400E-A2F9-671D17E5E761`; one request; local record stayed `copied`, organization `failed`, error code present, clipboard equal; island exposed Retry/Copy/Collapse | pass |
+| Three chambers / collapse / reopen | Full-screen capture proved the configured three-chamber result; collapse/reopen interaction remains pending | partial-manual |
 | Keyboard | The visible acceptance-only toggle exercised the production recording controller; automated Option-Space injection did not reach the Carbon global hotkey, so real Option-Space/Escape remain pending | partial-manual |
 | VoiceOver | Status, actions and “推测” label readout | pending-manual |
 | Reduce Motion | Island and waveform behavior | pending-manual |
@@ -134,15 +134,18 @@ The three inputs were locally generated acceptance speech played through the tar
 
 - Recording: the top-notch island showed a live waveform, recording state, preview text, and visible `仅本地` and `停止` actions.
 - Post-Stop without remote authorization: the island preserved the original text and showed `需要在设置中授权整理`, `复制原文`, and `收起`.
+- Successful loopback organization (`1296A4DE-AFB0-4797-8492-5F1C433C57D5`) displayed the three chambers `原文` / `要点` / `关联`; the speculative connection carried a visible `推测` label. Persistence recorded one point, zero known links and one speculative connection.
+- Its outbound audit contained only outer keys `messages`, `model`, `response_format` and payload keys `current_segments`, `history_summaries`, `request_id`, `schema_version`, `source_text_hash`; it had no Authorization header and selected-history count was zero.
+- The successful loopback result and the local-only result did not change the clipboard hash.
 - API settings accessibility tree exposed Provider, Base URL, Model, secure API Key, authorization scope, outbound preview, Save, Cancel, revoke and delete controls.
-- Cancel restored the blank persisted draft. Delete required a confirmation dialog and then reported `已删除配置与密钥` in an isolated acceptance profile.
+- Cancel restored the blank persisted draft. A loopback profile saved through the real UI without a key. Delete required a confirmation dialog and then reported `已删除配置与密钥` in an isolated acceptance profile.
 - Saving a synthetic key could not complete because the acceptance process was not authorized to access the login Keychain. Production Save/Cancel/Delete/Revoke semantics remain covered by the passing Settings and Keychain automated test groups; the failed manual save did not touch the production Keychain service.
 
 ## `v0.2-GS-01` worksheet — controller must complete
 
 | Field | Required threshold | Result |
 |---|---:|---|
-| Real mixed-language record count | >= 30 | Paired bundle inventory = 7; GS-qualified/annotated count not established |
+| Real mixed-language record count | >= 30 | Paired bundle inventory = 14; GS-qualified/annotated count not established |
 | Atomic-idea denominator | recorded exactly | PENDING |
 | Atomic ideas covered | recorded exactly | PENDING |
 | Coverage | >= 95% | PENDING |
@@ -167,7 +170,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` The three-session real-microphone chain and immediate pasteboard proof passed. The island recording and authorization-required states, settings Cancel and isolated Delete were observed. Completion is still blocked by the controlled provider call, configured successful-organization clipboard proof, local-only/offline/failure-mode runtime observations, three-chamber/accessibility completion, a qualified/annotated 30-record semantic Golden Set, and the 100-cycle/timing gates.
+`BLOCKED — manual acceptance is incomplete.` The three-session real-microphone chain, concurrent-new-recording gate and per-session local-only zero-request gate passed. Successful loopback organization preserved the clipboard and displayed all three chambers. Offline, timeout and malformed responses all showed fail-closed local-record and clipboard behavior; only malformed completed the direct Retry-UI observation, while Offline/Timeout remain partial. Invalid-key runtime remains blocked by Keychain authorization. Completion is still blocked by the controlled provider call, the remaining configured-organization repetitions, invalid-key observation, collapse/reopen and accessibility completion, a qualified/annotated 30-record semantic Golden Set, and the 100-cycle/timing gates.
 
 ## Rollback
 

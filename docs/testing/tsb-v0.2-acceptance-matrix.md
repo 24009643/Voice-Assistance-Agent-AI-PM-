@@ -28,16 +28,16 @@ Meaning reversal and invented facts are valid JSON that can retain valid IDs, ha
 | ID | Required observation | Evidence fields the controller must fill | Status |
 |---|---|---|---|
 | V02-M01 | Three consecutive real-microphone sessions: Mandarin, Cantonese, Chinese-English mix | Three real session IDs; `record.json` metadata; `audio.wav` sample rate/channels/duration; immediate clipboard equality proof | passed-manual |
-| V02-M02 | Organization never changes the clipboard automatically | Immediate post-Stop clipboard equality passed for all three sessions; no configured successful organization cycle was exercised | partial-manual |
-| V02-M03 | New recording starts while the previous organization is active | Old/new session IDs, timestamps and island ownership observation | pending-manual |
-| V02-M04 | Per-session “仅本地” makes zero remote requests | Session ID plus runtime network observation | pending-manual |
-| V02-M05 | Offline, invalid key, timeout and malformed response preserve the local chain | One observation per failure mode, with local record/clipboard outcome and retry availability | pending-manual |
-| V02-M06 | Three-chamber result, collapse, reopen and all visible buttons work on the target Mac | Recording and authorization-required island states were captured full-screen; configured three-chamber/collapse/reopen remains missing | partial-manual |
+| V02-M02 | Organization never changes the clipboard automatically | Immediate equality passed for three real-microphone sessions; one configured successful organization and local-only organization also retained clipboard equality | partial-manual |
+| V02-M03 | New recording starts while the previous organization is active | A second real session started 13.7 seconds after the first while the first `/timeout` request was active; the main island visibly switched to the new recording/local-only state; the first later failed and the second succeeded independently | passed-manual |
+| V02-M04 | Per-session “仅本地” makes zero remote requests | Stub `/success` count remained 1→1; local deterministic organization succeeded and clipboard remained equal | passed-manual |
+| V02-M05 | Offline, invalid key, timeout and malformed response preserve the local chain | Offline, timeout and malformed-response observations preserved the local record and clipboard; Retry UI was directly observed for malformed only; invalid-key runtime remains blocked by Keychain authorization | partial-manual |
+| V02-M06 | Three-chamber result, collapse, reopen and all visible buttons work on the target Mac | Configured three-chamber result was captured full-screen; collapse/reopen interaction remains missing | partial-manual |
 | V02-M07 | Keyboard, VoiceOver and Reduce Motion are usable | Option-Space, Escape, focus/action labels, “推测” announcement and reduced-motion observation | pending-manual |
 | V02-M08 | One controlled DeepSeek-compatible call respects the text-only contract | Existing source Keychain item is present, but Keychain authorization rejected secret access with `-25293`; this acceptance attempt issued zero provider requests | blocked |
-| V02-M09 | `v0.2-GS-01` has at least 30 real mixed-language records | Paired bundle inventory is 7; GS-qualified and annotated record count is not established | blocked |
+| V02-M09 | `v0.2-GS-01` has at least 30 real mixed-language records | Paired bundle inventory is 14; GS-qualified and annotated record count is not established | blocked |
 | V02-M10 | Local timing and cycle gates meet the design spec | P95/hard-limit results and 100-cycle zero-loss/zero-duplicate-copy summary | blocked |
 
 ## Completion decision
 
-`BLOCKED — manual acceptance is incomplete.` V02-M01 passed on the target Mac. V02-M02 and V02-M06 have bounded partial evidence. V02-M08 is blocked by Keychain authorization, V02-M09 lacks a qualified/annotated Golden Set count, and V02-M10 still lacks the 100-cycle/timing run. Do not mark TSB 0.2 complete until every threshold passes.
+`BLOCKED — manual acceptance is incomplete.` V02-M01, M03 and M04 passed on the target Mac. V02-M02, M05 and M06 have bounded partial evidence. V02-M08 is blocked by Keychain authorization, V02-M09 lacks a qualified/annotated Golden Set count, and V02-M10 still lacks the 100-cycle/timing run. Do not mark TSB 0.2 complete until every threshold passes.
