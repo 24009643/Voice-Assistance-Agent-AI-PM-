@@ -81,6 +81,7 @@ final class SessionCoordinator {
     private var mainSessionID: SessionID?
     private var recordingSessionID: SessionID?
     private var processingTasks: [SessionID: Task<Void, Never>] = [:]
+    private var previewCancellationTasks: [SessionID: Task<Void, Never>] = [:]
     private var organizationQueue: [OrganizationJob] = []
     private var activeOrganization: (job: OrganizationJob, task: Task<Void, Never>)?
     private var latestTerminalSessionID: SessionID?
@@ -134,6 +135,47 @@ final class SessionCoordinator {
         sessions[sessionID] = session
         dependencies.stopRecording()
     }
+
+#if DEBUG
+    struct DevelopmentWorkIdentity: Equatable {
+        let sessionID: SessionID
+        let organizationRequestID: UUID?
+    }
+
+    func startRecordingForDevelopment() -> SessionID? {
+        guard recordingSessionID == nil else { return nil }
+        startRecording()
+        return recordingSessionID
+    }
+
+    func developmentWorkIdentity(sessionID: SessionID) -> DevelopmentWorkIdentity? {
+        guard let session = sessions[sessionID] else { return nil }
+        return DevelopmentWorkIdentity(
+            sessionID: sessionID,
+            organizationRequestID: session.organizationRequestID
+        )
+    }
+
+    func cancelDevelopmentWork(_ identity: DevelopmentWorkIdentity) -> Bool {
+        guard let session = sessions[identity.sessionID],
+              session.organizationRequestID == identity.organizationRequestID else { return false }
+        if recordingSessionID == identity.sessionID || processingTasks[identity.sessionID] != nil {
+            beginSessionCancellation(identity.sessionID)
+        }
+        if let requestID = identity.organizationRequestID {
+            cancelOrganization(for: identity.sessionID, expectedRequestID: requestID)
+        }
+        return true
+    }
+
+    func isDevelopmentWorkDrained(_ identity: DevelopmentWorkIdentity) -> Bool {
+        recordingSessionID != identity.sessionID
+            && processingTasks[identity.sessionID] == nil
+            && previewCancellationTasks[identity.sessionID] == nil
+            && activeOrganization?.job.sessionID != identity.sessionID
+            && !organizationQueue.contains { $0.sessionID == identity.sessionID }
+    }
+#endif
 
     private func startRecording() {
         guard processingSessionCount < 3 else {
@@ -395,13 +437,30 @@ final class SessionCoordinator {
         } else {
             sessionID = nil
         }
-        guard let sessionID, var session = sessions[sessionID] else { return }
+        guard let sessionID else { return }
+        let previewCancellation = beginSessionCancellation(sessionID)
+        await previewCancellation?.value
+    }
+
+    @discardableResult
+    private func beginSessionCancellation(_ sessionID: SessionID) -> Task<Void, Never>? {
+        guard var session = sessions[sessionID] else { return nil }
 
         processingTasks[sessionID]?.cancel()
-        processingTasks.removeValue(forKey: sessionID)
         dependencies.cancelRecording(sessionID)
-        await dependencies.cancelPreview(sessionID)
         if recordingSessionID == sessionID { recordingSessionID = nil }
+
+        let previewCancellation: Task<Void, Never>
+        if let existing = previewCancellationTasks[sessionID] {
+            previewCancellation = existing
+        } else {
+            previewCancellation = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await dependencies.cancelPreview(sessionID)
+                previewCancellationTasks.removeValue(forKey: sessionID)
+            }
+            previewCancellationTasks[sessionID] = previewCancellation
+        }
 
         session.status = .cancelled
         session.durationMilliseconds = 0
@@ -410,12 +469,11 @@ final class SessionCoordinator {
         session.message = "Recording cancelled."
         session.resultRetainedForDisplay = true
         sessions[sessionID] = session
-        if mainSessionID == sessionID {
-            publishSnapshot()
-        } else {
+        if mainSessionID != sessionID {
             scheduleSecondaryRemovalIfEligible(sessionID)
-            publishSnapshot()
         }
+        publishSnapshot()
+        return previewCancellation
     }
 
     private func setLocalOnly(_ enabled: Bool, for sessionID: SessionID) {

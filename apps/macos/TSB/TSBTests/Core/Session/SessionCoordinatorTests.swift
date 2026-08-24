@@ -989,6 +989,31 @@ final class SessionCoordinatorTests: XCTestCase {
         harness.completeOrganization(at: 1)
     }
 
+    func testDevelopmentCleanupRejectsStaleAtomicallyCapturedRequestIdentity() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "stale cleanup identity",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let identityA = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        let requestA = try XCTUnwrap(identityA.organizationRequestID)
+
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: requestA))
+        let requestB = try XCTUnwrap(harness.organizationUpdates.last?.organization.requestID)
+
+        XCTAssertFalse(harness.coordinator.cancelDevelopmentWork(identityA))
+        XCTAssertEqual(harness.coordinator.snapshot.organizationRequestID, requestB)
+
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilOrganizationStarts(count: 2)
+        XCTAssertEqual(harness.organizationInputs[1].requestID, requestB)
+        harness.completeOrganization(at: 1)
+    }
+
     func testLoopbackEndpointDispatchesAsLocalProcessing() async throws {
         let harness = CoordinatorHarness(
             transcript: "loopback",

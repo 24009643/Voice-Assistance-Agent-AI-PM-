@@ -221,6 +221,32 @@ final class AppController: ObservableObject {
         self.manualCopy = { _ in false }
         self.screenParameterObserver = nil
     }
+
+    func enqueueBarrierForDevelopment(_ action: @escaping @MainActor () async -> Void) {
+        enqueue(action)
+    }
+
+    func startRecordingForDevelopment() -> SessionID? {
+        coordinator.startRecordingForDevelopment()
+    }
+
+    func stopRecordingForDevelopment(sessionID: SessionID) {
+        coordinator.stopRecording(sessionID: sessionID)
+    }
+
+    func developmentWorkIdentity(
+        sessionID: SessionID
+    ) -> SessionCoordinator.DevelopmentWorkIdentity? {
+        coordinator.developmentWorkIdentity(sessionID: sessionID)
+    }
+
+    func cancelDevelopmentWork(_ identity: SessionCoordinator.DevelopmentWorkIdentity) -> Bool {
+        coordinator.cancelDevelopmentWork(identity)
+    }
+
+    func isDevelopmentWorkDrained(_ identity: SessionCoordinator.DevelopmentWorkIdentity) -> Bool {
+        coordinator.isDevelopmentWorkDrained(identity)
+    }
 #endif
 
     func start() {
@@ -253,14 +279,6 @@ final class AppController: ObservableObject {
         enqueue { [weak self] in
             self?.coordinator.handleToggleRecording()
         }
-    }
-
-    func cancelForDevelopment(sessionID: SessionID) async {
-        guard state.snapshot.sessionID == sessionID else { return }
-        await coordinator.handle(.cancelRecording)
-        guard state.snapshot.sessionID == sessionID,
-              let requestID = state.snapshot.organizationRequestID else { return }
-        await coordinator.handle(.cancel(sessionID: sessionID, requestID: requestID))
     }
 
     private func receive(_ intent: UserIntent) {

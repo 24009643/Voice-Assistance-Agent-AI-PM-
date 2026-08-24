@@ -221,6 +221,10 @@ final class V02AcceptanceRunner {
     private let controller: AppController
     private let store: TranscriptStore
     private let pasteboard: NSPasteboard
+    private let recordingStartTimeoutSeconds: Int64
+    private let organizationTimeoutSeconds: Int64
+    private let cleanupTimeoutSeconds: Int64
+    private let playbackOverride: (@MainActor () -> Bool)?
     private let clock = ContinuousClock()
     private var capture: Capture?
     private var observation: AnyCancellable?
@@ -242,12 +246,20 @@ final class V02AcceptanceRunner {
         configuration: V02AcceptanceConfiguration,
         controller: AppController,
         store: TranscriptStore = TranscriptStore(),
-        pasteboard: NSPasteboard = .general
+        pasteboard: NSPasteboard = .general,
+        recordingStartTimeoutSeconds: Int64 = 10,
+        organizationTimeoutSeconds: Int64 = 30,
+        cleanupTimeoutSeconds: Int64 = 5,
+        playbackOverride: (@MainActor () -> Bool)? = nil
     ) {
         self.configuration = configuration
         self.controller = controller
         self.store = store
         self.pasteboard = pasteboard
+        self.recordingStartTimeoutSeconds = recordingStartTimeoutSeconds
+        self.organizationTimeoutSeconds = organizationTimeoutSeconds
+        self.cleanupTimeoutSeconds = cleanupTimeoutSeconds
+        self.playbackOverride = playbackOverride
     }
 
     func run() async {
@@ -291,26 +303,38 @@ final class V02AcceptanceRunner {
             initialPasteboardChangeCount: pasteboard.changeCount
         )
 
-        controller.toggleForDevelopment()
-        guard await wait(until: { self.capture?.sessionID != nil || self.capture?.failureCategory != nil }, seconds: 10),
-              capture?.sessionID != nil else {
+        guard let sessionID = controller.startRecordingForDevelopment() else {
+            return await failureEvidence("recording_start_timeout")
+        }
+        if capture?.sessionID == nil {
+            capture?.sessionID = sessionID
+            capture?.recordingInstant = clock.now
+        }
+        guard await wait(
+            until: { self.capture?.sessionID == sessionID || self.capture?.failureCategory != nil },
+            seconds: recordingStartTimeoutSeconds
+        ), capture?.sessionID == sessionID else {
             return await failureEvidence("recording_start_timeout")
         }
 
-        guard let player = try? AVAudioPlayer(contentsOf: configuration.wavURL), player.play() else {
-            return await failureEvidence("playback_failed")
-        }
-        let playbackTimeout = Int64(min(max(ceil(player.duration) + 5, 10), 300))
-        guard await wait(until: { !player.isPlaying }, seconds: playbackTimeout) else {
-            player.stop()
-            return await failureEvidence("playback_timeout")
+        if let playbackOverride {
+            guard playbackOverride() else { return await failureEvidence("playback_failed") }
+        } else {
+            guard let player = try? AVAudioPlayer(contentsOf: configuration.wavURL), player.play() else {
+                return await failureEvidence("playback_failed")
+            }
+            let playbackTimeout = Int64(min(max(ceil(player.duration) + 5, 10), 300))
+            guard await wait(until: { !player.isPlaying }, seconds: playbackTimeout) else {
+                player.stop()
+                return await failureEvidence("playback_timeout")
+            }
         }
         guard capture?.firstPreviewInstant != nil else {
             return await failureEvidence("preview_missing")
         }
 
         capture?.stopInstant = clock.now
-        controller.toggleForDevelopment()
+        controller.stopRecordingForDevelopment(sessionID: sessionID)
         guard await wait(until: { self.capture?.localFinalInstant != nil || self.capture?.failureCategory != nil }, seconds: 30),
               capture?.localFinalInstant != nil else {
             return await failureEvidence("local_final_timeout")
@@ -319,7 +343,10 @@ final class V02AcceptanceRunner {
               capture?.deliveredInstant != nil else {
             return await failureEvidence("delivery_timeout")
         }
-        guard await wait(until: { self.capture?.terminalCategory != "missing" || self.capture?.failureCategory != nil }, seconds: 30),
+        guard await wait(
+            until: { self.capture?.terminalCategory != "missing" || self.capture?.failureCategory != nil },
+            seconds: organizationTimeoutSeconds
+        ),
               capture?.terminalCategory != "missing" else {
             return await failureEvidence("organization_timeout")
         }
@@ -461,17 +488,15 @@ final class V02AcceptanceRunner {
     private func failureEvidence(_ category: String) async -> V02AcceptanceCycleEvidence {
         failIfNeeded(category)
         guard let sessionID = capture?.sessionID else { return evidence() }
-        await controller.cancelForDevelopment(sessionID: sessionID)
-        _ = await wait(until: {
-            let snapshot = self.controller.state.snapshot
-            guard snapshot.sessionID == sessionID else { return true }
-            let sessionIsTerminal = snapshot.status != .recording
-                && snapshot.status != .transcribing
-                && snapshot.status != .saving
-            let organizationIsTerminal = snapshot.organizationPhase != .queued
-                && snapshot.organizationPhase != .organizing
-            return sessionIsTerminal && organizationIsTerminal
-        }, seconds: 5)
+        guard let identity = controller.developmentWorkIdentity(sessionID: sessionID),
+              controller.cancelDevelopmentWork(identity),
+              await wait(
+                until: { self.controller.isDevelopmentWorkDrained(identity) },
+                seconds: cleanupTimeoutSeconds
+              ) else {
+            capture?.failureCategory = "failure_cleanup_timeout"
+            return evidence()
+        }
         return evidence()
     }
 
