@@ -2,6 +2,7 @@
 import AppKit
 import AVFoundation
 import Combine
+import Darwin
 import Foundation
 
 struct V02AcceptanceConfiguration: Equatable {
@@ -19,7 +20,7 @@ struct V02AcceptanceConfiguration: Equatable {
               let wavPath = environment["TSB_V02_ACCEPTANCE_WAV"], !wavPath.isEmpty,
               let outputPath = environment["TSB_V02_ACCEPTANCE_OUTPUT"], !outputPath.isEmpty,
               let rawCycles = environment["TSB_V02_ACCEPTANCE_CYCLES"],
-              let cycles = Int(rawCycles), cycles > 0 else { return nil }
+              let cycles = Int(rawCycles), (1...100).contains(cycles) else { return nil }
         let wavURL = URL(fileURLWithPath: wavPath)
         let outputURL = URL(fileURLWithPath: outputPath)
         guard wavURL.pathExtension.lowercased() == "wav",
@@ -226,9 +227,11 @@ final class V02AcceptanceRunner {
 
     static func startIfConfigured(
         controller: AppController,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        microphonePermissionGranted: () -> Bool = { MicrophonePermission.isGranted }
     ) {
-        guard let configuration = V02AcceptanceConfiguration.parse(environment: environment) else { return }
+        guard let configuration = V02AcceptanceConfiguration.parse(environment: environment),
+              microphonePermissionGranted() else { return }
         let runner = V02AcceptanceRunner(configuration: configuration, controller: controller)
         Task { @MainActor in
             await runner.run()
@@ -496,14 +499,21 @@ final class V02AcceptanceRunner {
     }
 }
 
-private final class V02JSONLWriter {
+final class V02JSONLWriter {
     private let handle: FileHandle
     private let encoder = JSONEncoder()
 
     init(url: URL) throws {
         encoder.outputFormatting = [.sortedKeys]
-        try Data().write(to: url, options: .atomic)
-        handle = try FileHandle(forWritingTo: url)
+        let descriptor = open(
+            FileManager.default.fileSystemRepresentation(withPath: url.path),
+            O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     func append<T: Encodable>(_ row: T) throws {

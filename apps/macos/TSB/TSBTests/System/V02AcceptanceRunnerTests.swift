@@ -47,6 +47,100 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertEqual(fileChecks, 1)
     }
 
+    func testConfigurationAcceptsOnlyCycleCountsOneThroughOneHundredBeforeFileChecks() {
+        let invalidCounts = [
+            "0",
+            "-1",
+            "101",
+            String(Int.max),
+            String(Int.max) + "0"
+        ]
+
+        for count in invalidCounts {
+            var fileChecks = 0
+            let configuration = V02AcceptanceConfiguration.parse(
+                environment: [
+                    "TSB_V02_ACCEPTANCE_RUN": "1",
+                    "TSB_V02_ACCEPTANCE_WAV": "/synthetic/input.wav",
+                    "TSB_V02_ACCEPTANCE_OUTPUT": "/synthetic/evidence.jsonl",
+                    "TSB_V02_ACCEPTANCE_CYCLES": count
+                ],
+                isRegularFile: { _ in
+                    fileChecks += 1
+                    return true
+                }
+            )
+
+            XCTAssertNil(configuration, "count: \(count)")
+            XCTAssertEqual(fileChecks, 0, "count: \(count)")
+        }
+
+        for count in ["1", "100"] {
+            let configuration = V02AcceptanceConfiguration.parse(
+                environment: [
+                    "TSB_V02_ACCEPTANCE_RUN": "1",
+                    "TSB_V02_ACCEPTANCE_WAV": "/synthetic/input.wav",
+                    "TSB_V02_ACCEPTANCE_OUTPUT": "/synthetic/evidence.jsonl",
+                    "TSB_V02_ACCEPTANCE_CYCLES": count
+                ],
+                isRegularFile: { _ in true }
+            )
+
+            XCTAssertEqual(configuration?.cycles, Int(count))
+        }
+    }
+
+    func testRunnerRequiresExistingMicrophoneAuthorizationBeforeAnySideEffect() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let wavURL = directory.appendingPathComponent("input.wav")
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        try Data().write(to: wavURL)
+        let controller = AppController()
+
+        V02AcceptanceRunner.startIfConfigured(
+            controller: controller,
+            environment: [
+                "TSB_V02_ACCEPTANCE_RUN": "1",
+                "TSB_V02_ACCEPTANCE_WAV": wavURL.path,
+                "TSB_V02_ACCEPTANCE_OUTPUT": outputURL.path,
+                "TSB_V02_ACCEPTANCE_CYCLES": "1"
+            ],
+            microphonePermissionGranted: { false }
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertEqual(controller.state.snapshot.status, .idle)
+        XCTAssertNil(controller.state.snapshot.sessionID)
+    }
+
+    func testWriterCreatesOnlyNewFilesWithoutModifyingExistingOrSymlinkSentinels() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sentinel = Data("sentinel".utf8)
+
+        let newURL = directory.appendingPathComponent("new.jsonl")
+        let writer = try V02JSONLWriter(url: newURL)
+        try writer.append(["row_type": "test"])
+        XCTAssertFalse(try Data(contentsOf: newURL).isEmpty)
+
+        let existingURL = directory.appendingPathComponent("existing.jsonl")
+        try sentinel.write(to: existingURL)
+        XCTAssertThrowsError(try V02JSONLWriter(url: existingURL))
+        XCTAssertEqual(try Data(contentsOf: existingURL), sentinel)
+
+        let targetURL = directory.appendingPathComponent("target.jsonl")
+        let symlinkURL = directory.appendingPathComponent("link.jsonl")
+        try sentinel.write(to: targetURL)
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: targetURL)
+        XCTAssertThrowsError(try V02JSONLWriter(url: symlinkURL))
+        XCTAssertEqual(try Data(contentsOf: targetURL), sentinel)
+    }
+
     func testP95UsesTheNinetyFifthSortedSample() {
         XCTAssertNil(V02AcceptanceMetrics.percentile95([]))
         XCTAssertEqual(V02AcceptanceMetrics.percentile95(Array(1...100).reversed()), 95)
@@ -101,6 +195,38 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertFalse(rehearsal.m10Eligible)
         XCTAssertFalse(rehearsal.m10Passed)
         XCTAssertEqual(rehearsal.resultCategory, "m10_ineligible")
+    }
+
+    func testSummaryRejectsEachRequiredFailureCondition() {
+        let cases: [(name: String, makeRow: (Int) -> V02AcceptanceCycleEvidence)] = [
+            ("lost record", { number in
+                self.makeCycle(number: number, sessionID: self.sessionID(number), recordDelta: number == 1 ? 0 : 1)
+            }),
+            ("duplicate copy", { number in
+                self.makeCycle(number: number, sessionID: self.sessionID(number), copyChangeCountDelta: number == 1 ? 2 : 1)
+            }),
+            ("organization recopy", { number in
+                self.makeCycle(number: number, sessionID: self.sessionID(number), organizationDidNotRecopy: number != 1)
+            }),
+            ("duplicate session ID", { number in
+                self.makeCycle(number: number, sessionID: self.sessionID(number == 2 ? 1 : number))
+            }),
+            ("failed cycle", { number in
+                self.makeCycle(
+                    number: number,
+                    sessionID: self.sessionID(number),
+                    resultCategory: number == 1 ? "local_delivery_failed" : "passed"
+                )
+            })
+        ]
+
+        for testCase in cases {
+            let rows = (1...100).map(testCase.makeRow)
+            XCTAssertFalse(
+                V02AcceptanceMetrics.summarize(cycles: rows, requestedCycles: 100).m10Passed,
+                testCase.name
+            )
+        }
     }
 
     func testEvidenceEncodingContainsOnlyTheExplicitMetadataAllowlist() throws {
@@ -181,25 +307,34 @@ final class V02AcceptanceRunnerTests: XCTestCase {
 
     private func makeCycle(
         number: Int,
+        sessionID: UUID = UUID(),
         firstPreviewMilliseconds: Int = 800,
         stopToLocalFinalMilliseconds: Int = 1_500,
-        stopToCopyMilliseconds: Int = 2_000
+        stopToCopyMilliseconds: Int = 2_000,
+        recordDelta: Int? = 1,
+        copyChangeCountDelta: Int? = 1,
+        organizationDidNotRecopy: Bool = true,
+        resultCategory: String = "passed"
     ) -> V02AcceptanceCycleEvidence {
         V02AcceptanceCycleEvidence(
             cycleNumber: number,
-            sessionID: UUID(),
+            sessionID: sessionID,
             firstPreviewMilliseconds: firstPreviewMilliseconds,
             stopToLocalFinalMilliseconds: stopToLocalFinalMilliseconds,
             stopToCopyMilliseconds: stopToCopyMilliseconds,
             deliveryStatus: "copied",
-            recordDelta: 1,
-            copyChangeCountDelta: 1,
+            recordDelta: recordDelta,
+            copyChangeCountDelta: copyChangeCountDelta,
             organizationTerminalCategory: "organized_local",
             immediateEqualsLocal: true,
             postOrganizationEqualsLocal: true,
-            organizationDidNotRecopy: true,
-            resultCategory: "passed"
+            organizationDidNotRecopy: organizationDidNotRecopy,
+            resultCategory: resultCategory
         )
+    }
+
+    private func sessionID(_ number: Int) -> UUID {
+        UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", number))!
     }
 
     private func encodedKeys(_ data: Data) throws -> [String] {
