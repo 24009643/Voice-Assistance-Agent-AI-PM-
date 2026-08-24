@@ -295,6 +295,49 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         await harness.drainCallbacks()
     }
 
+    func testThrownRecordingStartTracksPreviewCleanupAndFailsClosedBeforeNextCycle() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = RunnerFailureHarness(
+            recordsDirectory: directory.appendingPathComponent("records"),
+            suspendsPreviewCancellation: true,
+            throwsOnRecordingStart: true
+        )
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        let runner = V02AcceptanceRunner(
+            configuration: V02AcceptanceConfiguration(
+                wavURL: directory.appendingPathComponent("unused.wav"),
+                outputURL: outputURL,
+                cycles: 2
+            ),
+            controller: harness.controller,
+            store: harness.store,
+            pasteboard: NSPasteboard(name: .init("V02AcceptanceRunnerTests.\(UUID().uuidString)")),
+            cleanupTimeoutSeconds: 0
+        )
+
+        await runner.run()
+        let rows = try String(contentsOf: outputURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+        await harness.waitUntilPreviewCancellationStarts()
+
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.first?["cycle_number"] as? Int, 1)
+        XCTAssertEqual(rows.first?["result_category"] as? String, "failure_cleanup_timeout")
+        XCTAssertEqual(harness.startCount, 1)
+        XCTAssertEqual(harness.state.snapshot.status, .failed)
+        XCTAssertEqual(harness.state.snapshot.message, "Could not start recording.")
+        XCTAssertTrue(try harness.store.list().isEmpty)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.organizationDispatchCount, 0)
+
+        harness.completePreviewCancellation()
+        await harness.drainCallbacks()
+    }
+
     func testWriterCreatesOnlyNewFilesWithoutModifyingExistingOrSymlinkSentinels() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
@@ -531,9 +574,11 @@ private final class RunnerFailureHarness {
     private let suspendsOrganization: Bool
     private let suspendsPreviewCancellation: Bool
     private let finishesOnStop: Bool
+    private let throwsOnRecordingStart: Bool
     private var organizationContinuation: UnsafeContinuation<OrganizationOutput, Never>?
     private var previewCancellationContinuation: UnsafeContinuation<Void, Never>?
     private(set) var stopCount = 0
+    private(set) var startCount = 0
     private(set) var cancelCount = 0
     private(set) var previewCancellationCount = 0
     private(set) var copyCount = 0
@@ -542,8 +587,11 @@ private final class RunnerFailureHarness {
     private(set) lazy var coordinator = SessionCoordinator(
         dependencies: .init(
             startRecording: { [weak self] _, onPreview, _, onFinished, _ in
-                self?.onPreview = onPreview
-                self?.onFinished = onFinished
+                guard let self else { return }
+                startCount += 1
+                self.onPreview = onPreview
+                self.onFinished = onFinished
+                if throwsOnRecordingStart { throw RunnerFailureHarnessError.recordingStart }
             },
             stopRecording: { [weak self] in
                 guard let self else { return }
@@ -617,12 +665,14 @@ private final class RunnerFailureHarness {
         recordsDirectory: URL,
         suspendsOrganization: Bool = false,
         suspendsPreviewCancellation: Bool = false,
-        finishesOnStop: Bool = false
+        finishesOnStop: Bool = false,
+        throwsOnRecordingStart: Bool = false
     ) {
         store = TranscriptStore(directory: recordsDirectory)
         self.suspendsOrganization = suspendsOrganization
         self.suspendsPreviewCancellation = suspendsPreviewCancellation
         self.finishesOnStop = finishesOnStop
+        self.throwsOnRecordingStart = throwsOnRecordingStart
     }
 
     func deliverLateFinishedAudio() async {
@@ -685,6 +735,10 @@ private final class RunnerFailureHarness {
         }
         XCTFail("Timed out waiting for runner harness state")
     }
+}
+
+private enum RunnerFailureHarnessError: Error {
+    case recordingStart
 }
 
 @MainActor

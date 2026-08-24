@@ -123,7 +123,7 @@ final class SessionCoordinator {
         if let recordingSessionID {
             stopRecording(sessionID: recordingSessionID)
         } else {
-            startRecording()
+            _ = startRecording()
         }
     }
 
@@ -142,10 +142,10 @@ final class SessionCoordinator {
         let organizationRequestID: UUID?
     }
 
-    func startRecordingForDevelopment() -> SessionID? {
+    func startRecordingForDevelopment() -> DevelopmentWorkIdentity? {
         guard recordingSessionID == nil else { return nil }
-        startRecording()
-        return recordingSessionID
+        guard let sessionID = startRecording() else { return nil }
+        return DevelopmentWorkIdentity(sessionID: sessionID, organizationRequestID: nil)
     }
 
     func developmentWorkIdentity(sessionID: SessionID) -> DevelopmentWorkIdentity? {
@@ -157,8 +157,10 @@ final class SessionCoordinator {
     }
 
     func cancelDevelopmentWork(_ identity: DevelopmentWorkIdentity) -> Bool {
-        guard let session = sessions[identity.sessionID],
-              session.organizationRequestID == identity.organizationRequestID else { return false }
+        guard let session = sessions[identity.sessionID] else {
+            return identity.organizationRequestID == nil
+        }
+        guard session.organizationRequestID == identity.organizationRequestID else { return false }
         if recordingSessionID == identity.sessionID || processingTasks[identity.sessionID] != nil {
             beginSessionCancellation(identity.sessionID)
         }
@@ -177,10 +179,10 @@ final class SessionCoordinator {
     }
 #endif
 
-    private func startRecording() {
+    private func startRecording() -> SessionID? {
         guard processingSessionCount < 3 else {
             publishSnapshot()
-            return
+            return nil
         }
         let previousMainID = mainSessionID
         var previousMainToRetain: SessionID?
@@ -232,11 +234,10 @@ final class SessionCoordinator {
             recordingSessionID = nil
             sessions.removeValue(forKey: session.id)
             mainSessionID = previousMainID.flatMap { sessions[$0] == nil ? nil : $0 }
-            Task { @MainActor [dependencies] in
-                await dependencies.cancelPreview(session.id)
-            }
+            _ = trackPreviewCancellation(session.id)
             snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: "Could not start recording.")
         }
+        return session.id
     }
 
     private func receivePreview(_ text: String, for sessionID: SessionID) {
@@ -450,17 +451,7 @@ final class SessionCoordinator {
         dependencies.cancelRecording(sessionID)
         if recordingSessionID == sessionID { recordingSessionID = nil }
 
-        let previewCancellation: Task<Void, Never>
-        if let existing = previewCancellationTasks[sessionID] {
-            previewCancellation = existing
-        } else {
-            previewCancellation = Task { @MainActor [weak self] in
-                guard let self else { return }
-                await dependencies.cancelPreview(sessionID)
-                previewCancellationTasks.removeValue(forKey: sessionID)
-            }
-            previewCancellationTasks[sessionID] = previewCancellation
-        }
+        let previewCancellation = trackPreviewCancellation(sessionID)
 
         session.status = .cancelled
         session.durationMilliseconds = 0
@@ -474,6 +465,19 @@ final class SessionCoordinator {
         }
         publishSnapshot()
         return previewCancellation
+    }
+
+    private func trackPreviewCancellation(_ sessionID: SessionID) -> Task<Void, Never> {
+        if let existing = previewCancellationTasks[sessionID] {
+            return existing
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await dependencies.cancelPreview(sessionID)
+            previewCancellationTasks.removeValue(forKey: sessionID)
+        }
+        previewCancellationTasks[sessionID] = task
+        return task
     }
 
     private func setLocalOnly(_ enabled: Bool, for sessionID: SessionID) {

@@ -199,6 +199,7 @@ final class V02AcceptanceRunner {
         let initialRecordCount: Int
         let initialPasteboardChangeCount: Int
         var sessionID: SessionID?
+        var startWorkIdentity: SessionCoordinator.DevelopmentWorkIdentity?
         var recordingInstant: ContinuousClock.Instant?
         var firstPreviewInstant: ContinuousClock.Instant?
         var stopInstant: ContinuousClock.Instant?
@@ -303,9 +304,11 @@ final class V02AcceptanceRunner {
             initialPasteboardChangeCount: pasteboard.changeCount
         )
 
-        guard let sessionID = controller.startRecordingForDevelopment() else {
+        guard let startIdentity = controller.startRecordingForDevelopment() else {
             return await failureEvidence("recording_start_timeout")
         }
+        let sessionID = startIdentity.sessionID
+        capture?.startWorkIdentity = startIdentity
         if capture?.sessionID == nil {
             capture?.sessionID = sessionID
             capture?.recordingInstant = clock.now
@@ -313,7 +316,7 @@ final class V02AcceptanceRunner {
         guard await wait(
             until: { self.capture?.sessionID == sessionID || self.capture?.failureCategory != nil },
             seconds: recordingStartTimeoutSeconds
-        ), capture?.sessionID == sessionID else {
+        ), capture?.sessionID == sessionID, capture?.failureCategory == nil else {
             return await failureEvidence("recording_start_timeout")
         }
 
@@ -488,7 +491,7 @@ final class V02AcceptanceRunner {
     private func failureEvidence(_ category: String) async -> V02AcceptanceCycleEvidence {
         failIfNeeded(category)
         guard let sessionID = capture?.sessionID else { return evidence() }
-        guard let identity = controller.developmentWorkIdentity(sessionID: sessionID),
+        guard let identity = controller.developmentWorkIdentity(sessionID: sessionID) ?? capture?.startWorkIdentity,
               controller.cancelDevelopmentWork(identity),
               await wait(
                 until: { self.controller.isDevelopmentWorkDrained(identity) },

@@ -226,7 +226,7 @@ final class AppController: ObservableObject {
         enqueue(action)
     }
 
-    func startRecordingForDevelopment() -> SessionID? {
+    func startRecordingForDevelopment() -> SessionCoordinator.DevelopmentWorkIdentity? {
         coordinator.startRecordingForDevelopment()
     }
 
