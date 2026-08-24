@@ -958,6 +958,44 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationUpdates.last?.organization.output?.numberedPoints.map(\.text), ["queued local-only"])
     }
 
+    func testQueuedLocalOnlyRemoteDispatchesToLoopbackWhenSettingsChangeBeforeSlot() async throws {
+        let remote = remoteOrganizationSettings(baseURL: "https://remote.example.test/v1/chat/completions")
+        let harness = CoordinatorHarness(
+            transcript: "queued local-only loopback",
+            organizationSettings: remote,
+            organizationAPIKey: "remote-key",
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        let localOnlySessionID = try XCTUnwrap(harness.startedSessionIDs.last)
+        await harness.coordinator.handle(.setLocalOnly(sessionID: localOnlySessionID, enabled: true))
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilOrganizationUpdateCount(3)
+
+        let inputCountBeforeLoopbackSettings = harness.organizationInputs.count
+        let secretLoadCountBeforeLoopbackSettings = harness.organizationSecretLoadCount
+        harness.setOrganizationDispatch(settings: loopbackOrganizationSettings(), apiKey: "must-not-load")
+        harness.completeOrganization(at: 0)
+        for _ in 0..<100 where harness.organizationInputs.count == inputCountBeforeLoopbackSettings {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(harness.organizationInputs.count, inputCountBeforeLoopbackSettings + 1)
+        guard harness.organizationInputs.count == inputCountBeforeLoopbackSettings + 1,
+              let loopbackInput = harness.organizationInputs.last else { return }
+        XCTAssertEqual(loopbackInput.endpoint.baseURL.host, "127.0.0.1")
+        XCTAssertEqual(loopbackInput.apiKey, "")
+        XCTAssertEqual(harness.organizationSecretLoadCount, secretLoadCountBeforeLoopbackSettings)
+        harness.completeOrganization(at: 1)
+        await harness.waitUntilSuccessfulOrganizationCount(2)
+        XCTAssertEqual(harness.organizationUpdates.last?.sessionID, localOnlySessionID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
+    }
+
     func testRevokingConsentBeforeQueuedSlotPreventsItsTextDispatch() async throws {
         let harness = CoordinatorHarness(
             transcript: "must remain local after revoke",

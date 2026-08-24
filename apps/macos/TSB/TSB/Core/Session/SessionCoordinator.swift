@@ -598,7 +598,7 @@ final class SessionCoordinator {
         var dispatchJob = job
         do {
             let output: OrganizationOutput
-            if job.useDeterministicOrganizer {
+            if job.useDeterministicOrganizer && !job.localOnly {
                 guard markOrganizationRunning(job) else {
                     completeOrganizationSlot(job)
                     return
