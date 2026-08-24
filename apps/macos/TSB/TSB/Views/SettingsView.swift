@@ -123,7 +123,7 @@ final class SettingsModel: ObservableObject {
             cloudConsent: settings.isRemoteDispatchEligible,
             allowSelectedHistorySummaries: settings.canSendUserSelectedHistorySummaries
         )
-        hasPersistedAPIKey = try store.hasAPIKey()
+        hasPersistedAPIKey = try settings.endpoint.map(store.hasAPIKey(for:)) ?? false
     }
 
     private func reloadAfterFailedDestructiveAction(_ fallback: String) {

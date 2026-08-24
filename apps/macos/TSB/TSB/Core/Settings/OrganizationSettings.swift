@@ -25,6 +25,8 @@ struct OrganizationEndpointSettings: Equatable, Codable, Sendable {
 
     var isRemote: Bool { !isLoopback }
 
+    var credentialBindingIdentity: String { baseURL.standardized.absoluteString }
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(baseURL, forKey: .baseURL)
@@ -40,7 +42,11 @@ struct OrganizationEndpointSettings: Equatable, Codable, Sendable {
     }
 
     private static func isAllowed(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased(), url.host != nil else { return false }
+        guard let scheme = url.scheme?.lowercased(),
+              url.host != nil,
+              url.user == nil,
+              url.password == nil,
+              url.fragment == nil else { return false }
         let isLoopback = ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased())
         return scheme == "https" || (scheme == "http" && isLoopback)
     }

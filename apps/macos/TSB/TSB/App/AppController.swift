@@ -37,7 +37,7 @@ final class AppController: ObservableObject {
     static func makeOrganizationDispatchSnapshot(
         selectedCandidateIDs: Set<String>,
         loadSettings: () -> OrganizationSettings,
-        loadAPIKey: () throws -> String?
+        loadAPIKey: (OrganizationEndpointSettings) throws -> String?
     ) throws -> OrganizationDispatchSnapshot {
         let settings = loadSettings()
         guard let endpoint = settings.endpoint,
@@ -47,10 +47,14 @@ final class AppController: ObservableObject {
                 || settings.canSendUserSelectedHistorySummaries else {
             throw OrganizationDispatchError.authorizationRequired
         }
-        return OrganizationDispatchSnapshot(
-            endpoint: endpoint,
-            apiKey: endpoint.isLoopback ? "" : try loadAPIKey() ?? ""
-        )
+        if endpoint.isLoopback {
+            return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: "")
+        }
+        guard let apiKey = try loadAPIKey(endpoint),
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw OrganizationDispatchError.authorizationRequired
+        }
+        return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: apiKey)
     }
 
     static func organizationIntent(for intent: IslandIntent) -> OrganizationIntent? {
@@ -155,7 +159,7 @@ final class AppController: ObservableObject {
                     let dispatch = try Self.makeOrganizationDispatchSnapshot(
                         selectedCandidateIDs: selectedCandidateIDs,
                         loadSettings: organizationSettingsStore.load,
-                        loadAPIKey: organizationSecretStore.load
+                        loadAPIKey: { try organizationSecretStore.load(for: $0) }
                     )
                     try willDispatch(dispatch.endpoint)
                     return try await OrganizationClient(endpoint: OrganizationEndpoint(

@@ -2,11 +2,15 @@ import Foundation
 import Security
 
 enum KeychainSecretStoreError: Error, Equatable {
-    case invalidSecretData
     case unexpectedStatus(OSStatus)
 }
 
 struct KeychainSecretStore {
+    private struct BoundSecret: Codable {
+        let endpointIdentity: String
+        let secret: String
+    }
+
     private let service: String
     private let account: String
     private let keychain: SecKeychain?
@@ -30,8 +34,11 @@ struct KeychainSecretStore {
         self.deleteItem = deleteItem
     }
 
-    func save(_ secret: String) throws {
-        let data = Data(secret.utf8)
+    func save(_ secret: String, for endpoint: OrganizationEndpointSettings) throws {
+        let data = try JSONEncoder().encode(BoundSecret(
+            endpointIdentity: endpoint.credentialBindingIdentity,
+            secret: secret
+        ))
         let status = update(matchQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecSuccess { return }
         guard status == errSecItemNotFound else { throw KeychainSecretStoreError.unexpectedStatus(status) }
@@ -41,7 +48,7 @@ struct KeychainSecretStore {
         guard addStatus == errSecSuccess else { throw KeychainSecretStoreError.unexpectedStatus(addStatus) }
     }
 
-    func load() throws -> String? {
+    func load(for endpoint: OrganizationEndpointSettings) throws -> String? {
         var query = matchQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -49,19 +56,15 @@ struct KeychainSecretStore {
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess else { throw KeychainSecretStoreError.unexpectedStatus(status) }
-        guard let data = item as? Data, let secret = String(data: data, encoding: .utf8) else {
-            throw KeychainSecretStoreError.invalidSecretData
-        }
-        return secret
+        guard let data = item as? Data,
+              let boundSecret = try? JSONDecoder().decode(BoundSecret.self, from: data),
+              boundSecret.endpointIdentity == endpoint.credentialBindingIdentity,
+              !boundSecret.secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return boundSecret.secret
     }
 
-    func hasSecret() throws -> Bool {
-        var query = matchQuery
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        let status = SecItemCopyMatching(query as CFDictionary, nil)
-        if status == errSecItemNotFound { return false }
-        guard status == errSecSuccess else { throw KeychainSecretStoreError.unexpectedStatus(status) }
-        return true
+    func hasSecret(for endpoint: OrganizationEndpointSettings) throws -> Bool {
+        try load(for: endpoint) != nil
     }
 
     func delete() throws {

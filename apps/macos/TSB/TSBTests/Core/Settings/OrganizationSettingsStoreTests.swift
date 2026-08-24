@@ -46,8 +46,9 @@ final class OrganizationSettingsStoreTests: XCTestCase {
             keychain.delete()
         }
         let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
+        let endpoint = try remoteEndpoint()
         let settings = OrganizationSettings(
-            endpoint: try remoteEndpoint(),
+            endpoint: endpoint,
             cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
             allowUserSelectedHistorySummaries: true
         )
@@ -64,7 +65,7 @@ final class OrganizationSettingsStoreTests: XCTestCase {
             ($0 as? String)?.contains(dummySecret) == true
                 || ($0 as? Data).map { String(decoding: $0, as: UTF8.self).contains(dummySecret) } == true
         })
-        XCTAssertEqual(try secretStore.load(), dummySecret)
+        XCTAssertEqual(try secretStore.load(for: endpoint), dummySecret)
     }
 
     func testRevokingConsentDisablesDispatchAndDeletesSecret() throws {
@@ -76,8 +77,9 @@ final class OrganizationSettingsStoreTests: XCTestCase {
             keychain.delete()
         }
         let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
+        let endpoint = try remoteEndpoint()
         let settings = OrganizationSettings(
-            endpoint: try remoteEndpoint(),
+            endpoint: endpoint,
             cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
             allowUserSelectedHistorySummaries: true
         )
@@ -87,7 +89,7 @@ final class OrganizationSettingsStoreTests: XCTestCase {
 
         XCTAssertFalse(store.load().isRemoteDispatchEligible)
         XCTAssertFalse(store.load().canSendUserSelectedHistorySummaries)
-        XCTAssertNil(try secretStore.load())
+        XCTAssertNil(try secretStore.load(for: endpoint))
     }
 
     func testDeleteRemovesSavedSettingsAndSecret() throws {
@@ -99,8 +101,9 @@ final class OrganizationSettingsStoreTests: XCTestCase {
             keychain.delete()
         }
         let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
+        let endpoint = try remoteEndpoint()
         let settings = OrganizationSettings(
-            endpoint: try remoteEndpoint(),
+            endpoint: endpoint,
             cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion
         )
 
@@ -108,7 +111,7 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         try store.delete()
 
         XCTAssertEqual(store.load(), OrganizationSettings())
-        XCTAssertNil(try secretStore.load())
+        XCTAssertNil(try secretStore.load(for: endpoint))
     }
 
     func testRejectsNonLoopbackHTTPRemoteEndpoint() {
@@ -129,6 +132,24 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         )
 
         XCTAssertTrue(endpoint.isLoopback)
+    }
+
+    func testRejectsEndpointCredentialsAndFragments() {
+        for rawURL in [
+            "https://user@example.test/v1/chat/completions",
+            "https://user:password@example.test/v1/chat/completions",
+            "https://example.test/v1/chat/completions#private",
+        ] {
+            XCTAssertThrowsError(
+                try OrganizationEndpointSettings(
+                    baseURL: URL(string: rawURL)!,
+                    model: "test-model"
+                ),
+                rawURL
+            ) { error in
+                XCTAssertEqual(error as? OrganizationEndpointSettingsError, .insecureEndpoint)
+            }
+        }
     }
 
     private func remoteEndpoint() throws -> OrganizationEndpointSettings {

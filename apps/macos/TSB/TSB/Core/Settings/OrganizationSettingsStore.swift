@@ -1,5 +1,9 @@
 import Foundation
 
+enum OrganizationSettingsStoreError: Error, Equatable {
+    case missingBoundSecret
+}
+
 final class OrganizationSettingsStore {
     static let storageKey = "organization-settings.v1"
 
@@ -19,14 +23,18 @@ final class OrganizationSettingsStore {
         return settings
     }
 
-    func hasAPIKey() throws -> Bool {
-        try secretStore.hasSecret()
+    func hasAPIKey(for endpoint: OrganizationEndpointSettings) throws -> Bool {
+        try secretStore.hasSecret(for: endpoint)
     }
 
     func save(_ settings: OrganizationSettings, apiKey: String? = nil) throws {
         let data = try JSONEncoder().encode(settings)
-        if settings.isRemoteDispatchEligible, let apiKey {
-            try secretStore.save(apiKey)
+        if settings.isRemoteDispatchEligible, let endpoint = settings.endpoint {
+            if let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try secretStore.save(apiKey, for: endpoint)
+            } else if try !secretStore.hasSecret(for: endpoint) {
+                throw OrganizationSettingsStoreError.missingBoundSecret
+            }
         } else if !settings.isRemoteDispatchEligible {
             try secretStore.delete()
         }

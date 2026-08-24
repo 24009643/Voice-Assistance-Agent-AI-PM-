@@ -21,8 +21,9 @@ final class KeychainSecretStoreTests: XCTestCase {
                 return errSecSuccess
             }
         )
+        let endpoint = try remoteEndpoint()
 
-        try store.save("synthetic-secret")
+        try store.save("synthetic-secret", for: endpoint)
         try store.delete()
 
         let queries = try [
@@ -59,16 +60,17 @@ final class KeychainSecretStoreTests: XCTestCase {
             account: account,
             keychain: secondKeychain.reference
         )
+        let endpoint = try remoteEndpoint()
 
-        try firstStore.save("first")
-        try secondStore.save("second")
-        try firstStore.save("first-updated")
+        try firstStore.save("first", for: endpoint)
+        try secondStore.save("second", for: endpoint)
+        try firstStore.save("first-updated", for: endpoint)
 
-        XCTAssertEqual(try firstStore.load(), "first-updated")
-        XCTAssertEqual(try secondStore.load(), "second")
+        XCTAssertEqual(try firstStore.load(for: endpoint), "first-updated")
+        XCTAssertEqual(try secondStore.load(for: endpoint), "second")
         try firstStore.delete()
-        XCTAssertNil(try firstStore.load())
-        XCTAssertEqual(try secondStore.load(), "second")
+        XCTAssertNil(try firstStore.load(for: endpoint))
+        XCTAssertEqual(try secondStore.load(for: endpoint), "second")
     }
 
     func testSaveLoadAndDeleteRoundTrip() throws {
@@ -80,12 +82,13 @@ final class KeychainSecretStoreTests: XCTestCase {
             keychain: keychain.reference
         )
         let dummySecret = UUID().uuidString
+        let endpoint = try remoteEndpoint()
 
-        try store.save(dummySecret)
-        XCTAssertEqual(try store.load(), dummySecret)
+        try store.save(dummySecret, for: endpoint)
+        XCTAssertEqual(try store.load(for: endpoint), dummySecret)
 
         try store.delete()
-        XCTAssertNil(try store.load())
+        XCTAssertNil(try store.load(for: endpoint))
     }
 
     func testDeletingMissingSecretSucceeds() throws {
@@ -96,10 +99,11 @@ final class KeychainSecretStoreTests: XCTestCase {
             account: "api-key",
             keychain: keychain.reference
         )
+        let endpoint = try remoteEndpoint()
 
         try store.delete()
 
-        XCTAssertNil(try store.load())
+        XCTAssertNil(try store.load(for: endpoint))
     }
 
     func testFailedReplacementPreservesExistingSecret() throws {
@@ -113,8 +117,9 @@ final class KeychainSecretStoreTests: XCTestCase {
             keychain: keychain.reference
         )
         let originalSecret = UUID().uuidString
+        let endpoint = try remoteEndpoint()
 
-        try stableStore.save(originalSecret)
+        try stableStore.save(originalSecret, for: endpoint)
         let failingStore = KeychainSecretStore(
             service: service,
             account: account,
@@ -126,9 +131,51 @@ final class KeychainSecretStoreTests: XCTestCase {
             }
         )
 
-        XCTAssertThrowsError(try failingStore.save(UUID().uuidString)) { error in
+        XCTAssertThrowsError(try failingStore.save(UUID().uuidString, for: endpoint)) { error in
             XCTAssertEqual(error as? KeychainSecretStoreError, .unexpectedStatus(errSecAuthFailed))
         }
-        XCTAssertEqual(try stableStore.load(), originalSecret)
+        XCTAssertEqual(try stableStore.load(for: endpoint), originalSecret)
+    }
+
+    func testOnlyMatchingEndpointLoadsAndLegacyDataCanBeReplaced() throws {
+        let keychain = try TemporaryKeychain()
+        defer { keychain.delete() }
+        let service = "KeychainSecretStoreTests.\(UUID().uuidString)"
+        let account = "api-key"
+        let store = KeychainSecretStore(
+            service: service,
+            account: account,
+            keychain: keychain.reference
+        )
+        let endpointA = try remoteEndpoint(host: "a.example.test")
+        let endpointB = try remoteEndpoint(host: "b.example.test")
+        let secretA = UUID().uuidString
+
+        try store.save(secretA, for: endpointA)
+
+        XCTAssertEqual(try store.load(for: endpointA), secretA)
+        XCTAssertNil(try store.load(for: endpointB))
+
+        try store.delete()
+        let legacyStatus = SecItemAdd([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecUseKeychain as String: keychain.reference,
+            kSecValueData as String: Data("legacy-unbound-secret".utf8),
+        ] as CFDictionary, nil)
+        XCTAssertEqual(legacyStatus, errSecSuccess)
+        XCTAssertNil(try store.load(for: endpointA))
+
+        let replacement = UUID().uuidString
+        try store.save(replacement, for: endpointA)
+        XCTAssertEqual(try store.load(for: endpointA), replacement)
+    }
+
+    private func remoteEndpoint(host: String = "example.test") throws -> OrganizationEndpointSettings {
+        try OrganizationEndpointSettings(
+            baseURL: URL(string: "https://\(host)/v1/chat/completions")!,
+            model: "test-model"
+        )
     }
 }

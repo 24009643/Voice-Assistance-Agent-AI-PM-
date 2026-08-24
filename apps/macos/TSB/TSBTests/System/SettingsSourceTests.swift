@@ -77,7 +77,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: [],
             loadSettings: fixture.store.load,
-            loadAPIKey: fixture.secretStore.load
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
         ))
 
         model.confirmCloudConsent()
@@ -89,7 +89,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertNoThrow(try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: [],
             loadSettings: fixture.store.load,
-            loadAPIKey: fixture.secretStore.load
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
         ))
     }
 
@@ -106,7 +106,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: ["h1"],
             loadSettings: fixture.store.load,
-            loadAPIKey: fixture.secretStore.load
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
         ))
 
         model.draft.allowSelectedHistorySummaries = true
@@ -115,7 +115,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertNoThrow(try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: ["h1"],
             loadSettings: fixture.store.load,
-            loadAPIKey: fixture.secretStore.load
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
         ))
     }
 
@@ -133,9 +133,81 @@ final class SettingsBehaviorTests: XCTestCase {
 
         XCTAssertEqual(model.status, .saved)
         XCTAssertEqual(fixture.store.load().endpoint?.model, "new-model")
-        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertEqual(try fixture.secretStore.load(for: settings.endpoint!), originalSecret)
         XCTAssertTrue(model.hasPersistedAPIKey)
         XCTAssertTrue(model.draft.apiKey.isEmpty)
+    }
+
+    func testBlankKeyCannotReuseAnExistingSecretForAChangedEndpoint() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let originalSecret = UUID().uuidString
+        let originalSettings = try remoteSettings(model: "old-model")
+        try fixture.store.save(originalSettings, apiKey: originalSecret)
+        let model = SettingsModel(store: fixture.store)
+        model.draft.baseURL = "https://changed.example.test/v1/chat/completions"
+        model.draft.model = "new-model"
+        model.draft.apiKey = "   "
+
+        model.save()
+
+        XCTAssertEqual(model.status, .failed)
+        XCTAssertEqual(fixture.store.load(), originalSettings)
+        XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
+        let changedEndpoint = try OrganizationEndpointSettings(
+            baseURL: URL(string: model.draft.baseURL)!,
+            model: model.draft.model
+        )
+        XCTAssertNil(try fixture.secretStore.load(for: changedEndpoint))
+    }
+
+    func testDispatchRejectsMissingLegacyAndWrongEndpointSecrets() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let endpointA = try remoteSettings(baseURL: "https://a.example.test/v1/chat/completions")
+        let endpointB = try remoteSettings(baseURL: "https://b.example.test/v1/chat/completions")
+
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: { endpointA },
+            loadAPIKey: { _ in nil }
+        ))
+
+        try fixture.saveLegacySecret("legacy-unbound-secret")
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: { endpointA },
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
+        ))
+
+        try fixture.secretStore.save("synthetic-key-for-b", for: endpointB.endpoint!)
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: { endpointA },
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
+        ))
+
+        XCTAssertNoThrow(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: { endpointB },
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
+        ))
+    }
+
+    func testInterruptedEndpointChangeCannotDispatchTheNewBindingWithOldSettings() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let endpointA = try remoteSettings(baseURL: "https://a.example.test/v1/chat/completions")
+        let endpointB = try remoteSettings(baseURL: "https://b.example.test/v1/chat/completions")
+        try fixture.store.save(endpointA, apiKey: "synthetic-key-for-a")
+        try fixture.secretStore.save("synthetic-key-for-b", for: endpointB.endpoint!)
+
+        XCTAssertEqual(fixture.store.load(), endpointA)
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: fixture.store.load,
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
+        ))
     }
 
     func testFailedKeyReplacementKeepsTheOldProfileAndSecret() throws {
@@ -166,7 +238,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(fixture.store.load(), originalSettings)
-        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
     }
 
     func testLoopbackSaveCommitsOnlyAfterSecretDeletionAndCanRetry() throws {
@@ -195,7 +267,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(fixture.store.load(), originalSettings)
         XCTAssertTrue(fixture.store.load().isRemoteDispatchEligible)
         XCTAssertTrue(fixture.store.load().canSendUserSelectedHistorySummaries)
-        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
         XCTAssertTrue(model.hasPersistedAPIKey)
 
         let retry = SettingsModel(store: fixture.store)
@@ -208,7 +280,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertTrue(fixture.store.load().endpoint?.isLoopback == true)
         XCTAssertFalse(fixture.store.load().isRemoteDispatchEligible)
         XCTAssertFalse(fixture.store.load().canSendUserSelectedHistorySummaries)
-        XCTAssertNil(try fixture.secretStore.load())
+        XCTAssertNil(try fixture.secretStore.load(for: originalSettings.endpoint!))
     }
 
     func testCancelReloadsPersistedDraftWithoutAnyWrite() throws {
@@ -255,13 +327,14 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertTrue(model.draft.allowSelectedHistorySummaries)
         XCTAssertTrue(model.hasPersistedAPIKey)
         XCTAssertEqual(fixture.defaults.persistentDomain(forName: fixture.suiteName) as NSDictionary?, defaultsBefore as NSDictionary?)
-        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
     }
 
     func testDeleteFailureIsVisibleAndNeverClaimsDeletion() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
-        try fixture.store.save(try remoteSettings(), apiKey: UUID().uuidString)
+        let settings = try remoteSettings()
+        try fixture.store.save(settings, apiKey: UUID().uuidString)
         let failingSecretStore = KeychainSecretStore(
             service: fixture.service,
             account: fixture.account,
@@ -278,15 +351,15 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(fixture.store.load(), OrganizationSettings())
-        XCTAssertTrue(model.hasPersistedAPIKey)
-        XCTAssertNotNil(try fixture.secretStore.load())
+        XCTAssertFalse(model.hasPersistedAPIKey)
+        XCTAssertNotNil(try fixture.secretStore.load(for: settings.endpoint!))
 
         let retry = SettingsModel(store: fixture.store)
         retry.deleteProfile()
 
         XCTAssertEqual(retry.status, .deleted)
         XCTAssertFalse(retry.hasPersistedAPIKey)
-        XCTAssertNil(try fixture.secretStore.load())
+        XCTAssertNil(try fixture.secretStore.load(for: settings.endpoint!))
     }
 
     func testDeleteRemovesProfileAndKeyBeforeClaimingSuccess() throws {
@@ -305,7 +378,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertFalse(model.draft.cloudConsent)
         XCTAssertFalse(model.draft.allowSelectedHistorySummaries)
         XCTAssertFalse(model.hasPersistedAPIKey)
-        XCTAssertNil(try fixture.secretStore.load())
+        XCTAssertNil(try fixture.secretStore.load(for: remoteSettings().endpoint!))
     }
 
     func testRevokeClearsBothConsentsAndDeletesTheSecret() throws {
@@ -323,7 +396,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertFalse(model.draft.cloudConsent)
         XCTAssertFalse(model.draft.allowSelectedHistorySummaries)
         XCTAssertFalse(model.hasPersistedAPIKey)
-        XCTAssertNil(try fixture.secretStore.load())
+        XCTAssertNil(try fixture.secretStore.load(for: remoteSettings().endpoint!))
         XCTAssertNotNil(fixture.store.load().endpoint)
     }
 
@@ -353,11 +426,11 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertFalse(revokedSettings.isRemoteDispatchEligible)
         XCTAssertFalse(revokedSettings.canSendUserSelectedHistorySummaries)
         XCTAssertTrue(model.hasPersistedAPIKey)
-        XCTAssertEqual(try fixture.secretStore.load(), originalSecret)
+        XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
         XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: [],
             loadSettings: fixture.store.load,
-            loadAPIKey: fixture.secretStore.load
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
         ))
 
         let retry = SettingsModel(store: fixture.store)
@@ -367,7 +440,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(fixture.store.load().endpoint, originalSettings.endpoint)
         XCTAssertFalse(fixture.store.load().isRemoteDispatchEligible)
         XCTAssertFalse(retry.hasPersistedAPIKey)
-        XCTAssertNil(try fixture.secretStore.load())
+        XCTAssertNil(try fixture.secretStore.load(for: originalSettings.endpoint!))
     }
 
     func testLoopbackHTTPSemanticsDoNotRequireCloudConsentOrAKey() throws {
@@ -380,11 +453,15 @@ final class SettingsBehaviorTests: XCTestCase {
         model.save()
 
         XCTAssertEqual(model.status, .saved)
-        XCTAssertNoThrow(try AppController.makeOrganizationDispatchSnapshot(
+        let dispatch = try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: [],
             loadSettings: fixture.store.load,
-            loadAPIKey: fixture.secretStore.load
-        ))
+            loadAPIKey: { _ in
+                XCTFail("Loopback dispatch must not load Keychain")
+                return nil
+            }
+        )
+        XCTAssertEqual(dispatch.apiKey, "")
     }
 
     func testRemoteHTTPIsRejectedWithoutChangingPersistence() throws {
@@ -401,6 +478,29 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(fixture.store.load(), OrganizationSettings())
+    }
+
+    func testEndpointCredentialsAndFragmentsFailWithoutChangingSettingsOrKeychain() throws {
+        for rawURL in [
+            "https://user:password@example.test/v1/chat/completions",
+            "https://example.test/v1/chat/completions#private",
+        ] {
+            let fixture = try makeFixture()
+            defer { fixture.cleanup() }
+            let originalSecret = UUID().uuidString
+            let originalSettings = try remoteSettings(model: "old-model")
+            try fixture.store.save(originalSettings, apiKey: originalSecret)
+            let model = SettingsModel(store: fixture.store)
+            model.draft.baseURL = rawURL
+            model.draft.model = "new-model"
+            model.draft.apiKey = UUID().uuidString
+
+            model.save()
+
+            XCTAssertEqual(model.status, .failed, rawURL)
+            XCTAssertEqual(fixture.store.load(), originalSettings, rawURL)
+            XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret, rawURL)
+        }
     }
 
     func testAppDelegateStartsAtLaunchAndStopsOnlyAtTermination() throws {
@@ -427,12 +527,13 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     private func remoteSettings(
+        baseURL: String = "https://example.test/v1/chat/completions",
         model: String = "test-model",
         historyConsent: Bool = false
     ) throws -> OrganizationSettings {
         OrganizationSettings(
             endpoint: try OrganizationEndpointSettings(
-                baseURL: URL(string: "https://example.test/v1/chat/completions")!,
+                baseURL: URL(string: baseURL)!,
                 model: model
             ),
             cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
@@ -471,6 +572,19 @@ private struct SettingsFixture {
     let keychain: TemporaryKeychain
     let secretStore: KeychainSecretStore
     let store: OrganizationSettingsStore
+
+    func saveLegacySecret(_ secret: String) throws {
+        let status = SecItemAdd([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecUseKeychain as String: keychain.reference,
+            kSecValueData as String: Data(secret.utf8),
+        ] as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+    }
 
     func cleanup() {
         defaults.removePersistentDomain(forName: suiteName)

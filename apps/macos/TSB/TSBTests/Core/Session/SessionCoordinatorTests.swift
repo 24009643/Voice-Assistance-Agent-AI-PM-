@@ -1425,7 +1425,7 @@ private final class CoordinatorHarness {
                     let dispatch = try AppController.makeOrganizationDispatchSnapshot(
                         selectedCandidateIDs: selectedCandidateIDs,
                         loadSettings: { self.organizationSettings },
-                        loadAPIKey: {
+                        loadAPIKey: { _ in
                             self.organizationSecretLoadCount += 1
                             return self.organizationAPIKey
                         }
