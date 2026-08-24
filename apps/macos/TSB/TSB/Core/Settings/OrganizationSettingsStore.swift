@@ -50,7 +50,11 @@ final class OrganizationSettingsStore {
     }
 
     func delete() throws {
-        defaults.removeObject(forKey: Self.storageKey)
+        var settings = load()
+        settings.cloudConsentVersion = nil
+        settings.allowUserSelectedHistorySummaries = false
+        defaults.set(try JSONEncoder().encode(settings), forKey: Self.storageKey)
         try secretStore.delete()
+        defaults.removeObject(forKey: Self.storageKey)
     }
 }

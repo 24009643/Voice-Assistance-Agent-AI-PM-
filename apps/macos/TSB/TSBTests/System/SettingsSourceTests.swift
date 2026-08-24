@@ -25,7 +25,7 @@ final class SettingsSourceTests: XCTestCase {
         let settingsSource = try source("TSB/Views/SettingsView.swift")
 
         for required in [
-            "OpenAI-compatible", "Base URL", "Model", "SecureField", "已保存", "未保存",
+            "OpenAI-compatible", "Base URL", "Model", "SecureField", "已保存配置的 API Key", "未保存",
             "保存", "取消", "撤销云端授权", "删除配置与密钥", "出站预览",
             "当前文本", "TSB 历史摘要", "音频", "文件路径", "完整记忆库",
             "不会覆盖剪贴板", "仅本地", "另行授权",
@@ -333,8 +333,9 @@ final class SettingsBehaviorTests: XCTestCase {
     func testDeleteFailureIsVisibleAndNeverClaimsDeletion() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
-        let settings = try remoteSettings()
-        try fixture.store.save(settings, apiKey: UUID().uuidString)
+        let originalSecret = UUID().uuidString
+        let settings = try remoteSettings(historyConsent: true)
+        try fixture.store.save(settings, apiKey: originalSecret)
         let failingSecretStore = KeychainSecretStore(
             service: fixture.service,
             account: fixture.account,
@@ -348,18 +349,55 @@ final class SettingsBehaviorTests: XCTestCase {
 
         model.deleteProfile()
 
+        let blockedSettings = fixture.store.load()
         XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
-        XCTAssertEqual(fixture.store.load(), OrganizationSettings())
-        XCTAssertFalse(model.hasPersistedAPIKey)
-        XCTAssertNotNil(try fixture.secretStore.load(for: settings.endpoint!))
+        XCTAssertEqual(blockedSettings.endpoint, settings.endpoint)
+        XCTAssertFalse(blockedSettings.isRemoteDispatchEligible)
+        XCTAssertFalse(blockedSettings.canSendUserSelectedHistorySummaries)
+        XCTAssertTrue(model.hasPersistedAPIKey)
+        XCTAssertEqual(try fixture.secretStore.load(for: settings.endpoint!), originalSecret)
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            selectedCandidateIDs: [],
+            loadSettings: fixture.store.load,
+            loadAPIKey: { try fixture.secretStore.load(for: $0) }
+        ))
 
         let retry = SettingsModel(store: fixture.store)
+        XCTAssertEqual(retry.draft.baseURL, settings.endpoint?.baseURL.absoluteString)
+        XCTAssertFalse(retry.draft.cloudConsent)
+        XCTAssertFalse(retry.draft.allowSelectedHistorySummaries)
+        XCTAssertTrue(retry.hasPersistedAPIKey)
         retry.deleteProfile()
 
         XCTAssertEqual(retry.status, .deleted)
         XCTAssertFalse(retry.hasPersistedAPIKey)
         XCTAssertNil(try fixture.secretStore.load(for: settings.endpoint!))
+    }
+
+    func testPersistedEndpointUserInfoAndFragmentsCannotSurfaceThroughSettingsModel() throws {
+        for rawURL in [
+            "https://user@example.test/v1/chat/completions",
+            "https://example.test/v1/chat/completions#private",
+        ] {
+            let fixture = try makeFixture()
+            defer { fixture.cleanup() }
+            let persisted = try JSONSerialization.data(withJSONObject: [
+                "endpoint": ["baseURL": rawURL, "model": "test-model"],
+                "cloudConsentVersion": OrganizationSettings.currentCloudConsentVersion,
+                "allowUserSelectedHistorySummaries": true,
+            ])
+            fixture.defaults.set(persisted, forKey: OrganizationSettingsStore.storageKey)
+
+            let model = SettingsModel(store: fixture.store)
+
+            XCTAssertEqual(fixture.store.load(), OrganizationSettings(), rawURL)
+            XCTAssertTrue(model.draft.baseURL.isEmpty, rawURL)
+            XCTAssertTrue(model.draft.model.isEmpty, rawURL)
+            XCTAssertFalse(model.draft.cloudConsent, rawURL)
+            XCTAssertFalse(model.draft.allowSelectedHistorySummaries, rawURL)
+            XCTAssertFalse(model.hasPersistedAPIKey, rawURL)
+        }
     }
 
     func testDeleteRemovesProfileAndKeyBeforeClaimingSuccess() throws {

@@ -152,6 +152,32 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         }
     }
 
+    func testLoadRejectsPersistedEndpointUserInfoAndFragments() throws {
+        for rawURL in [
+            "https://user@example.test/v1/chat/completions",
+            "https://example.test/v1/chat/completions#private",
+        ] {
+            let (defaults, suiteName) = makeDefaults()
+            let keychain = try TemporaryKeychain()
+            defer {
+                defaults.removePersistentDomain(forName: suiteName)
+                keychain.delete()
+            }
+            let store = OrganizationSettingsStore(
+                defaults: defaults,
+                secretStore: makeSecretStore(keychain: keychain.reference)
+            )
+            let persisted = try JSONSerialization.data(withJSONObject: [
+                "endpoint": ["baseURL": rawURL, "model": "test-model"],
+                "cloudConsentVersion": OrganizationSettings.currentCloudConsentVersion,
+                "allowUserSelectedHistorySummaries": true,
+            ])
+            defaults.set(persisted, forKey: OrganizationSettingsStore.storageKey)
+
+            XCTAssertEqual(store.load(), OrganizationSettings(), rawURL)
+        }
+    }
+
     private func remoteEndpoint() throws -> OrganizationEndpointSettings {
         try OrganizationEndpointSettings(
             baseURL: URL(string: "https://example.test/v1/chat/completions")!,

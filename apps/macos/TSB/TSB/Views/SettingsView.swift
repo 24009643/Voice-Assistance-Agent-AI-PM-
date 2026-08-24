@@ -173,7 +173,7 @@ struct SettingsView: View {
                 SecureField("API Key", text: $model.draft.apiKey)
                     .textContentType(.oneTimeCode)
                     .accessibilityHint("密钥只写入 Keychain，界面不会回读或显示真实内容。")
-                LabeledContent("API Key", value: model.hasPersistedAPIKey ? "已保存（不会显示）" : "未保存")
+                LabeledContent("已保存配置的 API Key", value: model.hasPersistedAPIKey ? "已保存（不会显示）" : "未保存")
             }
 
             Section("云端授权") {

@@ -172,10 +172,51 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(for: endpointA), replacement)
     }
 
+    func testMalformedPayloadFailsClosedForLoadAndPresence() throws {
+        try assertUnusablePayload(Data("{".utf8))
+    }
+
+    func testEncodedTrimmedEmptySecretFailsClosedForLoadAndPresence() throws {
+        let endpoint = try remoteEndpoint()
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "endpointIdentity": endpoint.credentialBindingIdentity,
+            "secret": " \n\t ",
+        ])
+
+        try assertUnusablePayload(payload, for: endpoint)
+    }
+
     private func remoteEndpoint(host: String = "example.test") throws -> OrganizationEndpointSettings {
         try OrganizationEndpointSettings(
             baseURL: URL(string: "https://\(host)/v1/chat/completions")!,
             model: "test-model"
         )
+    }
+
+    private func assertUnusablePayload(
+        _ payload: Data,
+        for endpoint: OrganizationEndpointSettings? = nil
+    ) throws {
+        let keychain = try TemporaryKeychain()
+        defer { keychain.delete() }
+        let service = "KeychainSecretStoreTests.\(UUID().uuidString)"
+        let account = "api-key"
+        let store = KeychainSecretStore(
+            service: service,
+            account: account,
+            keychain: keychain.reference
+        )
+        let status = SecItemAdd([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecUseKeychain as String: keychain.reference,
+            kSecValueData as String: payload,
+        ] as CFDictionary, nil)
+        XCTAssertEqual(status, errSecSuccess)
+        let endpoint = try endpoint ?? remoteEndpoint()
+
+        XCTAssertNil(try store.load(for: endpoint))
+        XCTAssertFalse(try store.hasSecret(for: endpoint))
     }
 }
