@@ -799,6 +799,26 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationUpdates.last?.organization.output?.numberedPoints.map(\.text), ["one sentence."])
     }
 
+    func testLocalOnlyLoopbackDispatchesToTheLocalModelWithoutLoadingASecret() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "loopback local-only",
+            organizationSettings: loopbackOrganizationSettings()
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationInputs.count, 1)
+        XCTAssertEqual(harness.organizationInputs.single?.endpoint.baseURL, URL(string: "http://127.0.0.1:11434/v1/chat/completions"))
+        XCTAssertEqual(harness.organizationInputs.single?.apiKey, "")
+        XCTAssertEqual(harness.organizationSecretLoadCount, 0)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
+    }
+
     func testCancelOrganizationInvalidatesLateResponseWithoutCancellingCaptureArtifacts() async throws {
         let harness = CoordinatorHarness(
             transcript: "keep delivered text",

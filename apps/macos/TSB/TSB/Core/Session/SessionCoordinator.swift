@@ -498,7 +498,7 @@ final class SessionCoordinator {
         session.secondaryRemovalScheduled = false
         sessions[sessionID] = session
         let settings = dependencies.currentOrganizationSettings()
-        let useDeterministic = session.localOnly
+        let useDeterministic = session.localOnly && settings.endpoint?.isLoopback != true
         guard useDeterministic || settings.endpoint?.isLoopback == true || settings.isRemoteDispatchEligible else {
             session.organizationPhase = .authorizationRequired
             session.resultRetainedForDisplay = true
