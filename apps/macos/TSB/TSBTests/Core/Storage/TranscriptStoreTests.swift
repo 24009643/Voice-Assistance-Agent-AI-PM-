@@ -129,7 +129,7 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outsideRecordURL.path))
     }
 
-    func testListReportsCanonicalMissingAndNonRegularRecordFilesWithoutReadingThem() throws {
+    func testListSkipsMissingAndNonRegularRecords() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let missing = makeRecord(id: "00000000-0000-0000-0000-000000000015", ordinal: 15, createdAt: 15)
