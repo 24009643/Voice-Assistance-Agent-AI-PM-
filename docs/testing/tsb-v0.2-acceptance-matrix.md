@@ -8,14 +8,14 @@ Automated evidence does not pass a manual/device or content-quality gate. TSB 0.
 
 | ID | Requirement | Evidence | Current result | Status |
 |---|---|---|---|---|
-| V02-A01 | Full macOS app suite | Generated project; `xcodebuild ... test` | 226 passed, 0 failed | passed-automated |
+| V02-A01 | Full macOS app suite | Generated project; frozen HEAD `3c5e62a` result bundle independently checked | 238 passed, 0 failed, 0 skipped | passed-automated |
 | V02-A02 | Adversarial payloads cross the production parser, validator and client | `OrganizationValidatorTests` + `OrganizationClientTests` | 22 passed, 0 failed | passed-automated |
 | V02-A03 | Outbound request is an exact text whitelist | `testSendsOnlyExactEndpointTextSegmentsAndExplicitlySelectedHistory`; exact DTO key assertions and forbidden sentinel scan | Passed in full/focused suites | passed-automated |
 | V02-A04 | IDs, hash and category boundaries are objective | Mixed-language valid fixture; unknown candidate/segment, category mixing, malformed JSON and empty-result fixtures | Invalid boundaries rejected; valid/empty contracts accepted | passed-automated |
 | V02-A05 | Cancellation/timeout stop the real request and suppress late output | Real `OrganizationClient` path through synthetic `URLProtocol`; controlled no-drain mutation | Mutation failed the timeout regression; restored client passed | passed-automated |
-| V02-A06 | Local-only, retry and late organization do not recopy or replace the current session | `SessionCoordinatorTests` | Passed in the 226-test suite | passed-automated |
-| V02-A07 | Island sizing, chambers, visible equivalents, stale callbacks and Reduce Motion choices | `IslandPresentationTests`, `IslandFrameTests`, `OverlayGenerationTests` | Passed in the 226-test suite | passed-automated |
-| V02-A08 | Consent, selected-history permission and real Save/Cancel/Delete/Revoke semantics | Settings and Keychain test groups | Passed in the 226-test suite | passed-automated |
+| V02-A06 | Local-only, retry and late organization do not recopy or replace the current session | `SessionCoordinatorTests`, including a 100-session structural stress regression | Passed in the 238-test suite; structural stress is supplemental, not real M10 evidence | passed-automated |
+| V02-A07 | Island sizing, chambers, visible equivalents, stale callbacks and Reduce Motion choices | `IslandPresentationTests`, `IslandFrameTests`, `OverlayGenerationTests` | Passed in the 238-test suite | passed-automated |
+| V02-A08 | Consent, selected-history permission and real Save/Cancel/Delete/Revoke semantics | Settings and isolated real-Keychain test groups | Passed in the 238-test suite | passed-automated |
 | V02-A09 | Probe unit boundaries | `swift test --package-path probes/sensevoice`; `swift test --package-path probes/paraformer` | 7/7 and 11/11 passed | passed-automated |
 | V02-A10 | Fresh Debug application build | Dedicated empty DerivedData path, code signing disabled | Build succeeded | passed-automated |
 
@@ -36,7 +36,7 @@ Meaning reversal and invented facts are valid JSON that can retain valid IDs, ha
 | V02-M07 | Keyboard, VoiceOver and Reduce Motion are usable | Option-Space, Escape, focus/action labels, “推测” announcement and reduced-motion observation | pending-manual |
 | V02-M08 | One controlled DeepSeek-compatible call respects the text-only contract | Exactly one direct provider smoke used synthetic mixed-language text only with `deepseek-v4-flash`; HTTP 200 returned the requested smoke-test JSON, 186 prompt + 174 completion tokens. No audio, path, history, transcript or memory-library content was sent, and the temporary credential reference was unset. The call did not run through the production `OrganizationClient` parser/validator contract | partial-manual |
 | V02-M09 | `v0.2-GS-01` has at least 30 real mixed-language records | Paired bundle inventory is 17; GS-qualified and annotated record count is not established | blocked |
-| V02-M10 | Local timing and cycle gates meet the design spec | P95/hard-limit results and 100-cycle zero-loss/zero-duplicate-copy summary | blocked |
+| V02-M10 | Local timing and cycle gates meet the design spec | DEBUG runner is implemented and review-clean; automated 100-session structural stress passed. No target-Mac exactly-100-cycle P95/hard-limit/zero-loss summary has been run | blocked |
 
 ## Completion decision
 
