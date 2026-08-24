@@ -121,14 +121,14 @@ The three inputs were locally generated acceptance speech played through the tar
 | Start new recording during older organization | Old `335D9384-A0A6-45EF-9DEC-3B1FA36E0870` entered `/timeout`; new `ACF4A2B5-C240-42F6-B1BE-FC56FAE434FE` started 13.7 s later while the request was active; the main island visibly switched to the new recording and showed its local-only `恢复整理` action; the new session succeeded locally and the old later failed without overwriting it | pass |
 | Per-session local-only | `BD8ADD43-B400-4F93-A796-7A6E0029F69D`; stub `/success` request count stayed 1→1; deterministic/local-points organization succeeded and clipboard remained equal | pass |
 | Offline | `D4BD3980-6627-46C1-8B6B-87A1BCF68106`; connection-refused endpoint; local record stayed `copied`, organization `failed`, error code present, clipboard equal; Retry UI not separately captured | partial-manual |
-| Invalid key | Keychain authorization prevented configuring the isolated synthetic remote key; runtime observation not executed | blocked |
+| Authentication rejection | `39B3433F-52D3-4882-B757-90445928182D`; isolated loopback returned HTTP 401; local record stayed `copied`, organization became `failed` with `organization_failed`, clipboard equalled `localCleanedText`, and Retry/Copy/Collapse were visible | pass for 401 fail-closed path; real invalid-provider credential not exercised |
 | Timeout | `24DA965E-346C-4DB6-AAE8-900D804C9B68`; one 60 s request; local record stayed `copied`, organization `failed`, clipboard equal, state remained failed after the delayed server response; Retry UI not separately captured | partial-manual |
 | Malformed response | `EB3A5FA9-B420-400E-A2F9-671D17E5E761`; one request; local record stayed `copied`, organization `failed`, error code present, clipboard equal; island exposed Retry/Copy/Collapse | pass |
-| Three chambers / collapse / reopen | Full-screen capture proved the configured three-chamber result; collapse/reopen interaction remains pending | partial-manual |
-| Keyboard | The visible acceptance-only toggle exercised the production recording controller; automated Option-Space injection did not reach the Carbon global hotkey, so real Option-Space/Escape remain pending | partial-manual |
+| Three chambers / collapse / reopen | `F2844719-3AB6-471F-952D-3D80A9D9F710` showed all three chambers; `chevron.up` collapsed to `重新打开最近整理结果`, reopening restored the result, and all three copy buttons copied their matching chamber while the prior clipboard was restored after each check | pass |
+| Keyboard | The visible acceptance-only toggle exercised the production recording controller; automated Option-Space injection did not reach the Carbon global hotkey, and app-targeted Escape injection did not cancel an active recording. Real Option-Space/Escape remain pending | partial-manual |
 | VoiceOver | Status, actions and “推测” label readout | pending-manual |
 | Reduce Motion | Island and waveform behavior | pending-manual |
-| Controlled DeepSeek-compatible call | The source Keychain item exists, but both the XCTest process and system CLI were denied secret access (`-25293` / exit 51); this acceptance attempt stopped before dispatch and issued zero provider requests, the temporary test was removed, and a credential-pattern scan found no candidates | blocked |
+| Controlled DeepSeek-compatible call | The matching Passwords item was user-unlocked and read without exposing the secret. Exactly one direct `https://api.deepseek.com/chat/completions` smoke used `deepseek-v4-flash`, synthetic mixed-language text, `max_tokens=300`, and no audio/path/history/transcript/memory content. It returned HTTP 200, `finish_reason=stop`, JSON fields `summary`, `points`, `known_links`, `speculative_links`, and 186 prompt + 174 completion tokens. The temporary credential variable/reference was unset and no persistent copy was found in TSB, source or logs. This response shape is not the production `OrganizationClient` DTO, so the production parser/validator path was not exercised | partial-manual |
 
 ### Target-Mac island observations
 
@@ -137,6 +137,8 @@ The three inputs were locally generated acceptance speech played through the tar
 - Successful loopback organization (`1296A4DE-AFB0-4797-8492-5F1C433C57D5`) displayed the three chambers `原文` / `要点` / `关联`; the speculative connection carried a visible `推测` label. Persistence recorded one point, zero known links and one speculative connection.
 - Its outbound audit contained only outer keys `messages`, `model`, `response_format` and payload keys `current_segments`, `history_summaries`, `request_id`, `schema_version`, `source_text_hash`; it had no Authorization header and selected-history count was zero.
 - The successful loopback result and the local-only result did not change the clipboard hash.
+- The configured result `F2844719-3AB6-471F-952D-3D80A9D9F710` collapsed and reopened through the real island controls. Each chamber copy button produced the matching text; the pre-test clipboard was restored after every check.
+- The loopback 401 session `39B3433F-52D3-4882-B757-90445928182D` remained locally copied, persisted a failed organization state, kept clipboard equality with `localCleanedText`, and exposed Retry/Copy/Collapse.
 - API settings accessibility tree exposed Provider, Base URL, Model, secure API Key, authorization scope, outbound preview, Save, Cancel, revoke and delete controls.
 - Cancel restored the blank persisted draft. A loopback profile saved through the real UI without a key. Delete required a confirmation dialog and then reported `已删除配置与密钥` in an isolated acceptance profile.
 - Saving a synthetic key could not complete because the acceptance process was not authorized to access the login Keychain. Production Save/Cancel/Delete/Revoke semantics remain covered by the passing Settings and Keychain automated test groups; the failed manual save did not touch the production Keychain service.
@@ -145,7 +147,7 @@ The three inputs were locally generated acceptance speech played through the tar
 
 | Field | Required threshold | Result |
 |---|---:|---|
-| Real mixed-language record count | >= 30 | Paired bundle inventory = 14; GS-qualified/annotated count not established |
+| Real mixed-language record count | >= 30 | Paired bundle inventory = 17; GS-qualified/annotated count not established |
 | Atomic-idea denominator | recorded exactly | PENDING |
 | Atomic ideas covered | recorded exactly | PENDING |
 | Coverage | >= 95% | PENDING |
@@ -170,7 +172,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` The three-session real-microphone chain, concurrent-new-recording gate and per-session local-only zero-request gate passed. Successful loopback organization preserved the clipboard and displayed all three chambers. Offline, timeout and malformed responses all showed fail-closed local-record and clipboard behavior; only malformed completed the direct Retry-UI observation, while Offline/Timeout remain partial. Invalid-key runtime remains blocked by Keychain authorization. Completion is still blocked by the controlled provider call, the remaining configured-organization repetitions, invalid-key observation, collapse/reopen and accessibility completion, a qualified/annotated 30-record semantic Golden Set, and the 100-cycle/timing gates.
+`BLOCKED — manual acceptance is incomplete.` The three-session real-microphone chain, concurrent-new-recording gate, per-session local-only zero-request gate and island collapse/reopen/copy gate passed. One direct DeepSeek privacy/credential smoke passed, but the production organizer parser/validator path was not exercised. Offline, timeout, malformed response and a loopback 401 all showed fail-closed local-record behavior; a real invalid-provider credential was intentionally not consumed. Completion is still blocked by the remaining configured-organization repetitions, production organizer/provider integration, real Option-Space/Escape plus VoiceOver/Reduce Motion acceptance, a qualified/annotated 30-record semantic Golden Set, and the 100-cycle/timing gates.
 
 ## Rollback
 
