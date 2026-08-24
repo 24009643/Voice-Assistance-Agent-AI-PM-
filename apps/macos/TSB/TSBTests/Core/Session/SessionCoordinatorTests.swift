@@ -927,6 +927,37 @@ final class SessionCoordinatorTests: XCTestCase {
         harness.completeOrganization(at: 1)
     }
 
+    func testQueuedLocalOnlyLoopbackFallsBackWhenSettingsChangeToRemoteBeforeSlot() async throws {
+        let remote = remoteOrganizationSettings(baseURL: "https://remote.example.test/v1/chat/completions")
+        let harness = CoordinatorHarness(
+            transcript: "queued local-only",
+            organizationSettings: loopbackOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        let localOnlySessionID = try XCTUnwrap(harness.startedSessionIDs.last)
+        await harness.coordinator.handle(.setLocalOnly(sessionID: localOnlySessionID, enabled: true))
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitUntilOrganizationUpdateCount(3)
+
+        let inputCountBeforeRemoteSettings = harness.organizationInputs.count
+        let secretLoadCountBeforeRemoteSettings = harness.organizationSecretLoadCount
+        harness.setOrganizationDispatch(settings: remote, apiKey: "must-not-load")
+        harness.completeOrganization(at: 0)
+        await harness.waitUntilSuccessfulOrganizationCount(2)
+
+        XCTAssertEqual(harness.organizationInputs.count, inputCountBeforeRemoteSettings)
+        XCTAssertEqual(harness.organizationSecretLoadCount, secretLoadCountBeforeRemoteSettings)
+        XCTAssertEqual(harness.organizationUpdates.last?.sessionID, localOnlySessionID)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.model, "local-points")
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.output?.numberedPoints.map(\.text), ["queued local-only"])
+    }
+
     func testRevokingConsentBeforeQueuedSlotPreventsItsTextDispatch() async throws {
         let harness = CoordinatorHarness(
             transcript: "must remain local after revoke",
@@ -1440,9 +1471,10 @@ private final class CoordinatorHarness {
                     if let error = self?.historySuggestionsError { throw error }
                     return self?.historySuggestions ?? HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
                 },
-                organize: { [weak self] requestID, segments, suggestions, selectedCandidateIDs, willDispatch in
+                organize: { [weak self] requestID, segments, suggestions, selectedCandidateIDs, localOnly, willDispatch in
                     guard let self else { throw TestError.deallocated }
                     let dispatch = try AppController.makeOrganizationDispatchSnapshot(
+                        localOnly: localOnly,
                         selectedCandidateIDs: selectedCandidateIDs,
                         loadSettings: { self.organizationSettings },
                         loadAPIKey: { _ in

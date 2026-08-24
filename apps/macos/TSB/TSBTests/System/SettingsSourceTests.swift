@@ -502,6 +502,27 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(dispatch.apiKey, "")
     }
 
+    func testLocalOnlyDispatchSnapshotFallsBackBeforeLoadingARemoteSecret() throws {
+        let settings = try remoteSettings()
+        var secretLoadCount = 0
+
+        XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
+            localOnly: true,
+            selectedCandidateIDs: [],
+            loadSettings: { settings },
+            loadAPIKey: { _ in
+                secretLoadCount += 1
+                return "must-not-load"
+            }
+        )) { error in
+            guard let error = error as? OrganizationDispatchError,
+                  case .deterministicFallback = error else {
+                return XCTFail("Expected deterministic fallback")
+            }
+        }
+        XCTAssertEqual(secretLoadCount, 0)
+    }
+
     func testRemoteHTTPIsRejectedWithoutChangingPersistence() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

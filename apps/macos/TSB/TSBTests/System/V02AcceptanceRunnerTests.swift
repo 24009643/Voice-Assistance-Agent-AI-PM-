@@ -665,7 +665,7 @@ private final class RunnerFailureHarness {
             historySuggestions: { _ in
                 HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
             },
-            organize: { [weak self] _, segments, _, _, willDispatch in
+            organize: { [weak self] _, segments, _, _, _, willDispatch in
                 try willDispatch(try OrganizationEndpointSettings(
                     baseURL: URL(string: "http://127.0.0.1:1/v1/chat/completions")!,
                     model: "test-local"

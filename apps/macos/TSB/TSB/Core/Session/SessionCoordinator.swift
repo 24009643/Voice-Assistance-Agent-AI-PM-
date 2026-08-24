@@ -28,6 +28,7 @@ final class SessionCoordinator {
             [TextSegment],
             HistorySuggestions,
             Set<String>,
+            Bool,
             @MainActor (OrganizationEndpointSettings) throws -> Void
         ) async throws -> OrganizationOutput
         let scheduleSecondaryRemoval: @MainActor (
@@ -69,10 +70,11 @@ final class SessionCoordinator {
         let historySuggestions: HistorySuggestions
         let selectedCandidateIDs: Set<String>
         let selectedRecordIDs: [SessionID]
-        let provider: String
-        let model: String
-        let providerKind: ProviderKind
-        let useDeterministicOrganizer: Bool
+        let localOnly: Bool
+        var provider: String
+        var model: String
+        var providerKind: ProviderKind
+        var useDeterministicOrganizer: Bool
     }
 
     private let dependencies: Dependencies
@@ -553,6 +555,7 @@ final class SessionCoordinator {
             historySuggestions: suggestions,
             selectedCandidateIDs: selectedCandidateIDs,
             selectedRecordIDs: selectedRecordIDs,
+            localOnly: session.localOnly,
             provider: useDeterministic ? "deterministic" : "openai-compatible",
             model: useDeterministic ? "local-points" : endpoint?.model ?? "",
             providerKind: providerKind,
@@ -602,17 +605,27 @@ final class SessionCoordinator {
                 }
                 output = try DeterministicOrganizer().organize(segments: job.segments)
             } else {
-                output = try await dependencies.organize(
-                    job.requestID,
-                    job.segments,
-                    job.historySuggestions,
-                    job.selectedCandidateIDs,
-                    { [weak self] endpoint in
-                        guard let self else { throw CancellationError() }
-                        dispatchJob = self.organizationJob(job, for: endpoint)
-                        try self.prepareRemoteDispatch(dispatchJob)
-                    }
-                )
+                do {
+                    output = try await dependencies.organize(
+                        job.requestID,
+                        job.segments,
+                        job.historySuggestions,
+                        job.selectedCandidateIDs,
+                        job.localOnly,
+                        { [weak self] endpoint in
+                            guard let self else { throw CancellationError() }
+                            dispatchJob = self.organizationJob(job, for: endpoint)
+                            try self.prepareRemoteDispatch(dispatchJob)
+                        }
+                    )
+                } catch OrganizationDispatchError.deterministicFallback {
+                    dispatchJob.provider = "deterministic"
+                    dispatchJob.model = "local-points"
+                    dispatchJob.providerKind = .local
+                    dispatchJob.useDeterministicOrganizer = true
+                    try prepareRemoteDispatch(dispatchJob)
+                    output = try DeterministicOrganizer().organize(segments: dispatchJob.segments)
+                }
             }
             guard !Task.isCancelled,
                   var session = sessions[dispatchJob.sessionID],
@@ -720,6 +733,7 @@ final class SessionCoordinator {
             historySuggestions: job.historySuggestions,
             selectedCandidateIDs: job.selectedCandidateIDs,
             selectedRecordIDs: job.selectedRecordIDs,
+            localOnly: job.localOnly,
             provider: "openai-compatible",
             model: endpoint.model,
             providerKind: endpoint.isLoopback ? .local : .remote,
@@ -1042,4 +1056,5 @@ private enum OrganizationRuntimeError: Error {
 
 enum OrganizationDispatchError: Error {
     case authorizationRequired
+    case deterministicFallback
 }

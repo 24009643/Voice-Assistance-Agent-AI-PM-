@@ -35,11 +35,15 @@ final class AppController: ObservableObject {
     )
 
     static func makeOrganizationDispatchSnapshot(
+        localOnly: Bool = false,
         selectedCandidateIDs: Set<String>,
         loadSettings: () -> OrganizationSettings,
         loadAPIKey: (OrganizationEndpointSettings) throws -> String?
     ) throws -> OrganizationDispatchSnapshot {
         let settings = loadSettings()
+        if localOnly && settings.endpoint?.isLoopback != true {
+            throw OrganizationDispatchError.deterministicFallback
+        }
         guard let endpoint = settings.endpoint,
               endpoint.isLoopback || settings.isRemoteDispatchEligible,
               selectedCandidateIDs.isEmpty
@@ -155,8 +159,9 @@ final class AppController: ObservableObject {
                 historySuggestions: { sessionID in
                     try HistorySelector().suggestions(for: store.load(id: sessionID), from: store.list())
                 },
-                organize: { requestID, segments, suggestions, selectedCandidateIDs, willDispatch in
+                organize: { requestID, segments, suggestions, selectedCandidateIDs, localOnly, willDispatch in
                     let dispatch = try Self.makeOrganizationDispatchSnapshot(
+                        localOnly: localOnly,
                         selectedCandidateIDs: selectedCandidateIDs,
                         loadSettings: organizationSettingsStore.load,
                         loadAPIKey: { try organizationSecretStore.load(for: $0) }
