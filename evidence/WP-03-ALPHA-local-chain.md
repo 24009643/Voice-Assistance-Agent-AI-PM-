@@ -20,7 +20,7 @@
 The launch/liveness observation used the frozen model directory:
 
 ```text
-/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8
+$HOME/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8
 ```
 
 No microphone capture was initiated during this evidence collection.

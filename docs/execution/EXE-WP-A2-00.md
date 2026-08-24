@@ -3,7 +3,7 @@
 - Date: 2026-08-19
 - Branch: `codex/wp-04-alpha2`
 - Base: `584a7b1`
-- Worktree: `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-04-alpha2`
+- Worktree: `$HOME/Desktop/The Second Brain/.worktrees/wp-04-alpha2`
 - Status: passed
 
 ## Outcome

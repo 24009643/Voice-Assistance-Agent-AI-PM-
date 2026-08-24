@@ -17,7 +17,7 @@ final class OrganizationClientTests: XCTestCase {
         URLProtocolStub.handler = { request in
             XCTAssertEqual(request.url, endpointURL)
             XCTAssertEqual(request.timeoutInterval, 20, accuracy: 0.01)
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer header-only-secret")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-key")
             XCTAssertEqual(request.httpMethod, "POST")
 
             let body = try requestBody(request)
@@ -75,7 +75,7 @@ final class OrganizationClientTests: XCTestCase {
             ],
             historySuggestions: suggestions,
             userSelectedCandidateIDs: ["h1"],
-            apiKey: "header-only-secret"
+            apiKey: "fixture-key"
         )
 
         XCTAssertEqual(output.knownRecordLinks.map(\.recordID), [recordID])

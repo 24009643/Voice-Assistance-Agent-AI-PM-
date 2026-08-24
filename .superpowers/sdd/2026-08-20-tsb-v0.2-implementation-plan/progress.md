@@ -2,7 +2,7 @@
 
 ## Baseline
 
-- Workspace: linked worktree `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-04-alpha2`
+- Workspace: linked worktree `$HOME/Desktop/The Second Brain/.worktrees/wp-04-alpha2`
 - Branch: `codex/wp-04-alpha2`
 - Start commit: `2910f0e`
 - Baseline: `xcodebuild ... test` passed 106 tests, 0 failures on 2026-08-20.
