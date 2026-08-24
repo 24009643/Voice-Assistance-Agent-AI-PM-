@@ -39,10 +39,11 @@ final class OrganizationSettingsStoreTests: XCTestCase {
 
     func testLoadRestoresSavedSettingsWithoutEncodingAPIKey() throws {
         let (defaults, suiteName) = makeDefaults()
-        let secretStore = makeSecretStore()
+        let keychain = try TemporaryKeychain()
+        let secretStore = makeSecretStore(keychain: keychain.reference)
         defer {
             defaults.removePersistentDomain(forName: suiteName)
-            try? secretStore.delete()
+            keychain.delete()
         }
         let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
         let settings = OrganizationSettings(
@@ -68,10 +69,11 @@ final class OrganizationSettingsStoreTests: XCTestCase {
 
     func testRevokingConsentDisablesDispatchAndDeletesSecret() throws {
         let (defaults, suiteName) = makeDefaults()
-        let secretStore = makeSecretStore()
+        let keychain = try TemporaryKeychain()
+        let secretStore = makeSecretStore(keychain: keychain.reference)
         defer {
             defaults.removePersistentDomain(forName: suiteName)
-            try? secretStore.delete()
+            keychain.delete()
         }
         let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
         let settings = OrganizationSettings(
@@ -90,10 +92,11 @@ final class OrganizationSettingsStoreTests: XCTestCase {
 
     func testDeleteRemovesSavedSettingsAndSecret() throws {
         let (defaults, suiteName) = makeDefaults()
-        let secretStore = makeSecretStore()
+        let keychain = try TemporaryKeychain()
+        let secretStore = makeSecretStore(keychain: keychain.reference)
         defer {
             defaults.removePersistentDomain(forName: suiteName)
-            try? secretStore.delete()
+            keychain.delete()
         }
         let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
         let settings = OrganizationSettings(
@@ -140,7 +143,11 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         return (UserDefaults(suiteName: suiteName)!, suiteName)
     }
 
-    private func makeSecretStore() -> KeychainSecretStore {
-        KeychainSecretStore(service: "OrganizationSettingsStoreTests.\(UUID().uuidString)", account: "api-key")
+    private func makeSecretStore(keychain: SecKeychain) -> KeychainSecretStore {
+        KeychainSecretStore(
+            service: "OrganizationSettingsStoreTests.\(UUID().uuidString)",
+            account: "api-key",
+            keychain: keychain
+        )
     }
 }

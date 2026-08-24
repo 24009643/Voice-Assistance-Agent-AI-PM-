@@ -52,7 +52,7 @@ final class SettingsSourceTests: XCTestCase {
 @MainActor
 final class SettingsBehaviorTests: XCTestCase {
     func testRemoteSaveRequiresConfirmedConsentAndLaterDispatchUsesPersistedConsent() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let model = SettingsModel(store: fixture.store)
         let dummySecret = UUID().uuidString
@@ -84,7 +84,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testSelectedHistoryStillRequiresItsSeparateConsentAfterCloudConsent() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let model = SettingsModel(store: fixture.store)
         model.draft.baseURL = "https://example.test/v1/chat/completions"
@@ -110,7 +110,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testBlankKeyPreservesAnExistingSecretOnSave() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let originalSecret = UUID().uuidString
         let settings = try remoteSettings(model: "old-model")
@@ -129,7 +129,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testFailedKeyReplacementKeepsTheOldProfileAndSecret() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let originalSecret = UUID().uuidString
         let originalSettings = try remoteSettings(model: "old-model")
@@ -137,6 +137,7 @@ final class SettingsBehaviorTests: XCTestCase {
         let failingSecretStore = KeychainSecretStore(
             service: fixture.service,
             account: fixture.account,
+            keychain: fixture.keychain.reference,
             update: { _, _ in errSecAuthFailed },
             add: { _ in
                 XCTFail("An existing secret replacement must not add")
@@ -159,7 +160,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testLoopbackSaveCommitsOnlyAfterSecretDeletionAndCanRetry() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let originalSecret = UUID().uuidString
         let originalSettings = try remoteSettings(model: "remote-model", historyConsent: true)
@@ -169,6 +170,7 @@ final class SettingsBehaviorTests: XCTestCase {
             secretStore: KeychainSecretStore(
                 service: fixture.service,
                 account: fixture.account,
+                keychain: fixture.keychain.reference,
                 deleteItem: { _ in errSecAuthFailed }
             )
         )
@@ -200,7 +202,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testCancelReloadsPersistedDraftWithoutAnyWrite() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let originalSecret = UUID().uuidString
         let originalSettings = try remoteSettings(model: "persisted-model", historyConsent: true)
@@ -208,6 +210,7 @@ final class SettingsBehaviorTests: XCTestCase {
         let writeRejectingSecretStore = KeychainSecretStore(
             service: fixture.service,
             account: fixture.account,
+            keychain: fixture.keychain.reference,
             update: { _, _ in
                 XCTFail("Cancel must not update Keychain")
                 return errSecAuthFailed
@@ -246,12 +249,13 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testDeleteFailureIsVisibleAndNeverClaimsDeletion() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         try fixture.store.save(try remoteSettings(), apiKey: UUID().uuidString)
         let failingSecretStore = KeychainSecretStore(
             service: fixture.service,
             account: fixture.account,
+            keychain: fixture.keychain.reference,
             deleteItem: { _ in errSecAuthFailed }
         )
         let model = SettingsModel(store: OrganizationSettingsStore(
@@ -276,7 +280,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testDeleteRemovesProfileAndKeyBeforeClaimingSuccess() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         try fixture.store.save(
             try remoteSettings(historyConsent: true),
@@ -295,7 +299,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testRevokeClearsBothConsentsAndDeletesTheSecret() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         try fixture.store.save(
             try remoteSettings(historyConsent: true),
@@ -314,7 +318,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testRevokeDeleteFailureBlocksDispatchWhileKeepingEndpointAndKeyRetryable() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let originalSecret = UUID().uuidString
         let originalSettings = try remoteSettings(model: "remote-model", historyConsent: true)
@@ -324,6 +328,7 @@ final class SettingsBehaviorTests: XCTestCase {
             secretStore: KeychainSecretStore(
                 service: fixture.service,
                 account: fixture.account,
+                keychain: fixture.keychain.reference,
                 deleteItem: { _ in errSecAuthFailed }
             )
         )
@@ -356,7 +361,7 @@ final class SettingsBehaviorTests: XCTestCase {
     }
 
     func testLoopbackHTTPSemanticsDoNotRequireCloudConsentOrAKey() throws {
-        let fixture = makeFixture()
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let model = SettingsModel(store: fixture.store)
         model.draft.baseURL = "http://127.0.0.1:11434/v1/chat/completions"
@@ -372,8 +377,8 @@ final class SettingsBehaviorTests: XCTestCase {
         ))
     }
 
-    func testRemoteHTTPIsRejectedWithoutChangingPersistence() {
-        let fixture = makeFixture()
+    func testRemoteHTTPIsRejectedWithoutChangingPersistence() throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let model = SettingsModel(store: fixture.store)
         model.draft.baseURL = "http://example.test/v1/chat/completions"
@@ -388,8 +393,8 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(fixture.store.load(), OrganizationSettings())
     }
 
-    func testAppDelegateStartsAtLaunchAndStopsOnlyAtTermination() {
-        let fixture = makeFixture()
+    func testAppDelegateStartsAtLaunchAndStopsOnlyAtTermination() throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanup() }
         var starts = 0
         var stops = 0
@@ -425,17 +430,23 @@ final class SettingsBehaviorTests: XCTestCase {
         )
     }
 
-    private func makeFixture() -> SettingsFixture {
+    private func makeFixture() throws -> SettingsFixture {
         let suiteName = "SettingsBehaviorTests.\(UUID().uuidString)"
         let service = "SettingsBehaviorTests.\(UUID().uuidString)"
         let account = "api-key"
         let defaults = UserDefaults(suiteName: suiteName)!
-        let secretStore = KeychainSecretStore(service: service, account: account)
+        let keychain = try TemporaryKeychain()
+        let secretStore = KeychainSecretStore(
+            service: service,
+            account: account,
+            keychain: keychain.reference
+        )
         return SettingsFixture(
             suiteName: suiteName,
             service: service,
             account: account,
             defaults: defaults,
+            keychain: keychain,
             secretStore: secretStore,
             store: OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
         )
@@ -447,11 +458,12 @@ private struct SettingsFixture {
     let service: String
     let account: String
     let defaults: UserDefaults
+    let keychain: TemporaryKeychain
     let secretStore: KeychainSecretStore
     let store: OrganizationSettingsStore
 
     func cleanup() {
         defaults.removePersistentDomain(forName: suiteName)
-        try? secretStore.delete()
+        keychain.delete()
     }
 }
