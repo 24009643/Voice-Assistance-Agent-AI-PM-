@@ -4,10 +4,10 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: automated gates passed at `249/249`; release **BLOCKED / manual incomplete**
+- Status: exact-HEAD automated gate passed at `264/264`; source is `review-clean`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current product/fix/validation commit: `98341b36246ae7c5dcc0406bf8a7f088bc7f6183`.
-- Date: 2026-08-24
+- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `11f1d3d50d453d69b63b2f74ba4ed5620f3457c1`.
+- Date: 2026-08-25
 
 ## Files changed
 
@@ -68,7 +68,7 @@ xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
   -resultBundlePath /tmp/tsb-v02-task8-20260824.xcresult test
 ```
 
-Historical baseline result: exit 0; 226 passed, 0 failed; `TEST SUCCEEDED`. The current product/fix/validation commit is independently recorded above as `249/249` passed.
+Historical baseline result: exit 0; 226 passed, 0 failed; `TEST SUCCEEDED`. The current exact-HEAD automated gate is recorded above as `264/264` passed.
 
 ```bash
 swift test --package-path probes/sensevoice
@@ -92,16 +92,23 @@ git status --short
 
 Result before and after target-Mac acceptance: `git diff --check` passed and the worktree was clean before this evidence update.
 
-## Runner cleanup and gate adjudication sync
+## Final exact-HEAD evidence and gate adjudication
 
-- Runner cleanup and Paraformer-preflight prevention remain `implemented`, `review-clean`, and `passed-automated`. The current product/fix/validation commit `98341b3` independently passed focused `27/27`, full suite `249/249`, a fresh Debug build, diff/project consistency, sensitive scan and cleanup. This is automated evidence only and does not imply target-device or manual proof.
+- Exact source/validation commit `11f1d3d` passed a fresh full suite: `264/264`, 0 failed, 0 skipped; its unsigned Debug build passed; two XcodeGen generations matched; main/fix diff checks, cleanup, and current/additions six-category safety scans passed. This is `passed-automated` only.
+- The final whole-branch range `584a7b1..11f1d3d` is source `review-clean` with Critical/Important/Minor `0/0/0`; it does not authorize merge or release.
+- Final-review source findings are closed: endpoint-bound Keychain/dispatch/URL/Delete handling (`91f6c6d`, `6ae5855`), slot-claim local-only policy in both queued switch directions (`3b5e8dc`, `ce9cde1`, `97538f0`), and validator/dead-state/test-only-counter cleanup (`d080329`, `11f1d3d`).
+- Current tracked source/additions have zero formal sensitive findings. Reachable-history diagnostics are historical count-only release blockers: 147 commits considered, local-account-path diagnostic in 10 commits and broad provider-like diagnostic in 9; they are not current-tree leaks or completed sanitation/rotation.
+
+## Historical runner cleanup and gate adjudication
+
+- Historical runner cleanup and Paraformer-preflight prevention remain `implemented`, `review-clean`, and `passed-automated`. Historical commit `98341b3` independently passed focused `27/27`, full suite `249/249`, a fresh Debug build, diff/project consistency, sensitive scan and cleanup. This is not the current exact-HEAD validation and does not imply target-device or manual proof.
 - Desktop-hosted source reads were obstructed by TCC (`kTCCServiceSystemPolicyAllFiles`, `authValue=0`). Validation used an exact-HEAD `/tmp` source snapshot with the existing dependency lock; no Full Disk Access was requested or granted. This is an evidence-environment fact, not a product permission requirement.
 - V02-M02 is `passed-manual (adjudicated)`: three intentionally successful product cycles each had one persisted record, one automatic local copy, immediate clipboard equality and zero organization recopy. Failure attempts are excluded from the passing-cycle count.
 - V02-M08 is `blocked`: immediately before the authorized runtime work, the real Settings UI showed loopback `127.0.0.1:63060`, model `local-acceptance`, API Key `未保存`, cloud consent `未授权`, and selected-history off/disabled. The authorized DeepSeek request was therefore not started; Provider request count was `0`. No Keychain secret was read, entered, saved or deleted; a user must personally save a key before a later product-path attempt.
 - Historical Critical runner incident remains recorded: `3 vs 1` Provider requests, `5 vs 3` records and `5 vs 3` automatic local copies. The runner code is now review-clean/passed-automated; target-device closure is not claimed. Two extra records remain without deletion authorization, and the stopped no-key localhost profile requires action-time confirmation before permanent deletion.
 - Task 7 Settings Model-field integrity is `passed-manual` for this focused subgate: after user-operated Password AutoFill, non-sensitive Base URL and Model sentinels were unchanged; API Key remained secure/masked and `未保存`; Cancel restored persisted local fields and blank/`未保存` key state. Fix commit `a8fb572` is `implemented`, `review-clean`, and `passed-automated`; independent re-review found Critical 0, Important 0, Minor 0. No Save/Delete/Revoke, Provider, or other prohibited side effect occurred. This does not clear V02-M08 or release completion.
-- M10's single authorized formal run started once and stopped on cycle 1 with `preview_missing`: requested/completed `100/1`, passed rows `0`, loopback/external requests `0`, records `0`, automatic clipboard deliveries `0`, and non-loopback observations `0`; no retry occurred. The consumed run is `failed/ineligible`, while M10 remains `blocked`.
-- Independent diagnosis established absent Paraformer environment as the cause of the intentional no-op preview pipeline; it did not establish a production recorder or SenseVoice defect. Runner-only prevention commit `98341b3` validates the Paraformer model location before side effects; independent review found Critical 0, Important 0, Minor 0, and exact-HEAD validation passed `249/249`. A new M10 attempt requires a validated Paraformer bundle, fresh explicit authorization and a new exclusive artifact set.
+- Historical M10 single authorized formal run started once and stopped on cycle 1 with `preview_missing`: requested/completed `100/1`, passed rows `0`, loopback/external requests `0`, records `0`, automatic clipboard deliveries `0`, and non-loopback observations `0`; no retry occurred. The consumed run is `failed/ineligible`, while M10 remains `blocked`.
+- Independent diagnosis established absent Paraformer environment as the cause of the intentional no-op preview pipeline; it did not establish a production recorder or SenseVoice defect. Historical runner-only prevention commit `98341b3` validates the Paraformer model location before side effects; independent review found Critical 0, Important 0, Minor 0. A new M10 attempt requires a validated Paraformer bundle, fresh explicit authorization and a new exclusive artifact set.
 
 ## Automated privacy and adversarial coverage
 
@@ -182,7 +189,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed. M07 is `partial-manual`: physical Option-Space/Escape cancellation and automatic collapse passed, while VoiceOver and Reduce Motion remain pending. M08, M09 and M10 remain blocked. The historical Critical runner incident remains open. The current product/fix/validation commit `98341b3` automated `249/249` result and Debug build do not promote Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
+`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed. M07 is `partial-manual`: physical Option-Space/Escape cancellation and automatic collapse passed, while VoiceOver and Reduce Motion remain pending. M08 remains `blocked` because the authorized preflight sent 0 Provider requests without a saved usable key; endpoint-bound credentials may require user re-entry. M09 remains `blocked` without a qualified manually annotated 30-record Golden Set. M10 remains `blocked` after the historical single run failed/ineligible at `100/1`; fresh validated Paraformer, authorization, and artifacts are required. The historical Critical runner incident remains open. Exact `11f1d3d` automated `264/264` evidence and source review-clean status do not promote Provider, accessibility, Golden Set, stability, reachable-history, or release gates.
 
 ## Rollback
 
