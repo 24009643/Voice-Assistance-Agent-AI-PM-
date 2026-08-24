@@ -1,8 +1,8 @@
 # TSB 0.2 Acceptance Matrix
 
-Status values: `passed-automated`, `pending-manual`, `blocked`, `not-applicable`.
+Status values: `passed-automated`, `passed-manual`, `partial-manual`, `pending-manual`, `blocked`, `not-applicable`.
 
-Automated evidence does not pass a manual/device or content-quality gate. TSB 0.2 completion remains **blocked** until every `pending-manual` row below has real evidence.
+Automated evidence does not pass a manual/device or content-quality gate. TSB 0.2 completion remains **blocked** until every manual row below passes.
 
 ## Automated gates
 
@@ -27,17 +27,17 @@ Meaning reversal and invented facts are valid JSON that can retain valid IDs, ha
 
 | ID | Required observation | Evidence fields the controller must fill | Status |
 |---|---|---|---|
-| V02-M01 | Three consecutive real-microphone sessions: Mandarin, Cantonese, Chinese-English mix | Three real session IDs; `record.json` metadata; `audio.wav` sample rate/channels/duration; immediate clipboard equality proof | pending-manual |
-| V02-M02 | Organization never changes the clipboard automatically | Clipboard hash/change-count immediately after Stop and again after organization for all three sessions | pending-manual |
+| V02-M01 | Three consecutive real-microphone sessions: Mandarin, Cantonese, Chinese-English mix | Three real session IDs; `record.json` metadata; `audio.wav` sample rate/channels/duration; immediate clipboard equality proof | passed-manual |
+| V02-M02 | Organization never changes the clipboard automatically | Immediate post-Stop clipboard equality passed for all three sessions; no configured successful organization cycle was exercised | partial-manual |
 | V02-M03 | New recording starts while the previous organization is active | Old/new session IDs, timestamps and island ownership observation | pending-manual |
 | V02-M04 | Per-session “仅本地” makes zero remote requests | Session ID plus runtime network observation | pending-manual |
 | V02-M05 | Offline, invalid key, timeout and malformed response preserve the local chain | One observation per failure mode, with local record/clipboard outcome and retry availability | pending-manual |
-| V02-M06 | Three-chamber result, collapse, reopen and all visible buttons work on the target Mac | Screen/display context and interaction observations | pending-manual |
+| V02-M06 | Three-chamber result, collapse, reopen and all visible buttons work on the target Mac | Recording and authorization-required island states were captured full-screen; configured three-chamber/collapse/reopen remains missing | partial-manual |
 | V02-M07 | Keyboard, VoiceOver and Reduce Motion are usable | Option-Space, Escape, focus/action labels, “推测” announcement and reduced-motion observation | pending-manual |
-| V02-M08 | One controlled DeepSeek-compatible call respects the text-only contract | Provider/model, request/result metadata and payload-field audit; never record the key or transcript body | pending-manual |
-| V02-M09 | `v0.2-GS-01` has at least 30 real mixed-language records | Record count, atomic-idea denominator, covered count, coverage, meaning reversals, invented facts, negation changes, displayed-link denominator/relevant count and speculative separation | pending-manual |
-| V02-M10 | Local timing and cycle gates meet the design spec | P95/hard-limit results and 100-cycle zero-loss/zero-duplicate-copy summary | pending-manual |
+| V02-M08 | One controlled DeepSeek-compatible call respects the text-only contract | Existing source Keychain item is present, but Keychain authorization rejected secret access with `-25293`; this acceptance attempt issued zero provider requests | blocked |
+| V02-M09 | `v0.2-GS-01` has at least 30 real mixed-language records | Paired bundle inventory is 7; GS-qualified and annotated record count is not established | blocked |
+| V02-M10 | Local timing and cycle gates meet the design spec | P95/hard-limit results and 100-cycle zero-loss/zero-duplicate-copy summary | blocked |
 
 ## Completion decision
 
-`BLOCKED — manual evidence missing.` Automated gates above are bounded engineering evidence only. Do not mark TSB 0.2 complete until V02-M01 through V02-M10 contain real observations and all completion-rule thresholds pass.
+`BLOCKED — manual acceptance is incomplete.` V02-M01 passed on the target Mac. V02-M02 and V02-M06 have bounded partial evidence. V02-M08 is blocked by Keychain authorization, V02-M09 lacks a qualified/annotated Golden Set count, and V02-M10 still lacks the 100-cycle/timing run. Do not mark TSB 0.2 complete until every threshold passes.
