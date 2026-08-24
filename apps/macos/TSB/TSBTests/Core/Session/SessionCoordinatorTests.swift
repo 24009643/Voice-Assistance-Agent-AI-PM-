@@ -1033,6 +1033,45 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 1)
     }
 
+    func testOneHundredSequentialSuccessfulSessionsPreserveEveryDeliveryAndOrganization() async {
+        let harness = CoordinatorHarness(
+            transcript: "structural cycle",
+            organizationSettings: remoteOrganizationSettings()
+        )
+
+        for expectedCount in 1...100 {
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.finishRecording()
+            await harness.waitForDelivery(count: expectedCount)
+            let copyCountAtDelivery = harness.copyCount
+
+            await harness.waitUntilSuccessfulOrganizationCount(expectedCount)
+
+            XCTAssertEqual(copyCountAtDelivery, expectedCount)
+            XCTAssertEqual(harness.copyCount, copyCountAtDelivery)
+            XCTAssertEqual(Set(harness.savedRecords.map(\.id)).count, expectedCount)
+            XCTAssertEqual(
+                Set(harness.organizationUpdates.filter { $0.organization.state == .succeeded }.map(\.sessionID)).count,
+                expectedCount
+            )
+        }
+
+        let successfulOrganizations = harness.organizationUpdates.filter { $0.organization.state == .succeeded }
+        XCTAssertEqual(harness.startedSessionIDs.count, 100)
+        XCTAssertEqual(Set(harness.startedSessionIDs).count, 100)
+        XCTAssertEqual(harness.savedRecords.count, 100)
+        XCTAssertEqual(harness.savedRecords.filter { $0.outcome == .success }.count, 100)
+        XCTAssertEqual(Set(harness.savedRecords.map(\.id)), Set(harness.startedSessionIDs))
+        XCTAssertEqual(harness.deliveryStatuses, Array(repeating: .copied, count: 100))
+        XCTAssertEqual(harness.copyCount, 100)
+        XCTAssertEqual(harness.copiedTexts.count, 100)
+        XCTAssertEqual(successfulOrganizations.count, 100)
+        XCTAssertEqual(Set(successfulOrganizations.map(\.sessionID)), Set(harness.startedSessionIDs))
+        XCTAssertTrue(Dictionary(grouping: successfulOrganizations, by: \.sessionID).values.allSatisfy { $0.count == 1 })
+        XCTAssertEqual(harness.maximumOrganizationCallCount, 1)
+    }
+
     func testEnrichmentSendsOnlyExactUserSelectedSuggestedRecordIDs() async throws {
         let selectedID = SessionID(rawValue: UUID())
         let unselectedID = SessionID(rawValue: UUID())
@@ -1511,6 +1550,14 @@ private final class CoordinatorHarness {
             await Task.yield()
         }
         XCTFail("Timed out waiting for organization to finish")
+    }
+
+    func waitUntilSuccessfulOrganizationCount(_ count: Int) async {
+        for _ in 0..<100 {
+            if organizationUpdates.filter({ $0.organization.state == .succeeded }).count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for successful organization")
     }
 
     func waitUntilOrganizationUpdateCount(_ count: Int) async {
