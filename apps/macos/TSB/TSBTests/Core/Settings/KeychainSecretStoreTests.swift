@@ -3,6 +3,43 @@ import XCTest
 @testable import TSB
 
 final class KeychainSecretStoreTests: XCTestCase {
+    func testDefaultQueriesKeepProductionIdentityAndDoNotRouteToAnInjectedKeychain() throws {
+        var updateQuery: CFDictionary?
+        var addQuery: CFDictionary?
+        var deleteQuery: CFDictionary?
+        let store = KeychainSecretStore(
+            update: { query, _ in
+                updateQuery = query
+                return errSecItemNotFound
+            },
+            add: { query in
+                addQuery = query
+                return errSecSuccess
+            },
+            deleteItem: { query in
+                deleteQuery = query
+                return errSecSuccess
+            }
+        )
+
+        try store.save("synthetic-secret")
+        try store.delete()
+
+        let queries = try [
+            XCTUnwrap(updateQuery),
+            XCTUnwrap(addQuery),
+            XCTUnwrap(deleteQuery)
+        ]
+        for query in queries {
+            let dictionary = query as NSDictionary
+            XCTAssertEqual(dictionary[kSecClass] as? String, kSecClassGenericPassword as String)
+            XCTAssertEqual(dictionary[kSecAttrService] as? String, "com.zhuohengchi.tsb")
+            XCTAssertEqual(dictionary[kSecAttrAccount] as? String, "organization-api-key")
+            XCTAssertNil(dictionary[kSecUseKeychain])
+            XCTAssertNil(dictionary[kSecMatchSearchList])
+        }
+    }
+
     func testInjectedKeychainsIsolateTheSameServiceAndAccount() throws {
         let firstKeychain = try TemporaryKeychain()
         let secondKeychain = try TemporaryKeychain()
