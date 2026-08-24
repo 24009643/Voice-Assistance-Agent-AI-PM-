@@ -4,7 +4,7 @@ Status values: `passed-automated`, `passed-manual`, `partial-manual`, `pending-m
 
 Automated evidence does not pass a manual/device or content-quality gate. TSB 0.2 completion remains **blocked** until every manual row below passes.
 
-Evidence-sync checkout: `codex/wp-04-alpha2` at exact HEAD `a8fb57262e51a5eaaa910701d1dc49a83c9164a8`.
+Evidence-sync checkout: `codex/wp-04-alpha2` at exact HEAD `866be5964ae598e7f3dc1616c0a322258d036000`.
 
 ## Automated gates
 
@@ -35,11 +35,11 @@ Meaning reversal and invented facts are valid JSON that can retain valid IDs, ha
 | V02-M04 | Per-session “仅本地” makes zero remote requests | Stub `/success` count remained 1→1; local deterministic organization succeeded and clipboard remained equal | passed-manual |
 | V02-M05 | Offline, invalid key, timeout and malformed response preserve the local chain | Offline, timeout and malformed-response observations preserved the local record and clipboard. Through the production app/client path, an isolated target-Mac loopback HTTP 401 preserved the copied local record, persisted `organization_failed`, kept clipboard equality and exposed Retry/Copy/Collapse. The design gate is therefore closed without sending a knowingly invalid credential to a live provider | passed-manual |
 | V02-M06 | Three-chamber result, collapse, reopen and all visible buttons work on the target Mac | Configured session `F2844719-3AB6-471F-952D-3D80A9D9F710` showed all three chambers, collapsed to `重新打开最近整理结果`, reopened, and each of the three copy buttons copied the matching chamber; the original clipboard was restored after each check | passed-manual |
-| V02-M07 | Keyboard, VoiceOver and Reduce Motion are usable | Option-Space, Escape, focus/action labels, “推测” announcement and reduced-motion observation | pending-manual |
+| V02-M07 | Keyboard, VoiceOver and Reduce Motion are usable | Physical Option-Space then Escape cancellation and automatic island collapse passed from the user's retest (`也已经自动收齐了`). VoiceOver focus/action/“推测” announcement and Reduce Motion island/waveform observations remain pending | partial-manual |
 | V02-M08 | One controlled DeepSeek-compatible call respects the text-only contract | Production parser/validator/persistence/zero-history path was observed, but the acceptance window made 3 production requests versus exactly 1 allowed; direct smoke and loopback do not substitute | blocked |
 | V02-M09 | `v0.2-GS-01` has at least 30 real mixed-language records | Paired bundle inventory is 17; GS-qualified and annotated record count is not established | blocked |
 | V02-M10 | Local timing and cycle gates meet the design spec | DEBUG runner cleanup is implemented, review-clean and passed-automated; exact-HEAD offline full suite passed 246/246. No target-Mac exactly-100-cycle P95/hard-limit/zero-loss summary has been run | blocked |
 
 ## Completion decision
 
-`BLOCKED — manual acceptance is incomplete.` V02-M01, M03, M04, M05, M06 and adjudicated M02 are passed; V02-M07 remains pending; V02-M08, M09 and M10 are blocked. The historical Critical runner incident remains open as an incident record (`3 vs 1` Provider requests, `5 vs 3` records, `5 vs 3` automatic copies). Task 7 Model-field integrity is passed only for its focused subgate; V02-M08 and release completion remain blocked. The exact-HEAD automated 246/246 result and Debug build do not promote Provider, accessibility, Golden Set, stability or release gates.
+`BLOCKED — manual acceptance is incomplete.` V02-M01, M03, M04, M05, M06 and adjudicated M02 are passed; V02-M07 is `partial-manual` because physical Option-Space/Escape cancellation and automatic collapse passed while VoiceOver and Reduce Motion remain pending; V02-M08, M09 and M10 are blocked. The historical Critical runner incident remains open as an incident record (`3 vs 1` Provider requests, `5 vs 3` records, `5 vs 3` automatic copies). Task 7 Model-field integrity is passed only for its focused subgate; V02-M08 and release completion remain blocked. The exact-HEAD automated 246/246 result and Debug build do not promote Provider, accessibility, Golden Set, stability or release gates.

@@ -6,7 +6,7 @@
 - Reviewer: controller plus target-Mac manual operator
 - Status: automated gates passed at `246/246`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Evidence-sync HEAD: `a8fb57262e51a5eaaa910701d1dc49a83c9164a8`
+- Evidence-sync HEAD: `866be5964ae598e7f3dc1616c0a322258d036000`
 - Commit: this record is committed with `test(v0.2): record island and organization acceptance`
 - Date: 2026-08-24
 
@@ -134,7 +134,7 @@ The three inputs were locally generated acceptance speech played through the tar
 | Timeout | `24DA965E-346C-4DB6-AAE8-900D804C9B68`; one 60 s request; local record stayed `copied`, organization `failed`, clipboard equal, state remained failed after the delayed server response; Retry UI not separately captured | partial-manual |
 | Malformed response | `EB3A5FA9-B420-400E-A2F9-671D17E5E761`; one request; local record stayed `copied`, organization `failed`, error code present, clipboard equal; island exposed Retry/Copy/Collapse | pass |
 | Three chambers / collapse / reopen | `F2844719-3AB6-471F-952D-3D80A9D9F710` showed all three chambers; `chevron.up` collapsed to `重新打开最近整理结果`, reopening restored the result, and all three copy buttons copied their matching chamber while the prior clipboard was restored after each check | pass |
-| Keyboard | The visible acceptance-only toggle exercised the production recording controller; automated Option-Space injection did not reach the Carbon global hotkey, and app-targeted Escape injection did not cancel an active recording. Real Option-Space/Escape remain pending | partial-manual |
+| Keyboard cancellation / auto-collapse | After the reviewed fix, the user physically operated Option-Space then Escape and reported `也已经自动收齐了`; this confirms the recording island automatically collapsed. No timing, transcript, accessibility, animation, Provider or other manual claim is made | passed-manual |
 | VoiceOver | Status, actions and “推测” label readout | pending-manual |
 | Reduce Motion | Island and waveform behavior | pending-manual |
 | Controlled DeepSeek-compatible call | Historical direct smoke only; it used synthetic text and did not exercise the production parser/validator DTO. It is not a substitute for the blocked M08 one-request production boundary | historical / non-substitutive |
@@ -181,7 +181,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed, while M07 remains pending and M08, M09 and M10 remain blocked. The historical Critical runner incident remains open. The exact-HEAD automated `246/246` result and Debug build do not promote Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
+`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed. M07 is now `partial-manual`: physical Option-Space/Escape cancellation and automatic collapse passed, while VoiceOver and Reduce Motion remain pending. M08, M09 and M10 remain blocked. The historical Critical runner incident remains open. The exact-HEAD automated `246/246` result and Debug build do not promote Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
 
 ## Rollback
 
