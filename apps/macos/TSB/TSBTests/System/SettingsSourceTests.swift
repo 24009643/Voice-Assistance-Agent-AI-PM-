@@ -36,6 +36,16 @@ final class SettingsSourceTests: XCTestCase {
         XCTAssertFalse(settingsSource.contains("previewText"))
     }
 
+    func testAPIKeyUsesNonLoginContentTypeAndModelIsNotACredentialField() throws {
+        let settingsSource = try source("TSB/Views/SettingsView.swift")
+
+        XCTAssertTrue(settingsSource.contains(
+            "SecureField(\"API Key\", text: $model.draft.apiKey)\n                    .textContentType(.oneTimeCode)"
+        ))
+        XCTAssertFalse(settingsSource.contains(".textContentType(.username)"))
+        XCTAssertFalse(settingsSource.contains(".textContentType(.password)"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         try String(contentsOf: sourceURL(relativePath), encoding: .utf8)
     }
