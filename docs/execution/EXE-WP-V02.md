@@ -7,7 +7,7 @@
 - Status: automated gates passed at `248/248`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
 - Evidence-sync HEAD: `866be5964ae598e7f3dc1616c0a322258d036000`
-- Commit: this record is committed with `test(v0.2): record island and organization acceptance`
+- Historical original-record commit: `test(v0.2): record island and organization acceptance` (`647aef1`). Current evidence-sync documentation commit: `docs(v0.2): sync exact-head 248 test evidence` (`8d8a81d`). Product validation commit remains separate at `866be5964ae598e7f3dc1616c0a322258d036000`.
 - Date: 2026-08-24
 
 ## Files changed
