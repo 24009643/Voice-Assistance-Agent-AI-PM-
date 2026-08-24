@@ -4,7 +4,7 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: automated gates passed at `246/246`; release **BLOCKED / manual incomplete**
+- Status: automated gates passed at `248/248`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
 - Evidence-sync HEAD: `866be5964ae598e7f3dc1616c0a322258d036000`
 - Commit: this record is committed with `test(v0.2): record island and organization acceptance`
@@ -95,7 +95,7 @@ Result before and after target-Mac acceptance: `git diff --check` passed and the
 
 ## Runner cleanup and gate adjudication sync
 
-- Runner cleanup commits `23d7406..753b517` remain `implemented`, `review-clean`, and `passed-automated`. The Task 7 exact-HEAD offline clean snapshot passed `246/246`; the fresh Debug build also passed. This does not imply target-device or manual proof beyond the focused Task 7 field-integrity check.
+- Runner cleanup commits `23d7406..753b517` remain `implemented`, `review-clean`, and `passed-automated`. The fresh exact-HEAD `866be59` offline clean snapshot passed `248/248`; the fresh Debug build also passed. This does not imply target-device or manual proof beyond the focused Task 7 field-integrity check.
 - Desktop-hosted source reads were obstructed by TCC (`kTCCServiceSystemPolicyAllFiles`, `authValue=0`). Validation used an exact-HEAD `/tmp` source snapshot with the existing dependency lock; no Full Disk Access was requested or granted. This is an evidence-environment fact, not a product permission requirement.
 - V02-M02 is `passed-manual (adjudicated)`: three intentionally successful product cycles each had one persisted record, one automatic local copy, immediate clipboard equality and zero organization recopy. Failure attempts are excluded from the passing-cycle count.
 - V02-M08 is `blocked`: production parser/validator/persistence/zero-history behavior was observed, but the acceptance window made `3` Provider requests versus exactly `1` allowed. Direct smoke and loopback evidence do not substitute.
@@ -181,7 +181,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed. M07 is now `partial-manual`: physical Option-Space/Escape cancellation and automatic collapse passed, while VoiceOver and Reduce Motion remain pending. M08, M09 and M10 remain blocked. The historical Critical runner incident remains open. The exact-HEAD automated `246/246` result and Debug build do not promote Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
+`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed. M07 is now `partial-manual`: physical Option-Space/Escape cancellation and automatic collapse passed, while VoiceOver and Reduce Motion remain pending. M08, M09 and M10 remain blocked. The historical Critical runner incident remains open. The exact-HEAD automated `248/248` result and Debug build at `866be59` do not promote Provider, accessibility, Golden Set, stability or release status; fresh authorized evidence is still required for the remaining gates.
 
 ## Rollback
 
