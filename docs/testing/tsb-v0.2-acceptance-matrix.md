@@ -34,7 +34,8 @@ The lifecycle-correction post-review automated gate at exact `2cde526` is `passe
 | VoiceOver for the current resident menu/island recovery controls | Not exercised at `2cde526` | pending-manual |
 | V02-M09 Golden Set | 22 paired bundles; no qualified 30-record semantic worksheet | blocked |
 | V02-M10 100-cycle timing/stability | Historical run is failed/ineligible; no new authorized run | blocked |
-| Merge/release | No user authorization; manual and evidence gates remain | blocked |
+| Reachable-history owner disposition | Historical reachable-history diagnostics still require explicit owner disposition | blocked |
+| Merge/push/release | No user authorization; manual and evidence gates remain | blocked |
 
 ## Semantic boundary
 

@@ -31,4 +31,4 @@ The final independent whole-range review reported no Critical, Important, or Min
 ## Final verdict
 
 - Code ready to merge: **yes**, subject to the exact post-review automated gate and evidence synchronization.
-- Release complete: **no**. Target-Mac microphone/live-preview checks, current VoiceOver verification, M09, M10, merge authorization, and release authorization remain separate gates.
+- Release complete: **no**. Target-Mac microphone/live-preview checks, current VoiceOver verification, M09, M10, reachable-history owner disposition, merge authorization, push authorization, and release authorization remain separate gates.
