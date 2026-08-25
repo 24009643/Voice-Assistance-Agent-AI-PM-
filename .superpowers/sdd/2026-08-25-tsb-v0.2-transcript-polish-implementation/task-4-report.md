@@ -43,3 +43,28 @@
 ## Commit
 
 - `feat(v0.2): deliver polished transcripts with deadline` (current HEAD after commit)
+
+## Fix round 1
+
+### Review findings and RED evidence
+
+- Durable-save deadline anchor: `testDelayedDeadlineTaskStartSleepsOnlyUntilLocalSaveDeadline` failed because the deadline task requested 1,500 ms after already starting 700 ms late, instead of the remaining 800 ms. A second deterministic case covers task start after expiry and proves immediate fallback without invoking the sleeper.
+- Timeout and dispatch receipt: the deadline test failed unwrapping a missing `TranscriptPolishRecord`. The post-`willDispatch` failure test likewise failed on a missing record, proving the old error-type check discarded real sent metadata.
+- Post-local revoke: the coordinator race test failed to compile because `cancelPendingPolishAfterRevoke` did not exist. The test uses cancellation-insensitive network/deadline continuations and asserts a persisted `.cancelled` artifact, one local copy, and no late save/recopy.
+- Stop-to-copy timing: the accepted-path test advanced the continuous clock by 50 ms during accepted-polish persistence and 25 ms during clipboard copy; RED reported 700 ms instead of the required 775 ms.
+- RED result directories: `/tmp/tsb-polish-task4-fix1-red`, `/tmp/tsb-polish-task4-fix2-red`, `/tmp/tsb-polish-task4-fix3-red`, `/tmp/tsb-polish-task4-metric-red`, and `/tmp/tsb-polish-task4-postdispatch-red`.
+
+### Fixes
+
+- The deadline task now computes `savedAt + 1.5 seconds` from `localFinalSavedAt`, sleeps only the positive remainder, and enters fallback immediately when task execution begins at or past the physical deadline.
+- A dispatched timeout or physically late success best-effort persists `.timedOut` with request/provider/model/kind/count/elapsed metadata before copying durable local text. Pre-dispatch `.notEligible` persists no sent claim; other pre-dispatch failures persist `.failed` with all dispatch fields nil; errors after `willDispatch` retain sent metadata.
+- Successful `SettingsModel.revokePolishAccess()` calls an injected default-no-op callback. `TSBAppDelegate` constructs the production model through that callback and `AppController` synchronously enters the coordinator transition. The coordinator invalidates ownership, cancels both handles, reserves the lease, best-effort persists `.cancelled` only when dispatch occurred, and copies local once. Cancellation-insensitive late completions cannot mutate disk or clipboard.
+- Network, deadline, and revoke now share the same main-actor `transitionDelivery` lease transition. Organization remains post-delivery and receives the exact delivered text.
+- `stopToCopyMilliseconds` samples `continuousNow` only after the clipboard call returns, so accepted persistence and clipboard time are included.
+
+### GREEN and self-review
+
+- Command: `xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -derivedDataPath /tmp/tsb-polish-task4-fixround-final CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/SessionCoordinatorTests -only-testing:TSBTests/TranscriptStoreTests -only-testing:TSBTests/SettingsBehaviorTests test`.
+- Result: 150 tests passed, zero failures: 112 coordinator, 17 storage, and 21 settings/AppDelegate behavior tests.
+- `git diff --check` is clean. Focused scan found no task group, drain pattern, or new logging. No consent persistence semantics, dependency package, network client, or UI styling changed.
+- Default signing remains blocked by the pre-existing malformed static `onnxruntime.framework`; the focused source/test build passes with signing disabled.

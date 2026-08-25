@@ -380,6 +380,10 @@ final class AppController: ObservableObject {
         screenParameterObserver?.stop()
     }
 
+    func cancelPendingPolishAfterRevoke() {
+        coordinator.cancelPendingPolishAfterRevoke()
+    }
+
     func toggleForDevelopment() {
         guard bypassesMicrophonePermissionForDevelopment else {
             receive(.toggleRecording)

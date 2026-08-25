@@ -32,9 +32,14 @@ final class SettingsModel: ObservableObject {
     @Published private(set) var errorMessage: String?
 
     private let store: OrganizationSettingsStore
+    private let onPolishAccessRevoked: @MainActor () -> Void
 
-    init(store: OrganizationSettingsStore = OrganizationSettingsStore()) {
+    init(
+        store: OrganizationSettingsStore = OrganizationSettingsStore(),
+        onPolishAccessRevoked: @escaping @MainActor () -> Void = {}
+    ) {
         self.store = store
+        self.onPolishAccessRevoked = onPolishAccessRevoked
         do {
             try reloadPersistedState()
         } catch {
@@ -111,6 +116,7 @@ final class SettingsModel: ObservableObject {
             try reloadPersistedState()
             status = .polishRevoked
             errorMessage = nil
+            onPolishAccessRevoked()
         } catch {
             reloadAfterFailedDestructiveAction("撤销润色授权失败；未确认密钥已删除。")
         }

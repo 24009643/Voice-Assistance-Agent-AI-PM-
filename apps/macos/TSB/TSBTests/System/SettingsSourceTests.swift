@@ -82,6 +82,31 @@ final class SettingsSourceTests: XCTestCase {
 
 @MainActor
 final class SettingsBehaviorTests: XCTestCase {
+    func testSuccessfulPolishRevokeInvokesPendingDeliveryCancellationOnce() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let endpoint = try OrganizationEndpointSettings(
+            baseURL: URL(string: "https://example.test/v1/chat/completions")!,
+            model: "polish-model"
+        )
+        try fixture.store.save(OrganizationSettings(
+            endpoint: endpoint,
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        ), apiKey: UUID().uuidString)
+        var cancellations = 0
+        let model = TSBAppDelegate.makeSettingsModel(
+            store: fixture.store,
+            cancelPendingPolish: { cancellations += 1 }
+        )
+
+        model.revokePolishAccess()
+
+        XCTAssertEqual(model.status, .polishRevoked)
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertFalse(fixture.store.load().isPolishDispatchEligible)
+    }
+
     func testRemoteSaveRequiresConfirmedConsentAndLaterDispatchUsesPersistedConsent() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

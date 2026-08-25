@@ -164,6 +164,8 @@ final class SessionCoordinatorTests: XCTestCase {
                 transcript: "use T S B",
                 organizationSettings: polishSettings(),
                 suspendsPolish: true,
+                saveClockAdvances: [1: .milliseconds(50)],
+                copyClockAdvance: .milliseconds(25),
                 continuousClock: clock,
                 sessionsDirectory: root
             )
@@ -181,12 +183,13 @@ final class SessionCoordinatorTests: XCTestCase {
             let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
             let saveCount = harness.savedRecords.count
 
+            XCTAssertEqual(harness.polishInputs.count, 1)
             XCTAssertEqual(saveCount, 2)
             XCTAssertEqual(harness.savedRecords.last?.polish?.state, .accepted)
             XCTAssertEqual(harness.copiedTexts, [polished])
             XCTAssertEqual(harness.deliveryReceipts.single?.source, .polished)
             XCTAssertEqual(harness.deliveryReceipts.single?.stopToLocalFinalMilliseconds, 600)
-            XCTAssertEqual(harness.deliveryReceipts.single?.stopToCopyMilliseconds, 700)
+            XCTAssertEqual(harness.deliveryReceipts.single?.stopToCopyMilliseconds, 775)
             XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "saved")), try XCTUnwrap(harness.timeline.lastIndex(of: "saved")))
             XCTAssertLessThan(try XCTUnwrap(harness.timeline.lastIndex(of: "saved")), try XCTUnwrap(harness.timeline.firstIndex(of: "copied")))
             XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, polished)
@@ -198,6 +201,48 @@ final class SessionCoordinatorTests: XCTestCase {
             XCTAssertEqual(harness.copyCount, 1)
             XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, polished)
         }
+    }
+
+    func testDelayedDeadlineTaskStartSleepsOnlyUntilLocalSaveDeadline() async {
+        let clock = ManualContinuousClock()
+        let harness = CoordinatorHarness(
+            transcript: "deadline anchored to save",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            polishStartClockAdvance: .milliseconds(700),
+            continuousClock: clock
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitUntilPolishStarts()
+        await harness.waitUntilPolishDeadlineStarts(expectedDuration: .milliseconds(800))
+
+        XCTAssertEqual(harness.polishInputs.count, 1)
+        XCTAssertEqual(harness.savedRecords.count, 1)
+    }
+
+    func testDeadlineTaskStartingAfterSavedDeadlineFallsBackWithoutSleeping() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "already past deadline",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            polishStartClockAdvance: .milliseconds(1_600)
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitForDelivery()
+        let timedOut = try XCTUnwrap(harness.savedRecords.last?.polish)
+        let requestedDurations = await harness.requestedPolishDeadlineDurations()
+
+        XCTAssertEqual(harness.polishInputs.count, 1)
+        XCTAssertEqual(requestedDurations, [])
+        XCTAssertEqual(timedOut.state, .timedOut)
+        XCTAssertEqual(timedOut.elapsedMilliseconds, 1_600)
+        XCTAssertEqual(harness.copiedTexts, ["already past deadline"])
     }
 
     func testDeadlineCopiesDurableLocalOnceAndLatePolishCannotSaveOrRecopy() async throws {
@@ -217,10 +262,18 @@ final class SessionCoordinatorTests: XCTestCase {
             await harness.waitForDelivery()
             let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
             let saveCount = harness.savedRecords.count
+            let timedOut = try XCTUnwrap(try harness.store?.load(id: sessionID).polish)
 
-            XCTAssertEqual(saveCount, 1)
+            XCTAssertEqual(harness.polishInputs.count, 1)
+            XCTAssertEqual(saveCount, 2)
             XCTAssertEqual(harness.copiedTexts, ["durable local"])
             XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
+            XCTAssertEqual(timedOut.state, .timedOut)
+            XCTAssertEqual(timedOut.provider, "openai-compatible")
+            XCTAssertEqual(timedOut.model, "polish-model")
+            XCTAssertEqual(timedOut.providerKind, .remote)
+            XCTAssertEqual(timedOut.sentCharacterCount, "durable local".count)
+            XCTAssertEqual(timedOut.elapsedMilliseconds, 1_500)
             XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "saved")), try XCTUnwrap(harness.timeline.firstIndex(of: "copied")))
 
             harness.completePolish(.accepted(baseCandidateID: .offline, text: "late polish", edits: []))
@@ -228,7 +281,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
             XCTAssertEqual(harness.savedRecords.count, saveCount)
             XCTAssertEqual(harness.copyCount, 1)
-            XCTAssertNil(try harness.store?.load(id: sessionID).polish)
+            XCTAssertEqual(try harness.store?.load(id: sessionID).polish, timedOut)
             XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, "durable local")
         }
     }
@@ -246,14 +299,73 @@ final class SessionCoordinatorTests: XCTestCase {
         clock.advance(by: .milliseconds(1_501))
         harness.completePolish(.accepted(baseCandidateID: .offline, text: "physically late", edits: []))
         await harness.waitForDelivery()
+        let timedOut = try XCTUnwrap(harness.savedRecords.last?.polish)
 
-        XCTAssertEqual(harness.savedRecords.count, 1)
+        XCTAssertEqual(harness.polishInputs.count, 1)
+        XCTAssertEqual(harness.savedRecords.count, 2)
         XCTAssertEqual(harness.copiedTexts, ["physical local"])
         XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
+        XCTAssertEqual(timedOut.state, .timedOut)
+        XCTAssertEqual(timedOut.provider, "openai-compatible")
+        XCTAssertEqual(timedOut.model, "polish-model")
+        XCTAssertEqual(timedOut.providerKind, .remote)
+        XCTAssertEqual(timedOut.sentCharacterCount, "physical local".count)
+        XCTAssertEqual(timedOut.elapsedMilliseconds, 1_501)
 
         await harness.firePolishDeadline()
         for _ in 0..<20 { await Task.yield() }
         XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testPreDispatchNotEligibleFallbackDoesNotClaimTextWasSent() async throws {
+        let harness = CoordinatorHarness(transcript: "not eligible stays local")
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.polishInputs.count, 0)
+        XCTAssertEqual(harness.savedRecords.count, 1)
+        XCTAssertNil(harness.savedRecords.single?.polish)
+        XCTAssertEqual(harness.copiedTexts, ["not eligible stays local"])
+    }
+
+    func testPreDispatchPolishFailurePersistsUnsentReceiptWithoutDispatchMetadata() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "pre-dispatch failure stays local",
+            polishPreDispatchError: TestError.disk
+        )
+
+        await harness.runOneSession()
+        let failed = try XCTUnwrap(harness.savedRecords.last?.polish)
+
+        XCTAssertEqual(harness.polishInputs.count, 0)
+        XCTAssertEqual(harness.savedRecords.count, 2)
+        XCTAssertEqual(failed.state, .failed)
+        XCTAssertNil(failed.provider)
+        XCTAssertNil(failed.model)
+        XCTAssertNil(failed.providerKind)
+        XCTAssertNil(failed.sentCharacterCount)
+        XCTAssertEqual(failed.errorCode, "polish_failed")
+        XCTAssertEqual(harness.copiedTexts, ["pre-dispatch failure stays local"])
+    }
+
+    func testFailureAfterWillDispatchPersistsSentDispatchMetadata() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "post-dispatch failure stays local",
+            organizationSettings: polishSettings()
+        )
+
+        await harness.runOneSession()
+        let failed = try XCTUnwrap(harness.savedRecords.last?.polish)
+
+        XCTAssertEqual(harness.polishInputs.count, 1)
+        XCTAssertEqual(harness.savedRecords.count, 2)
+        XCTAssertEqual(failed.state, .failed)
+        XCTAssertEqual(failed.provider, "openai-compatible")
+        XCTAssertEqual(failed.model, "polish-model")
+        XCTAssertEqual(failed.providerKind, .remote)
+        XCTAssertEqual(failed.sentCharacterCount, "post-dispatch failure stays local".count)
+        XCTAssertEqual(failed.errorCode, "polish_failed")
+        XCTAssertEqual(harness.copiedTexts, ["post-dispatch failure stays local"])
     }
 
     func testAcceptedPolishSaveFailureFallsBackInsideLeaseAndCopiesLocalOnce() async throws {
@@ -271,6 +383,7 @@ final class SessionCoordinatorTests: XCTestCase {
             await harness.waitForDelivery()
             let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
 
+            XCTAssertEqual(harness.polishInputs.count, 1)
             XCTAssertEqual(harness.copyCount, 1)
             XCTAssertEqual(harness.copiedTexts, ["safe local"])
             XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
@@ -299,10 +412,47 @@ final class SessionCoordinatorTests: XCTestCase {
             await harness.firePolishDeadline()
             for _ in 0..<20 { await Task.yield() }
 
+            XCTAssertEqual(harness.polishInputs.count, 1)
             XCTAssertEqual(harness.savedRecords.count, 1)
             XCTAssertEqual(harness.copyCount, 0)
             XCTAssertEqual(try harness.store?.load(id: sessionID).localCleanedText, "shutdown durable local")
             XCTAssertNil(try harness.store?.load(id: sessionID).polish)
+        }
+    }
+
+    func testRevokingPolishAfterDispatchCopiesLocalOnceAndRejectsLateCompletion() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "durable local after revoke",
+                organizationSettings: polishSettings(),
+                suspendsPolish: true,
+                sessionsDirectory: root
+            )
+
+            await harness.runUntilPolishStarts()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            harness.coordinator.cancelPendingPolishAfterRevoke()
+            await harness.waitForDelivery()
+            let cancelled = try XCTUnwrap(try harness.store?.load(id: sessionID).polish)
+            let saveCount = harness.savedRecords.count
+
+            XCTAssertEqual(harness.polishInputs.count, 1)
+            XCTAssertEqual(saveCount, 2)
+            XCTAssertEqual(cancelled.state, .cancelled)
+            XCTAssertEqual(cancelled.provider, "openai-compatible")
+            XCTAssertEqual(cancelled.model, "polish-model")
+            XCTAssertEqual(cancelled.providerKind, .remote)
+            XCTAssertEqual(cancelled.sentCharacterCount, "durable local after revoke".count)
+            XCTAssertEqual(harness.copiedTexts, ["durable local after revoke"])
+
+            harness.completePolish(.accepted(baseCandidateID: .offline, text: "revoked late polish", edits: []))
+            await harness.firePolishDeadline()
+            for _ in 0..<20 { await Task.yield() }
+
+            XCTAssertEqual(harness.savedRecords.count, saveCount)
+            XCTAssertEqual(harness.copyCount, 1)
+            XCTAssertEqual(try harness.store?.load(id: sessionID).polish, cancelled)
+            XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, "durable local after revoke")
         }
     }
 
@@ -356,6 +506,7 @@ final class SessionCoordinatorTests: XCTestCase {
         let copyCountAtDelivery = harness.copyCount
         await harness.waitUntilOrganizationFinishes()
 
+        XCTAssertEqual(harness.polishInputs.count, 1)
         XCTAssertEqual(harness.organizationInputs.single?.segments.map(\.text), ["organization polished"])
         XCTAssertEqual(harness.copyCount, copyCountAtDelivery)
         XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "copied")), try XCTUnwrap(harness.timeline.firstIndex(of: "organization:pending")))
@@ -2543,6 +2694,10 @@ private final class CoordinatorHarness {
     private let suspendsPreviewCancellation: Bool
     private let suspendsOrganization: Bool
     private let suspendsPolish: Bool
+    private let polishStartClockAdvance: Duration?
+    private let polishPreDispatchError: Error?
+    private let saveClockAdvances: [Int: Duration]
+    private let copyClockAdvance: Duration?
     private let copyResult: Bool
     private let startRecordingErrors: [Error?]
     private var organizationSettings: OrganizationSettings
@@ -2618,6 +2773,10 @@ private final class CoordinatorHarness {
         organizationAPIKey: String = "synthetic-key",
         suspendsOrganization: Bool = false,
         suspendsPolish: Bool = false,
+        polishStartClockAdvance: Duration? = nil,
+        polishPreDispatchError: Error? = nil,
+        saveClockAdvances: [Int: Duration] = [:],
+        copyClockAdvance: Duration? = nil,
         organizationErrors: [Error?] = [],
         organizationWriteFailures: Set<Int> = [],
         persistedRecords: [TranscriptRecord] = [],
@@ -2646,6 +2805,10 @@ private final class CoordinatorHarness {
         self.organizationAPIKey = organizationAPIKey
         self.suspendsOrganization = suspendsOrganization
         self.suspendsPolish = suspendsPolish
+        self.polishStartClockAdvance = polishStartClockAdvance
+        self.polishPreDispatchError = polishPreDispatchError
+        self.saveClockAdvances = saveClockAdvances
+        self.copyClockAdvance = copyClockAdvance
         self.organizationErrors = organizationErrors
         self.organizationWriteFailures = organizationWriteFailures
         self.persistedRecords = persistedRecords
@@ -2741,6 +2904,9 @@ private final class CoordinatorHarness {
                     self.saveAttemptCount += 1
                     if self.saveFailures.contains(attempt) { throw TestError.disk }
                     try self.store?.save(record)
+                    if let duration = self.saveClockAdvances[attempt] {
+                        self.continuousClock.advance(by: duration)
+                    }
                     self.events.append(.saved)
                     self.timeline.append("saved")
                     self.savedRecords.append(record)
@@ -2761,6 +2927,9 @@ private final class CoordinatorHarness {
                     self?.timeline.append("delivery:\(status.rawValue)")
                 },
                 copy: { [weak self] text in
+                    if let duration = self?.copyClockAdvance {
+                        self?.continuousClock.advance(by: duration)
+                    }
                     self?.events.append(.copied)
                     self?.copyCount += 1
                     self?.copiedTexts.append(text)
@@ -2786,6 +2955,9 @@ private final class CoordinatorHarness {
                 },
                 polish: { [weak self] request, localOnly, willDispatch in
                     guard let self else { throw TestError.deallocated }
+                    if let polishPreDispatchError = self.polishPreDispatchError {
+                        throw polishPreDispatchError
+                    }
                     let dispatch = try AppController.makePolishDispatchSnapshot(
                         localOnly: localOnly,
                         loadSettings: { self.organizationSettings },
@@ -2799,6 +2971,9 @@ private final class CoordinatorHarness {
                         endpoint: dispatch.endpoint,
                         providerKind: providerKind
                     ))
+                    if let duration = self.polishStartClockAdvance {
+                        self.continuousClock.advance(by: duration)
+                    }
                     guard self.suspendsPolish else {
                         throw TranscriptPolishDispatchError.notEligible
                     }
@@ -2894,11 +3069,11 @@ private final class CoordinatorHarness {
         await waitUntilPolishDeadlineStarts()
     }
 
-    func waitUntilPolishDeadlineStarts() async {
+    func waitUntilPolishDeadlineStarts(expectedDuration: Duration = .milliseconds(1_500)) async {
         let deadlineStarted = await polishDeadlineSleeper.waitUntilStarted()
         let durations = await polishDeadlineSleeper.requestedDurations()
         XCTAssertTrue(deadlineStarted)
-        XCTAssertEqual(durations, [.milliseconds(1_500)])
+        XCTAssertEqual(durations, [expectedDuration])
         XCTAssertEqual(savedRecords.count, 1)
     }
 
@@ -3045,6 +3220,10 @@ private final class CoordinatorHarness {
 
     func firePolishDeadline(at index: Int = 0) async {
         await polishDeadlineSleeper.fire(at: index)
+    }
+
+    func requestedPolishDeadlineDurations() async -> [Duration] {
+        await polishDeadlineSleeper.requestedDurations()
     }
 
     func waitUntilOrganizationFinishes() async {
