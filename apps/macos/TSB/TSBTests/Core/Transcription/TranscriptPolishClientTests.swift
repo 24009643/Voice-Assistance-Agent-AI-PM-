@@ -14,7 +14,7 @@ final class TranscriptPolishClientTests: XCTestCase {
             let messages = try XCTUnwrap(outer["messages"] as? [[String: String]])
             XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
             let system = try XCTUnwrap(messages.first?["content"])
-            for clause in ["tsb.transcript_polish.response.v1", "offline then streaming", "numbers, URLs, emails", "8000 scalars", "<=20%", "4 Unicode scalars"] { XCTAssertTrue(system.contains(clause)) }
+            for clause in ["schema_version, request_id, candidate_hashes, base_candidate_id, corrected_text, edits", "tsb.transcript_polish.response.v1", "offline then streaming", "kind,start_utf16,length_utf16,original,replacement,reason", "<=8000 Unicode scalars", "edits <=128", "<=256 scalars", "reason <=120", "ceil(20%", "nonoverlapping", "Numbers, URLs, and emails are immutable", "whitespace, punctuation, or Latin case", "exact submitted alias to canonical", "corresponding contiguous location", "Do not summarize, answer, add examples/new facts, or make context-only inference"] { XCTAssertTrue(system.contains(clause), clause) }
             let inner = try XCTUnwrap(messages.last?["content"])
             XCTAssertLessThanOrEqual(Data(inner.utf8).count, TranscriptPolishClient.maximumInnerBytes)
             XCTAssertFalse(inner.contains("audio")); XCTAssertFalse(inner.contains("session")); XCTAssertFalse(inner.contains("history"))
@@ -58,18 +58,19 @@ final class TranscriptPolishClientTests: XCTestCase {
     func testRejectsRedirectBeforeTargetReceivesTranscript() async throws {
         let origin = URL(string: "https://origin.test/chat")!, target = URL(string: "https://attacker.test/collect")!
         let urls = URLList()
-        let observed = expectation(description: "origin observed")
+        let observed = expectation(description: "origin observed"), rejected = expectation(description: "delegate rejected redirect")
         PolishURLProtocol.handler = { request in urls.append(request.url!); observed.fulfill(); return .redirect(target) }
-        let client = client(url: origin.absoluteString), request = fixtureRequest()
+        let client = client(url: origin.absoluteString, onRedirectRejected: { rejected.fulfill() }), request = fixtureRequest()
         let task = Task { try await client.polish(request, apiKey: "key") }
         await fulfillment(of: [observed], timeout: 1)
+        await fulfillment(of: [rejected], timeout: 1)
         XCTAssertEqual(urls.values, [origin])
         task.cancel()
         do { _ = try await task.value; XCTFail("expected cancellation") } catch { XCTAssertTrue(error is CancellationError || error is URLError) }
     }
 
     private func fixtureRequest() -> TranscriptPolishRequest { TranscriptPolishRequest(requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000042")!, candidates: [.init(id: .offline, text: "Use TB for this dictation"), .init(id: .streaming, text: "Use TSB for this dictation")], terminology: [.init(canonical: "TSB", aliases: ["TB"])]) }
-    private func client(url: String = "https://example.test/chat") -> TranscriptPolishClient { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [PolishURLProtocol.self]; return TranscriptPolishClient(endpoint: .init(baseURL: URL(string: url)!, model: "test-model"), session: URLSession(configuration: c)) }
+    private func client(url: String = "https://example.test/chat", onRedirectRejected: @escaping @Sendable () -> Void = {}) -> TranscriptPolishClient { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [PolishURLProtocol.self]; return TranscriptPolishClient(endpoint: .init(baseURL: URL(string: url)!, model: "test-model"), session: URLSession(configuration: c), onRedirectRejected: onRedirectRejected) }
     private func makeInnerResponse(for request: TranscriptPolishRequest) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: ["schema_version": "tsb.transcript_polish.response.v1", "request_id": request.requestID.uuidString.lowercased(), "candidate_hashes": request.candidates.map { ["candidate_id": $0.id.rawValue, "text_sha256": $0.textSHA256] }, "base_candidate_id": "offline", "corrected_text": "Use TSB for this dictation", "edits": [["kind": "terminology", "start_utf16": 4, "length_utf16": 2, "original": "TB", "replacement": "TSB", "reason": "approved"]]], options: [.sortedKeys]), as: UTF8.self) }
     private func makeOuterResponse(content: String) -> Data { try! JSONSerialization.data(withJSONObject: ["choices": [["message": ["role": "assistant", "content": content]]]]) }
 }
