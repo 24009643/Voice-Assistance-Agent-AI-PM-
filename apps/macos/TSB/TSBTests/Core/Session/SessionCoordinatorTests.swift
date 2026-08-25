@@ -498,6 +498,7 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.coordinator.handle(.toggleRecording)
         await harness.finishRecording()
         await harness.waitUntilTranscriptionStarts()
+        let processingSessionID = try XCTUnwrap(harness.startedSessionIDs.last)
         await harness.coordinator.handle(.toggleRecording)
         let activeRecordingID = try XCTUnwrap(harness.startedSessionIDs.last)
         let controller = AppController(state: AppState(), coordinator: harness.coordinator)
@@ -510,6 +511,7 @@ final class SessionCoordinatorTests: XCTestCase {
         await Task.yield()
         XCTAssertTrue(harness.savedRecords.isEmpty)
         XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(Set(harness.cancelledPreviewSessionIDs), [processingSessionID, activeRecordingID])
     }
 
     func testShutdownCancelsDeliveredBlockedHistoryBeforeOrganizationCanStart() async {
@@ -564,10 +566,15 @@ final class SessionCoordinatorTests: XCTestCase {
 
     func testStopThenShutdownPreservesPendingAudioDirectory() async throws {
         try await withTemporarySessionsRoot { root in
-            let harness = CoordinatorHarness(transcript: "pending finalization", sessionsDirectory: root)
+            let harness = CoordinatorHarness(
+                transcript: "pending finalization",
+                suspendsPreviewCancellation: true,
+                sessionsDirectory: root
+            )
 
             await harness.coordinator.handle(.toggleRecording)
             let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let identity = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
             let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
             let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
             try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
@@ -575,10 +582,21 @@ final class SessionCoordinatorTests: XCTestCase {
 
             await harness.coordinator.handle(.toggleRecording)
             harness.coordinator.shutdown()
+            for _ in 0..<100 where !harness.cancelledPreviewSessionIDs.contains(sessionID) {
+                await Task.yield()
+            }
 
             XCTAssertEqual(harness.stopCount, 1)
             XCTAssertEqual(try Data(contentsOf: audioURL), Data("pending audio".utf8))
             XCTAssertTrue(FileManager.default.fileExists(atPath: sessionDirectory.path))
+            XCTAssertEqual(harness.cancelledPreviewSessionIDs, [sessionID])
+            XCTAssertFalse(harness.coordinator.isDevelopmentWorkDrained(identity))
+
+            harness.completePreviewCancellation()
+            for _ in 0..<100 where !harness.coordinator.isDevelopmentWorkDrained(identity) {
+                await Task.yield()
+            }
+            XCTAssertTrue(harness.coordinator.isDevelopmentWorkDrained(identity))
         }
     }
 
@@ -2207,6 +2225,7 @@ private final class CoordinatorHarness {
     private let statusWriteError: Error?
     private let cleanupError: Error?
     private let suspendsTranscription: Bool
+    private let suspendsPreviewCancellation: Bool
     private let suspendsOrganization: Bool
     private let copyResult: Bool
     private let startRecordingErrors: [Error?]
@@ -2229,6 +2248,7 @@ private final class CoordinatorHarness {
     private var onLevel: [(@Sendable (Float) -> Void)] = []
     private var pcmFeeds: [LivePreviewPipeline.Feed] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
+    private var previewCancellationContinuations: [CheckedContinuation<Void, Never>?] = []
     private var organizationContinuations: [UnsafeContinuation<OrganizationOutput, Never>?] = []
     private var historySuggestionsContinuations: [CheckedContinuation<HistorySuggestions, Error>?] = []
     let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
@@ -2267,6 +2287,7 @@ private final class CoordinatorHarness {
         statusWriteError: Error? = nil,
         cleanupError: Error? = nil,
         suspendsTranscription: Bool = false,
+        suspendsPreviewCancellation: Bool = false,
         copyResult: Bool = true,
         startRecordingErrors: [Error?] = [],
         organizationSettings: OrganizationSettings = OrganizationSettings(),
@@ -2291,6 +2312,7 @@ private final class CoordinatorHarness {
         self.statusWriteError = statusWriteError
         self.cleanupError = cleanupError
         self.suspendsTranscription = suspendsTranscription
+        self.suspendsPreviewCancellation = suspendsPreviewCancellation
         self.copyResult = copyResult
         self.startRecordingErrors = startRecordingErrors
         self.organizationSettings = organizationSettings
@@ -2351,8 +2373,12 @@ private final class CoordinatorHarness {
                     return self?.streamingText ?? ""
                 },
                 cancelPreview: { [weak self] sessionID in
-                    self?.cancelledPreviewSessionIDs.append(sessionID)
-                    await self?.livePreviewPipeline?.cancel(sessionID: sessionID)
+                    guard let self else { return }
+                    self.cancelledPreviewSessionIDs.append(sessionID)
+                    if self.suspendsPreviewCancellation {
+                        await withCheckedContinuation { self.previewCancellationContinuations.append($0) }
+                    }
+                    await self.livePreviewPipeline?.cancel(sessionID: sessionID)
                 },
                 transcribe: { [weak self] _ in
                     guard let self else { throw TestError.deallocated }
@@ -2654,6 +2680,11 @@ private final class CoordinatorHarness {
     func completeTranscription(at index: Int = 0) {
         transcriptionContinuations[index]?.resume(returning: TranscriptionResult(text: transcript, detectedLanguage: "zh", eventTags: [], latencyMilliseconds: 12))
         transcriptionContinuations[index] = nil
+    }
+
+    func completePreviewCancellation(at index: Int = 0) {
+        previewCancellationContinuations[index]?.resume()
+        previewCancellationContinuations[index] = nil
     }
 }
 

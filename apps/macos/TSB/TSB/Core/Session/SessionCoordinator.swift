@@ -146,11 +146,11 @@ final class SessionCoordinator {
         for task in processingTasks.values {
             task.cancel()
         }
-        for sessionID in sessions.values.compactMap({
-            $0.status == .recording && !$0.stopRequested ? $0.id : nil
-        }) {
-            dependencies.cancelRecording(sessionID)
-            _ = trackPreviewCancellation(sessionID)
+        for session in sessions.values {
+            if session.status == .recording && !session.stopRequested {
+                dependencies.cancelRecording(session.id)
+            }
+            _ = trackPreviewCancellation(session.id)
         }
         recordingSessionID = nil
         processingTasks.removeAll()
