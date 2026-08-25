@@ -87,7 +87,14 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
     let localEvaluationConsent: Bool?
     let reviewState: TranscriptReviewState
     let intendedUse: TranscriptIntendedUse
+    let terminologyEdits: [TranscriptTerminologyEdit]
+    let polish: TranscriptPolishRecord?
+    var deliveryReceipt: TranscriptDeliveryReceipt?
     var organization: OrganizationRecord?
+
+    var deliveredText: String {
+        deliveryReceipt?.source == .polished ? polish?.polishedText ?? localCleanedText : localCleanedText
+    }
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -108,6 +115,9 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         case localEvaluationConsent
         case reviewState
         case intendedUse
+        case terminologyEdits
+        case polish
+        case deliveryReceipt
         case organization
     }
 
@@ -130,6 +140,9 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         localEvaluationConsent: Bool? = nil,
         reviewState: TranscriptReviewState = .unreviewed,
         intendedUse: TranscriptIntendedUse = .localEvaluation,
+        terminologyEdits: [TranscriptTerminologyEdit] = [],
+        polish: TranscriptPolishRecord? = nil,
+        deliveryReceipt: TranscriptDeliveryReceipt? = nil,
         organization: OrganizationRecord? = nil
     ) {
         self.id = id
@@ -150,6 +163,9 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         self.localEvaluationConsent = localEvaluationConsent
         self.reviewState = reviewState
         self.intendedUse = intendedUse
+        self.terminologyEdits = terminologyEdits
+        self.polish = polish
+        self.deliveryReceipt = deliveryReceipt
         self.organization = organization
     }
 
@@ -173,6 +189,9 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
         localEvaluationConsent = try container.decodeIfPresent(Bool.self, forKey: .localEvaluationConsent)
         reviewState = try container.decodeIfPresent(TranscriptReviewState.self, forKey: .reviewState) ?? .unreviewed
         intendedUse = try container.decodeIfPresent(TranscriptIntendedUse.self, forKey: .intendedUse) ?? .localEvaluation
+        terminologyEdits = try container.decodeIfPresent([TranscriptTerminologyEdit].self, forKey: .terminologyEdits) ?? []
+        polish = try container.decodeIfPresent(TranscriptPolishRecord.self, forKey: .polish)
+        deliveryReceipt = try container.decodeIfPresent(TranscriptDeliveryReceipt.self, forKey: .deliveryReceipt)
         organization = try container.decodeIfPresent(OrganizationRecord.self, forKey: .organization)
     }
 }

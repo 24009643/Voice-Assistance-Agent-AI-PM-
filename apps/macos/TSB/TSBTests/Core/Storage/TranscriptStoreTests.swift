@@ -164,6 +164,47 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(rewritten.localCleanedText, record.localCleanedText)
     }
 
+    func testUpdateDeliveryAtomicallyRewritesStatusAndReceipt() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let record = makeRecord()
+        let store = TranscriptStore(directory: directory)
+        try store.save(record)
+        let receipt = TranscriptDeliveryReceipt(source: .polished, stopToLocalFinalMilliseconds: 100, stopToCopyMilliseconds: 200)
+
+        try store.updateDelivery(id: record.id, status: .copied, receipt: receipt)
+
+        let rewritten = try store.load(id: record.id)
+        XCTAssertEqual(rewritten.deliveryStatus, .copied)
+        XCTAssertEqual(rewritten.deliveryReceipt, receipt)
+    }
+
+    func testLegacyRecordDecodesWithoutNewFields() throws {
+        let record = try JSONDecoder().decode(TranscriptRecord.self, from: legacyEncodedData(for: makeRecord()))
+        XCTAssertTrue(record.terminologyEdits.isEmpty)
+        XCTAssertNil(record.polish)
+        XCTAssertNil(record.deliveryReceipt)
+    }
+
+    func testDeliveredTextUsesPolishedTextOnlyWhenReceiptSaysPolished() {
+        let polished = TranscriptPolishRecord(
+            requestID: UUID(), state: .accepted, baseCandidateID: .offline, polishedText: "polished",
+            reviewCandidateText: nil, edits: [], provider: nil, model: nil, providerKind: nil,
+            sentCharacterCount: nil, elapsedMilliseconds: nil, errorCode: nil, updatedAt: Date()
+        )
+        let plain = makeRecord()
+        let delivered = TranscriptRecord(
+            id: plain.id, ordinal: plain.ordinal, createdAt: plain.createdAt,
+            durationMilliseconds: plain.durationMilliseconds, detectedLanguages: plain.detectedLanguages,
+            originalText: plain.originalText, localCleanedText: plain.localCleanedText, edits: plain.edits,
+            deliveryStatus: plain.deliveryStatus, polish: polished,
+            deliveryReceipt: TranscriptDeliveryReceipt(source: .polished, stopToLocalFinalMilliseconds: 1, stopToCopyMilliseconds: 2)
+        )
+
+        XCTAssertEqual(delivered.deliveredText, "polished")
+        XCTAssertEqual(plain.deliveredText, plain.localCleanedText)
+    }
+
     func testUpdateOrganizationAtomicallyRewritesTheCanonicalRecord() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -278,7 +319,7 @@ final class TranscriptStoreTests: XCTestCase {
 
     private func legacyEncodedData(for record: TranscriptRecord) throws -> Data {
         var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as! [String: Any]
-        ["outcome", "error", "finalSource", "languageSlice", "localEvaluationConsent", "reviewState", "intendedUse"].forEach {
+        ["outcome", "error", "finalSource", "languageSlice", "localEvaluationConsent", "reviewState", "intendedUse", "terminologyEdits", "polish", "deliveryReceipt"].forEach {
             object.removeValue(forKey: $0)
         }
         return try JSONSerialization.data(withJSONObject: object)

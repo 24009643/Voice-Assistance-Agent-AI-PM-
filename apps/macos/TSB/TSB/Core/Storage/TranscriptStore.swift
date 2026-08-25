@@ -109,6 +109,13 @@ final class TranscriptStore {
         try update(id: id) { $0.deliveryStatus = status }
     }
 
+    func updateDelivery(id: SessionID, status: DeliveryStatus, receipt: TranscriptDeliveryReceipt) throws {
+        try update(id: id) {
+            $0.deliveryStatus = status
+            $0.deliveryReceipt = receipt
+        }
+    }
+
     func updateOrganization(id: SessionID, to organization: OrganizationRecord) throws {
         try update(id: id) { $0.organization = organization }
     }
