@@ -18,8 +18,8 @@ final class TranscriptPolishValidatorTests: XCTestCase {
     }
 
     func testContextOnlyRewriteRequiresReview() throws {
-        let request = makeRequest(offline: "清版内容保持原样")
-        let outcome = try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "这一版内容保持原样", edits: [edit(.candidateSupported, 0, 2, "清版", "这一版", "context")]), for: request)
+        let request = makeRequest(offline: "清版内容保持原样而且不会丢失")
+        let outcome = try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "这一版内容保持原样而且不会丢失", edits: [edit(.candidateSupported, 0, 2, "清版", "这一版", "context")]), for: request)
         guard case .reviewRequired = outcome else { return XCTFail("must not auto-accept") }
     }
 
@@ -44,6 +44,25 @@ final class TranscriptPolishValidatorTests: XCTestCase {
             let request = makeRequest(offline: pair.0)
             XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: pair.1, edits: [edit(.formatting, 0, pair.0.utf16.count, pair.0, pair.1, "bad")]), for: request))
         }
+    }
+
+    func testRejectsSmallImmutableChangesAndBooleanOrOverflowedRanges() throws {
+        let request = makeRequest(offline: "call 12345 safely today")
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "call 12346 safely today", edits: [edit(.formatting, 8, 1, "5", "6", "bad")]), for: request))
+        var object = try json(response(for: request, base: .offline, corrected: "call 12345 safely today", edits: []))
+        object["edits"] = [["kind": "formatting", "start_utf16": true, "length_utf16": 0, "original": "", "replacement": "", "reason": "bad"]]
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
+        object["edits"] = [["kind": "formatting", "start_utf16": Int.max, "length_utf16": 1, "original": "", "replacement": "", "reason": "bad"]]
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
+    }
+
+    func testRejectsZeroLengthInsertionBeyondChangeLimitAndUnanchoredCandidateEvidence() throws {
+        let request = makeRequest(offline: String(repeating: "a", count: 20), streaming: "xxxxEARTHyyyy")
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: String(repeating: "a", count: 20) + "abcdef", edits: [edit(.formatting, 20, 0, "", "abcdef", "insert")]), for: request))
+        let base = "left xxxx right and trailing content"
+        let unanchored = makeRequest(offline: base, streaming: "left earth elsewhere xxxx right")
+        let review = try TranscriptPolishValidator().validate(response(for: unanchored, base: .offline, corrected: "left earth right and trailing content", edits: [edit(.candidateSupported, 5, 4, "xxxx", "earth", "bad anchors")]), for: unanchored)
+        guard case .reviewRequired = review else { return XCTFail("must not accept separately occurring anchors") }
     }
 
     func testCandidateSupportedNeedsOtherCandidateAnchorEvidence() throws {

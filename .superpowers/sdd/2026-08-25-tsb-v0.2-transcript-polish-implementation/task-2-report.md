@@ -9,3 +9,11 @@ GREEN: `xcodebuild CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_ID
 Self-review: separate client, strict allowlisted DTO shapes, fixed byte/candidate/terminology limits, HTTPS-or-loopback gate, redirect delegate, single-choice response, no retries/logging/SDK/tools/streaming. Validator retains context-only rewrites as review-required and rejects immutable token changes.
 
 Concern: this task implements only the contract boundary; the coordinator-owned deadline, persistence, delivery lease, and settings consent are intentionally left for later tasks.
+
+## Fix round 1
+
+RED added regressions for streamed-overflow handling, loopback eligibility, irrelevant/empty terminology, immutable small edits, JSON booleans/overflow, insertions, unanchored candidate evidence, and Latin-only formatting. The original RED is labelled inconclusive: Info.plist failed before missing-interface evidence.
+
+GREEN: `xcodebuild CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -derivedDataPath /tmp/tsb-polish-task2-fix -only-testing:TSBTests/TranscriptPolishValidatorTests -only-testing:TSBTests/TranscriptPolishClientTests test` passed 13 tests, 0 failures. `git diff --check` passed.
+
+Fixes: response reads through `URLSession.bytes` with expected-length and per-byte 64 KiB rejection; system contract now declares strict shape and prohibitions; terminology requires nonempty, relevant exact values; immutable regex is corrected; candidate support uses one contiguous scalar-anchor slice; changed-unit arithmetic, edit range arithmetic, and JSON booleans are safe; formatting permits Latin case only. Redirect delegate remains covered by the existing client pattern; a dedicated redirect protocol regression is not present because the existing test stub does not model redirects.

@@ -45,6 +45,13 @@ final class TranscriptPolishClientTests: XCTestCase {
         do { _ = try await task.value; XCTFail("expected cancellation") } catch { XCTAssertTrue(error is CancellationError) }
     }
 
+    func testAllowsLoopbackAndRejectsEmptyOrIrrelevantTerminology() async throws {
+        PolishURLProtocol.handler = { _ in .response(self.makeOuterResponse(content: self.makeInnerResponse(for: self.fixtureRequest()))) }
+        _ = try await client(url: "http://127.0.0.1:11434/chat").polish(fixtureRequest(), apiKey: "")
+        let invalid = TranscriptPolishRequest(requestID: UUID(), candidates: [.init(id: .offline, text: "alpha")], terminology: [.init(canonical: "", aliases: ["x"]), .init(canonical: "unused", aliases: ["never"])])
+        await XCTAssertThrowsErrorAsync { try await self.client().polish(invalid, apiKey: "key") }
+    }
+
     private func fixtureRequest() -> TranscriptPolishRequest { TranscriptPolishRequest(requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000042")!, candidates: [.init(id: .offline, text: "Use TB for this dictation"), .init(id: .streaming, text: "Use TSB for this dictation")], terminology: [.init(canonical: "TSB", aliases: ["TB"])]) }
     private func client(url: String = "https://example.test/chat") -> TranscriptPolishClient { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [PolishURLProtocol.self]; return TranscriptPolishClient(endpoint: .init(baseURL: URL(string: url)!, model: "test-model"), session: URLSession(configuration: c)) }
     private func makeInnerResponse(for request: TranscriptPolishRequest) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: ["schema_version": "tsb.transcript_polish.response.v1", "request_id": request.requestID.uuidString.lowercased(), "candidate_hashes": request.candidates.map { ["candidate_id": $0.id.rawValue, "text_sha256": $0.textSHA256] }, "base_candidate_id": "offline", "corrected_text": "Use TSB for this dictation", "edits": [["kind": "terminology", "start_utf16": 4, "length_utf16": 2, "original": "TB", "replacement": "TSB", "reason": "approved"]]], options: [.sortedKeys]), as: UTF8.self) }
