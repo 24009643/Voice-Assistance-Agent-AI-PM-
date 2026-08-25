@@ -19,10 +19,23 @@ final class SessionCoordinator {
         let clean: @MainActor (String) throws -> CleanResult
         let save: @MainActor (TranscriptRecord) throws -> Void
         let updateDeliveryStatus: @MainActor (SessionID, DeliveryStatus) throws -> Void
+        var updateDelivery: (@MainActor (SessionID, DeliveryStatus, TranscriptDeliveryReceipt) throws -> Void)? = nil
         let copy: @MainActor (String) -> Bool
         let loadPersistedRecords: @MainActor () throws -> [TranscriptRecord]
         let updateOrganization: @MainActor (SessionID, OrganizationRecord) throws -> Void
         let currentOrganizationSettings: @MainActor () -> OrganizationSettings
+        var currentTerminology: @MainActor () -> [TranscriptTerminologyEntry] = { [] }
+        var polish: @MainActor (
+            TranscriptPolishRequest,
+            Bool,
+            @MainActor (OrganizationEndpointSettings, ProviderKind) -> Void
+        ) async throws -> TranscriptPolishOutcome = { _, _, _ in
+            throw TranscriptPolishDispatchError.notEligible
+        }
+        var sleepForPolishDeadline: @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        }
+        var continuousNow: @MainActor () -> ContinuousClock.Instant = { ContinuousClock().now }
         let historySuggestions: @MainActor (SessionID) async throws -> HistorySuggestions
         let organize: @MainActor (
             UUID,
@@ -58,6 +71,16 @@ final class SessionCoordinator {
         var suggestedRecords: [SuggestedRecordSnapshot] = []
         var organizationRequestID: UUID?
         var lastOrganizationSelectedRecordIDs: Set<SessionID> = []
+        var polishRequestID: UUID?
+        var polishNetworkTask: Task<Void, Never>?
+        var polishDeadlineTask: Task<Void, Never>?
+        var deliveryLeaseReserved = false
+        var localFinalSavedAt: ContinuousClock.Instant?
+        var stopRequestedAt: ContinuousClock.Instant?
+        var polishProvider: String?
+        var polishModel: String?
+        var polishProviderKind: ProviderKind?
+        var polishSentCharacterCount: Int?
         var resultRetainedForDisplay = false
         var secondaryRemovalScheduled = false
 
@@ -147,6 +170,8 @@ final class SessionCoordinator {
             task.cancel()
         }
         for session in sessions.values {
+            session.polishNetworkTask?.cancel()
+            session.polishDeadlineTask?.cancel()
             if session.status == .recording && !session.stopRequested {
                 _ = dependencies.cancelRecording(session.id)
             }
@@ -174,6 +199,7 @@ final class SessionCoordinator {
               var session = sessions[sessionID],
               !session.stopRequested else { return }
         session.stopRequested = true
+        session.stopRequestedAt = dependencies.continuousNow()
         sessions[sessionID] = session
         dependencies.stopRecording()
     }
@@ -215,6 +241,8 @@ final class SessionCoordinator {
             && beginSessionCancellation(identity.sessionID) != nil
         if !destructivelyCancelled {
             processingTasks[identity.sessionID]?.cancel()
+            session.polishNetworkTask?.cancel()
+            session.polishDeadlineTask?.cancel()
             if session.status == .recording || session.isProcessing {
                 if recordingSessionID == identity.sessionID {
                     recordingSessionID = nil
@@ -225,6 +253,9 @@ final class SessionCoordinator {
                 cancelled.audioLevel = 0
                 cancelled.message = "Recording cancelled."
                 cancelled.resultRetainedForDisplay = true
+                cancelled.polishRequestID = nil
+                cancelled.polishNetworkTask = nil
+                cancelled.polishDeadlineTask = nil
                 sessions[identity.sessionID] = cancelled
                 publishSnapshot()
             }
@@ -239,6 +270,8 @@ final class SessionCoordinator {
         recordingSessionID != identity.sessionID
             && processingTasks[identity.sessionID] == nil
             && previewCancellationTasks[identity.sessionID] == nil
+            && sessions[identity.sessionID]?.polishNetworkTask == nil
+            && sessions[identity.sessionID]?.polishDeadlineTask == nil
             && activeOrganization?.job.sessionID != identity.sessionID
             && !organizationQueue.contains { $0.sessionID == identity.sessionID }
     }
@@ -349,6 +382,7 @@ final class SessionCoordinator {
               var session = sessions[sessionID],
               processingTasks[sessionID] == nil else { return }
         recordingSessionID = nil
+        session.stopRequestedAt = session.stopRequestedAt ?? dependencies.continuousNow()
         session.status = .transcribing
         session.durationMilliseconds = audio.durationMilliseconds
         session.audioLevel = 0
@@ -366,6 +400,7 @@ final class SessionCoordinator {
               var session = sessions[sessionID],
               processingTasks[sessionID] == nil else { return }
         recordingSessionID = nil
+        session.stopRequestedAt = session.stopRequestedAt ?? dependencies.continuousNow()
         session.status = .saving
         session.durationMilliseconds = audio.durationMilliseconds
         session.audioLevel = 0
@@ -470,8 +505,10 @@ final class SessionCoordinator {
             cleaned = CleanResult(text: selectedText, edits: [])
         }
         guard ownsProcessing(sessionID), let session = sessions[sessionID] else { return }
+        let terminology = dependencies.currentTerminology()
+        let corrected = TranscriptTerminologyCorrector().correct(cleaned.text, entries: terminology)
 
-        let isEmpty = cleaned.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isEmpty = corrected.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let record = TranscriptRecord(
             id: session.id,
             ordinal: session.ordinal,
@@ -479,46 +516,308 @@ final class SessionCoordinator {
             durationMilliseconds: audio.durationMilliseconds,
             detectedLanguages: detectedLanguages,
             originalText: selectedText,
-            localCleanedText: cleaned.text,
+            localCleanedText: corrected.text,
             edits: cleaned.edits,
             deliveryStatus: .pending,
             outcome: isEmpty ? .noSpeech : .success,
             finalSource: finalSource,
             streamingText: streamingText,
-            senseVoiceText: senseVoiceText
+            senseVoiceText: senseVoiceText,
+            terminologyEdits: corrected.edits
         )
 
-        guard save(record, for: sessionID, previewText: cleaned.text) else { return }
+        guard save(record, for: sessionID, previewText: corrected.text) else { return }
         sessions[sessionID]?.transcript = record
+        sessions[sessionID]?.localFinalSavedAt = dependencies.continuousNow()
         guard !isEmpty else {
             finish(sessionID, with: .cancelled, previewText: "", message: "No speech detected.")
             return
         }
         guard ownsProcessing(sessionID), sessions[sessionID]?.deliverySucceeded == nil else { return }
+        await beginDelivery(for: sessionID, record: record, terminology: terminology)
+    }
 
-        let didCopy = dependencies.copy(cleaned.text)
+    private func beginDelivery(
+        for sessionID: SessionID,
+        record: TranscriptRecord,
+        terminology: [TranscriptTerminologyEntry]
+    ) async {
+        guard var session = sessions[sessionID], session.localFinalSavedAt != nil else { return }
+        let requestID = UUID()
+        let candidates = polishCandidates(for: record)
+        let candidateTexts = candidates.map(\.text)
+        let relevantTerminology = terminology.filter { entry in
+            candidateTexts.contains { text in
+                text.contains(entry.canonical) || entry.aliases.contains(where: text.contains)
+            }
+        }
+        let request = TranscriptPolishRequest(
+            requestID: requestID,
+            candidates: candidates,
+            terminology: relevantTerminology
+        )
+        session.polishRequestID = requestID
+        session.deliveryLeaseReserved = false
+        sessions[sessionID] = session
+
+        if session.localOnly {
+            await completeDelivery(for: sessionID, requestID: requestID, completion: .localOnly)
+            return
+        }
+
+        let networkTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result: Result<TranscriptPolishOutcome, Error>
+            do {
+                result = .success(try await dependencies.polish(request, false) { [weak self] endpoint, providerKind in
+                    self?.recordPolishDispatch(
+                        for: sessionID,
+                        requestID: requestID,
+                        endpoint: endpoint,
+                        providerKind: providerKind,
+                        sentCharacterCount: request.candidates.reduce(0) { $0 + $1.text.count }
+                    )
+                })
+            } catch {
+                result = .failure(error)
+            }
+            await completeDelivery(for: sessionID, requestID: requestID, completion: .polish(result))
+        }
+        let deadlineTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await dependencies.sleepForPolishDeadline(.milliseconds(1_500))
+            await completeDelivery(for: sessionID, requestID: requestID, completion: .deadline)
+        }
+        guard var current = sessions[sessionID], current.polishRequestID == requestID else {
+            networkTask.cancel()
+            deadlineTask.cancel()
+            return
+        }
+        current.polishNetworkTask = networkTask
+        current.polishDeadlineTask = deadlineTask
+        sessions[sessionID] = current
+    }
+
+    private func polishCandidates(for record: TranscriptRecord) -> [TranscriptCandidate] {
+        var candidates: [TranscriptCandidate] = []
+        if let offline = nonempty(record.senseVoiceText ?? "") {
+            candidates.append(TranscriptCandidate(
+                id: .offline,
+                text: record.finalSource == .senseVoice ? record.localCleanedText : offline
+            ))
+        }
+        if let streaming = nonempty(record.streamingText ?? "") {
+            candidates.append(TranscriptCandidate(
+                id: .streaming,
+                text: record.finalSource == .streamingFallback ? record.localCleanedText : streaming
+            ))
+        }
+        return candidates
+    }
+
+    private func recordPolishDispatch(
+        for sessionID: SessionID,
+        requestID: UUID,
+        endpoint: OrganizationEndpointSettings,
+        providerKind: ProviderKind,
+        sentCharacterCount: Int
+    ) {
+        guard var session = sessions[sessionID],
+              session.polishRequestID == requestID,
+              !session.deliveryLeaseReserved else { return }
+        session.polishProvider = "openai-compatible"
+        session.polishModel = endpoint.model
+        session.polishProviderKind = providerKind
+        session.polishSentCharacterCount = sentCharacterCount
+        sessions[sessionID] = session
+    }
+
+    private func completeDelivery(
+        for sessionID: SessionID,
+        requestID: UUID,
+        completion: PolishDeliveryCompletion
+    ) async {
+        guard !isShuttingDown,
+              var session = sessions[sessionID],
+              session.polishRequestID == requestID,
+              !session.deliveryLeaseReserved,
+              let localSavedAt = session.localFinalSavedAt,
+              var transcript = session.transcript else { return }
+        let completionTime = dependencies.continuousNow()
+        let deadlineExpired = completionTime >= localSavedAt.advanced(by: .milliseconds(1_500))
+        if case .deadline = completion, !deadlineExpired { return }
+
+        session.deliveryLeaseReserved = true
+        session.polishRequestID = nil
+        let networkTask = session.polishNetworkTask
+        let deadlineTask = session.polishDeadlineTask
+        session.polishNetworkTask = nil
+        session.polishDeadlineTask = nil
+        sessions[sessionID] = session
+        switch completion {
+        case .deadline:
+            networkTask?.cancel()
+        case .localOnly, .polish:
+            deadlineTask?.cancel()
+        }
+
+        var deliveredText = transcript.localCleanedText
+        var source = TranscriptDeliverySource.local
+        let elapsedMilliseconds = milliseconds(from: localSavedAt, to: completionTime)
+
+        if !deadlineExpired, case let .polish(.success(outcome)) = completion {
+            let record: TranscriptPolishRecord
+            switch outcome {
+            case let .accepted(baseCandidateID, text, edits):
+                record = polishRecord(
+                    requestID: requestID,
+                    state: .accepted,
+                    baseCandidateID: baseCandidateID,
+                    polishedText: text,
+                    reviewCandidateText: nil,
+                    edits: edits,
+                    session: session,
+                    elapsedMilliseconds: elapsedMilliseconds
+                )
+            case let .reviewRequired(baseCandidateID, text, edits):
+                record = polishRecord(
+                    requestID: requestID,
+                    state: .reviewRequired,
+                    baseCandidateID: baseCandidateID,
+                    polishedText: nil,
+                    reviewCandidateText: text,
+                    edits: edits,
+                    session: session,
+                    elapsedMilliseconds: elapsedMilliseconds
+                )
+            }
+            transcript.polish = record
+            if persistPolish(transcript, for: sessionID), record.state == .accepted,
+               let polishedText = record.polishedText {
+                deliveredText = polishedText
+                source = .polished
+            } else if record.state == .accepted {
+                transcript.polish = polishRecord(
+                    requestID: requestID,
+                    state: .failed,
+                    baseCandidateID: nil,
+                    polishedText: nil,
+                    reviewCandidateText: nil,
+                    edits: [],
+                    session: session,
+                    elapsedMilliseconds: elapsedMilliseconds,
+                    errorCode: "polish_save_failed"
+                )
+                _ = persistPolish(transcript, for: sessionID)
+            }
+        } else if !deadlineExpired, case let .polish(.failure(error)) = completion,
+                  (error as? TranscriptPolishDispatchError) != .notEligible {
+            transcript.polish = polishRecord(
+                requestID: requestID,
+                state: .failed,
+                baseCandidateID: nil,
+                polishedText: nil,
+                reviewCandidateText: nil,
+                edits: [],
+                session: session,
+                elapsedMilliseconds: elapsedMilliseconds,
+                errorCode: "polish_failed"
+            )
+            _ = persistPolish(transcript, for: sessionID)
+        }
+
+        let stopRequestedAt = session.stopRequestedAt ?? localSavedAt
+        let receipt = TranscriptDeliveryReceipt(
+            source: source,
+            stopToLocalFinalMilliseconds: milliseconds(from: stopRequestedAt, to: localSavedAt),
+            stopToCopyMilliseconds: milliseconds(from: stopRequestedAt, to: completionTime)
+        )
+        let didCopy = dependencies.copy(deliveredText)
         sessions[sessionID]?.deliverySucceeded = didCopy
         do {
-            try dependencies.updateDeliveryStatus(session.id, didCopy ? .copied : .failed)
+            if let updateDelivery = dependencies.updateDelivery {
+                try updateDelivery(sessionID, didCopy ? .copied : .failed, receipt)
+            } else {
+                try dependencies.updateDeliveryStatus(sessionID, didCopy ? .copied : .failed)
+            }
+            sessions[sessionID]?.transcript?.deliveryStatus = didCopy ? .copied : .failed
+            sessions[sessionID]?.transcript?.deliveryReceipt = receipt
             finish(
                 sessionID,
                 with: didCopy ? .delivered : .failed,
-                previewText: cleaned.text,
+                previewText: deliveredText,
                 message: didCopy ? "已复制 · 按 ⌘V 粘贴" : "Could not copy to clipboard."
             )
-            if didCopy {
+            let organizationSettings = dependencies.currentOrganizationSettings()
+            let canAutomaticallyOrganize = organizationSettings.endpoint?.isLoopback == true
+                || organizationSettings.isRemoteDispatchEligible
+            if !didCopy || sessions[sessionID]?.localOnly == true || !canAutomaticallyOrganize {
+                retainAsLatestTerminalIfEligible(sessionID)
+            }
+            if didCopy, sessions[sessionID]?.localOnly != true {
                 await refreshHistorySuggestions(for: sessionID)
-                guard !Task.isCancelled else { return }
+                guard !isShuttingDown else { return }
                 await enqueueOrganization(for: sessionID, selectedRecordIDs: [])
             }
         } catch {
             finish(
                 sessionID,
                 with: didCopy ? .delivered : .failed,
-                previewText: cleaned.text,
+                previewText: deliveredText,
                 message: didCopy ? "已复制，但未能记录复制状态" : "Could not update delivery status."
             )
+            retainAsLatestTerminalIfEligible(sessionID)
         }
+        scheduleSecondaryRemovalIfEligible(sessionID)
+    }
+
+    private func persistPolish(_ record: TranscriptRecord, for sessionID: SessionID) -> Bool {
+        do {
+            try dependencies.save(record)
+            sessions[sessionID]?.transcript = record
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func polishRecord(
+        requestID: UUID,
+        state: TranscriptPolishState,
+        baseCandidateID: TranscriptCandidate.ID?,
+        polishedText: String?,
+        reviewCandidateText: String?,
+        edits: [TranscriptPolishEdit],
+        session: Session,
+        elapsedMilliseconds: Int,
+        errorCode: String? = nil
+    ) -> TranscriptPolishRecord {
+        TranscriptPolishRecord(
+            requestID: requestID,
+            state: state,
+            baseCandidateID: baseCandidateID,
+            polishedText: polishedText,
+            reviewCandidateText: reviewCandidateText,
+            edits: edits,
+            provider: session.polishProvider,
+            model: session.polishModel,
+            providerKind: session.polishProviderKind,
+            sentCharacterCount: session.polishSentCharacterCount,
+            elapsedMilliseconds: elapsedMilliseconds,
+            errorCode: errorCode,
+            updatedAt: now()
+        )
+    }
+
+    private func milliseconds(
+        from start: ContinuousClock.Instant,
+        to end: ContinuousClock.Instant
+    ) -> Int {
+        guard start <= end else { return 0 }
+        let components = start.duration(to: end).components
+        let milliseconds = components.seconds.multipliedReportingOverflow(by: 1_000)
+        guard !milliseconds.overflow else { return Int.max }
+        return Int(clamping: milliseconds.partialValue + components.attoseconds / 1_000_000_000_000_000)
     }
 
     private func cancelCurrentSession() async {
@@ -600,7 +899,7 @@ final class SessionCoordinator {
         sessions[sessionID] = session
         let settings = dependencies.currentOrganizationSettings()
         let useDeterministic = session.localOnly && settings.endpoint?.isLoopback != true
-        let segments = (try? DeterministicOrganizer().segments(from: transcript.localCleanedText)) ?? []
+        let segments = (try? DeterministicOrganizer().segments(from: transcript.deliveredText)) ?? []
         session.organizationReceipt = OrganizationPrivacyReceipt(
             dispatch: .notSent,
             characterCount: segments.reduce(0) { $0 + $1.text.count },
@@ -1182,6 +1481,12 @@ final class SessionCoordinator {
 
 private enum OrganizationRuntimeError: Error {
     case dispatchStateWriteFailed
+}
+
+private enum PolishDeliveryCompletion {
+    case deadline
+    case localOnly
+    case polish(Result<TranscriptPolishOutcome, Error>)
 }
 
 enum OrganizationDispatchError: Error {

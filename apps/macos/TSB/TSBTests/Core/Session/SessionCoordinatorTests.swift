@@ -84,27 +84,7 @@ final class SessionCoordinatorTests: XCTestCase {
         harness.completeOrganization()
     }
 
-    func testLocalAndNoDispatchReceiptsReportNoSend() async throws {
-        let localSource = "local receipt source"
-        let local = CoordinatorHarness(
-            transcript: localSource,
-            organizationSettings: remoteOrganizationSettings()
-        )
-        await local.coordinator.handle(.toggleRecording)
-        let sessionID = try XCTUnwrap(local.startedSessionIDs.single)
-        await local.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
-        await local.coordinator.handle(.toggleRecording)
-        await local.finishRecording()
-        await local.waitUntilOrganizationFinishes()
-
-        assertReceipt(
-            try XCTUnwrap(local.coordinator.snapshot.organizationReceipt),
-            dispatch: .localNoDispatch,
-            characterCount: localSource.count,
-            selectedRecordCount: 0,
-            forbiddenContent: [localSource]
-        )
-
+    func testNoDispatchReceiptsReportNoSend() async throws {
         let blockedSource = "authorization receipt source"
         let blocked = CoordinatorHarness(transcript: blockedSource)
         await blocked.runOneSession()
@@ -175,6 +155,215 @@ final class SessionCoordinatorTests: XCTestCase {
                 selectedRecordCount: 0
             )
         ))
+    }
+
+    func testAcceptedPolishSavesThenCopiesOnceAndDeadlineCannotRecopy() async throws {
+        try await withTemporarySessionsRoot { root in
+            let clock = ManualContinuousClock()
+            let harness = CoordinatorHarness(
+                transcript: "use T S B",
+                organizationSettings: polishSettings(),
+                suspendsPolish: true,
+                continuousClock: clock,
+                sessionsDirectory: root
+            )
+
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.coordinator.handle(.toggleRecording)
+            clock.advance(by: .milliseconds(600))
+            await harness.finishRecording()
+            await harness.waitUntilPolishStarts()
+            await harness.waitUntilPolishDeadlineStarts()
+            clock.advance(by: .milliseconds(100))
+            let polished = "use TSB"
+            harness.completePolish(.accepted(baseCandidateID: .offline, text: polished, edits: []))
+            await harness.waitForDelivery()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let saveCount = harness.savedRecords.count
+
+            XCTAssertEqual(saveCount, 2)
+            XCTAssertEqual(harness.savedRecords.last?.polish?.state, .accepted)
+            XCTAssertEqual(harness.copiedTexts, [polished])
+            XCTAssertEqual(harness.deliveryReceipts.single?.source, .polished)
+            XCTAssertEqual(harness.deliveryReceipts.single?.stopToLocalFinalMilliseconds, 600)
+            XCTAssertEqual(harness.deliveryReceipts.single?.stopToCopyMilliseconds, 700)
+            XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "saved")), try XCTUnwrap(harness.timeline.lastIndex(of: "saved")))
+            XCTAssertLessThan(try XCTUnwrap(harness.timeline.lastIndex(of: "saved")), try XCTUnwrap(harness.timeline.firstIndex(of: "copied")))
+            XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, polished)
+
+            await harness.firePolishDeadline()
+            for _ in 0..<20 { await Task.yield() }
+
+            XCTAssertEqual(harness.savedRecords.count, saveCount)
+            XCTAssertEqual(harness.copyCount, 1)
+            XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, polished)
+        }
+    }
+
+    func testDeadlineCopiesDurableLocalOnceAndLatePolishCannotSaveOrRecopy() async throws {
+        try await withTemporarySessionsRoot { root in
+            let clock = ManualContinuousClock()
+            let harness = CoordinatorHarness(
+                transcript: "durable local",
+                organizationSettings: polishSettings(),
+                suspendsPolish: true,
+                continuousClock: clock,
+                sessionsDirectory: root
+            )
+
+            await harness.runUntilPolishStarts()
+            clock.advance(by: .milliseconds(1_500))
+            await harness.firePolishDeadline()
+            await harness.waitForDelivery()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let saveCount = harness.savedRecords.count
+
+            XCTAssertEqual(saveCount, 1)
+            XCTAssertEqual(harness.copiedTexts, ["durable local"])
+            XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
+            XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "saved")), try XCTUnwrap(harness.timeline.firstIndex(of: "copied")))
+
+            harness.completePolish(.accepted(baseCandidateID: .offline, text: "late polish", edits: []))
+            for _ in 0..<20 { await Task.yield() }
+
+            XCTAssertEqual(harness.savedRecords.count, saveCount)
+            XCTAssertEqual(harness.copyCount, 1)
+            XCTAssertNil(try harness.store?.load(id: sessionID).polish)
+            XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, "durable local")
+        }
+    }
+
+    func testPhysicallyLateSuccessLosesBeforeDeadlineCallbackRuns() async throws {
+        let clock = ManualContinuousClock()
+        let harness = CoordinatorHarness(
+            transcript: "physical local",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            continuousClock: clock
+        )
+
+        await harness.runUntilPolishStarts()
+        clock.advance(by: .milliseconds(1_501))
+        harness.completePolish(.accepted(baseCandidateID: .offline, text: "physically late", edits: []))
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.savedRecords.count, 1)
+        XCTAssertEqual(harness.copiedTexts, ["physical local"])
+        XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
+
+        await harness.firePolishDeadline()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(harness.copyCount, 1)
+    }
+
+    func testAcceptedPolishSaveFailureFallsBackInsideLeaseAndCopiesLocalOnce() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "safe local",
+                saveFailures: [1],
+                organizationSettings: polishSettings(),
+                suspendsPolish: true,
+                sessionsDirectory: root
+            )
+
+            await harness.runUntilPolishStarts()
+            harness.completePolish(.accepted(baseCandidateID: .offline, text: "unsafe unsaved polish", edits: []))
+            await harness.waitForDelivery()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+
+            XCTAssertEqual(harness.copyCount, 1)
+            XCTAssertEqual(harness.copiedTexts, ["safe local"])
+            XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
+            XCTAssertFalse(harness.savedRecords.contains { $0.polish?.state == .accepted })
+            XCTAssertEqual(try harness.store?.load(id: sessionID).deliveredText, "safe local")
+
+            await harness.firePolishDeadline()
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertEqual(harness.copyCount, 1)
+        }
+    }
+
+    func testShutdownAfterLocalSavePreservesRecordAndCreatesNoCopy() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "shutdown durable local",
+                organizationSettings: polishSettings(),
+                suspendsPolish: true,
+                sessionsDirectory: root
+            )
+
+            await harness.runUntilPolishStarts()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            harness.coordinator.shutdown()
+            harness.completePolish(.accepted(baseCandidateID: .offline, text: "late after shutdown", edits: []))
+            await harness.firePolishDeadline()
+            for _ in 0..<20 { await Task.yield() }
+
+            XCTAssertEqual(harness.savedRecords.count, 1)
+            XCTAssertEqual(harness.copyCount, 0)
+            XCTAssertEqual(try harness.store?.load(id: sessionID).localCleanedText, "shutdown durable local")
+            XCTAssertNil(try harness.store?.load(id: sessionID).polish)
+        }
+    }
+
+    func testPreStopCancelMakesZeroPolishRequestsAndZeroCopies() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "cancel before stop",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.cancelRecording)
+
+        XCTAssertEqual(harness.polishInputs.count, 0)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.providerStarts, 0)
+    }
+
+    func testLocalOnlyMakesZeroPolishAndOrganizationRequests() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "local only",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitForDelivery()
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(harness.polishInputs.count, 0)
+        XCTAssertEqual(harness.organizationInputs.count, 0)
+        XCTAssertEqual(harness.organizationUpdates.count, 0)
+        XCTAssertEqual(harness.providerStarts, 0)
+        XCTAssertEqual(harness.copiedTexts, ["local only"])
+    }
+
+    func testOrganizationReceivesExactDeliveredTextAndNeverRecopies() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "organization local",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true
+        )
+
+        await harness.runUntilPolishStarts()
+        harness.completePolish(.accepted(baseCandidateID: .offline, text: "organization polished", edits: []))
+        await harness.waitForDelivery()
+        let copyCountAtDelivery = harness.copyCount
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationInputs.single?.segments.map(\.text), ["organization polished"])
+        XCTAssertEqual(harness.copyCount, copyCountAtDelivery)
+        XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "copied")), try XCTUnwrap(harness.timeline.firstIndex(of: "organization:pending")))
+        XCTAssertLessThan(try XCTUnwrap(harness.timeline.firstIndex(of: "organization:pending")), try XCTUnwrap(harness.timeline.firstIndex(of: "organize")))
+
+        await harness.firePolishDeadline()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(harness.copyCount, copyCountAtDelivery)
     }
 
     private func assertReceipt(
@@ -1754,45 +1943,6 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.secondaryProcessing.single?.id, organizedSessionID)
     }
 
-    func testLocalOnlyFrozenAtStopUsesDeterministicOrganizerAndNeverDispatchesRemote() async throws {
-        let harness = CoordinatorHarness(
-            transcript: "one sentence.",
-            organizationSettings: remoteOrganizationSettings()
-        )
-
-        await harness.coordinator.handle(.toggleRecording)
-        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
-        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
-        await harness.coordinator.handle(.toggleRecording)
-        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: false))
-        await harness.finishRecording()
-        await harness.waitUntilOrganizationFinishes()
-
-        XCTAssertTrue(harness.organizationInputs.isEmpty)
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.output?.numberedPoints.map(\.text), ["one sentence."])
-    }
-
-    func testLocalOnlyLoopbackDispatchesToTheLocalModelWithoutLoadingASecret() async throws {
-        let harness = CoordinatorHarness(
-            transcript: "loopback local-only",
-            organizationSettings: loopbackOrganizationSettings()
-        )
-
-        await harness.coordinator.handle(.toggleRecording)
-        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
-        await harness.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
-        await harness.coordinator.handle(.toggleRecording)
-        await harness.finishRecording()
-        await harness.waitUntilOrganizationFinishes()
-
-        XCTAssertEqual(harness.organizationInputs.count, 1)
-        XCTAssertEqual(harness.organizationInputs.single?.endpoint.baseURL, URL(string: "http://127.0.0.1:11434/v1/chat/completions"))
-        XCTAssertEqual(harness.organizationInputs.single?.apiKey, "")
-        XCTAssertEqual(harness.organizationSecretLoadCount, 0)
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
-    }
-
     func testCancelOrganizationInvalidatesLateResponseWithoutCancellingCaptureArtifacts() async throws {
         let harness = CoordinatorHarness(
             transcript: "keep delivered text",
@@ -1899,75 +2049,6 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationInputs[1].endpoint.baseURL.host, "b.example.test")
         XCTAssertEqual(harness.organizationInputs[1].apiKey, "synthetic-key-for-b")
         harness.completeOrganization(at: 1)
-    }
-
-    func testQueuedLocalOnlyLoopbackFallsBackWhenSettingsChangeToRemoteBeforeSlot() async throws {
-        let remote = remoteOrganizationSettings(baseURL: "https://remote.example.test/v1/chat/completions")
-        let harness = CoordinatorHarness(
-            transcript: "queued local-only",
-            organizationSettings: loopbackOrganizationSettings(),
-            suspendsOrganization: true
-        )
-
-        await harness.runOneSession()
-        await harness.waitUntilOrganizationStarts()
-        await harness.coordinator.handle(.toggleRecording)
-        let localOnlySessionID = try XCTUnwrap(harness.startedSessionIDs.last)
-        await harness.coordinator.handle(.setLocalOnly(sessionID: localOnlySessionID, enabled: true))
-        await harness.coordinator.handle(.toggleRecording)
-        await harness.finishRecording(at: 1)
-        await harness.waitUntilOrganizationUpdateCount(3)
-
-        let inputCountBeforeRemoteSettings = harness.organizationInputs.count
-        let secretLoadCountBeforeRemoteSettings = harness.organizationSecretLoadCount
-        harness.setOrganizationDispatch(settings: remote, apiKey: "must-not-load")
-        harness.completeOrganization(at: 0)
-        await harness.waitUntilSuccessfulOrganizationCount(2)
-
-        XCTAssertEqual(harness.organizationInputs.count, inputCountBeforeRemoteSettings)
-        XCTAssertEqual(harness.organizationSecretLoadCount, secretLoadCountBeforeRemoteSettings)
-        XCTAssertEqual(harness.organizationUpdates.last?.sessionID, localOnlySessionID)
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.model, "local-points")
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.output?.numberedPoints.map(\.text), ["queued local-only"])
-    }
-
-    func testQueuedLocalOnlyRemoteDispatchesToLoopbackWhenSettingsChangeBeforeSlot() async throws {
-        let remote = remoteOrganizationSettings(baseURL: "https://remote.example.test/v1/chat/completions")
-        let harness = CoordinatorHarness(
-            transcript: "queued local-only loopback",
-            organizationSettings: remote,
-            organizationAPIKey: "remote-key",
-            suspendsOrganization: true
-        )
-
-        await harness.runOneSession()
-        await harness.waitUntilOrganizationStarts()
-        await harness.coordinator.handle(.toggleRecording)
-        let localOnlySessionID = try XCTUnwrap(harness.startedSessionIDs.last)
-        await harness.coordinator.handle(.setLocalOnly(sessionID: localOnlySessionID, enabled: true))
-        await harness.coordinator.handle(.toggleRecording)
-        await harness.finishRecording(at: 1)
-        await harness.waitUntilOrganizationUpdateCount(3)
-
-        let inputCountBeforeLoopbackSettings = harness.organizationInputs.count
-        let secretLoadCountBeforeLoopbackSettings = harness.organizationSecretLoadCount
-        harness.setOrganizationDispatch(settings: loopbackOrganizationSettings(), apiKey: "must-not-load")
-        harness.completeOrganization(at: 0)
-        for _ in 0..<100 where harness.organizationInputs.count == inputCountBeforeLoopbackSettings {
-            await Task.yield()
-        }
-
-        XCTAssertEqual(harness.organizationInputs.count, inputCountBeforeLoopbackSettings + 1)
-        guard harness.organizationInputs.count == inputCountBeforeLoopbackSettings + 1,
-              let loopbackInput = harness.organizationInputs.last else { return }
-        XCTAssertEqual(loopbackInput.endpoint.baseURL.host, "127.0.0.1")
-        XCTAssertEqual(loopbackInput.apiKey, "")
-        XCTAssertEqual(harness.organizationSecretLoadCount, secretLoadCountBeforeLoopbackSettings)
-        harness.completeOrganization(at: 1)
-        await harness.waitUntilSuccessfulOrganizationCount(2)
-        XCTAssertEqual(harness.organizationUpdates.last?.sessionID, localOnlySessionID)
-        XCTAssertEqual(harness.organizationUpdates.last?.organization.providerKind, .local)
     }
 
     func testRevokingConsentBeforeQueuedSlotPreventsItsTextDispatch() async throws {
@@ -2345,6 +2426,42 @@ private final class TestClock {
     }
 }
 
+@MainActor
+private final class ManualContinuousClock {
+    private(set) var now = ContinuousClock().now
+
+    func advance(by duration: Duration) {
+        now += duration
+    }
+}
+
+private actor ManualDeadlineSleeper {
+    private var continuations: [CheckedContinuation<Void, Never>?] = []
+    private var durations: [Duration] = []
+
+    func sleep(_ duration: Duration) async throws {
+        durations.append(duration)
+        await withCheckedContinuation { continuations.append($0) }
+    }
+
+    func waitUntilStarted(count: Int = 1) async -> Bool {
+        for _ in 0..<100 {
+            if continuations.count >= count { return true }
+            await Task.yield()
+        }
+        return false
+    }
+
+    func fire(at index: Int = 0) {
+        continuations[index]?.resume()
+        continuations[index] = nil
+    }
+
+    func requestedDurations() -> [Duration] {
+        durations
+    }
+}
+
 private actor IntentBarrier {
     private var entered = false
     private var enteredWaiter: CheckedContinuation<Void, Never>?
@@ -2407,16 +2524,25 @@ private final class CoordinatorHarness {
         let selectedCandidateIDs: Set<String>
     }
 
+    struct PolishInput {
+        let request: TranscriptPolishRequest
+        let localOnly: Bool
+        let endpoint: OrganizationEndpointSettings
+        let providerKind: ProviderKind
+    }
+
     private let transcript: String
     private let cleanedText: String?
     private let streamingText: String
     private let transcriptionError: Error?
     private let saveError: Error?
+    private let saveFailures: Set<Int>
     private let statusWriteError: Error?
     private let cleanupError: Error?
     private let suspendsTranscription: Bool
     private let suspendsPreviewCancellation: Bool
     private let suspendsOrganization: Bool
+    private let suspendsPolish: Bool
     private let copyResult: Bool
     private let startRecordingErrors: [Error?]
     private var organizationSettings: OrganizationSettings
@@ -2429,6 +2555,8 @@ private final class CoordinatorHarness {
     private let livePreviewPipeline: LivePreviewPipeline?
     private let livePreviewAvailability: LivePreviewAvailability
     private let now: @MainActor () -> Date
+    private let continuousClock: ManualContinuousClock
+    private let polishDeadlineSleeper = ManualDeadlineSleeper()
     private let sessionsDirectory: URL?
     private var historySuggestionsError: Error?
     private var onFinished: [((RecordedAudio) -> Void)] = []
@@ -2441,6 +2569,7 @@ private final class CoordinatorHarness {
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
     private var previewCancellationContinuations: [CheckedContinuation<Void, Never>?] = []
     private var organizationContinuations: [UnsafeContinuation<OrganizationOutput, Never>?] = []
+    private var polishContinuations: [CheckedContinuation<TranscriptPolishOutcome, Error>?] = []
     private var historySuggestionsContinuations: [CheckedContinuation<HistorySuggestions, Error>?] = []
     let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
@@ -2455,7 +2584,10 @@ private final class CoordinatorHarness {
     private(set) var copyCount = 0
     private(set) var copiedTexts: [String] = []
     private(set) var savedRecords: [TranscriptRecord] = []
+    private(set) var saveAttemptCount = 0
     private(set) var deliveryStatuses: [DeliveryStatus] = []
+    private(set) var deliveryReceipts: [TranscriptDeliveryReceipt] = []
+    private(set) var polishInputs: [PolishInput] = []
     private(set) var organizationInputs: [OrganizationInput] = []
     private(set) var organizationSecretLoadCount = 0
     private(set) var organizationWriteAttempts: [(sessionID: SessionID, organization: OrganizationRecord)] = []
@@ -2475,6 +2607,7 @@ private final class CoordinatorHarness {
         streamingText: String = "",
         transcriptionError: Error? = nil,
         saveError: Error? = nil,
+        saveFailures: Set<Int> = [],
         statusWriteError: Error? = nil,
         cleanupError: Error? = nil,
         suspendsTranscription: Bool = false,
@@ -2484,6 +2617,7 @@ private final class CoordinatorHarness {
         organizationSettings: OrganizationSettings = OrganizationSettings(),
         organizationAPIKey: String = "synthetic-key",
         suspendsOrganization: Bool = false,
+        suspendsPolish: Bool = false,
         organizationErrors: [Error?] = [],
         organizationWriteFailures: Set<Int> = [],
         persistedRecords: [TranscriptRecord] = [],
@@ -2493,6 +2627,7 @@ private final class CoordinatorHarness {
         livePreviewPipeline: LivePreviewPipeline? = nil,
         livePreviewAvailability: LivePreviewAvailability = .available,
         now: @escaping @MainActor () -> Date = Date.init,
+        continuousClock: ManualContinuousClock = ManualContinuousClock(),
         sessionsDirectory: URL? = nil
     ) {
         self.transcript = transcript
@@ -2500,6 +2635,7 @@ private final class CoordinatorHarness {
         self.streamingText = streamingText
         self.transcriptionError = transcriptionError
         self.saveError = saveError
+        self.saveFailures = saveFailures
         self.statusWriteError = statusWriteError
         self.cleanupError = cleanupError
         self.suspendsTranscription = suspendsTranscription
@@ -2509,6 +2645,7 @@ private final class CoordinatorHarness {
         self.organizationSettings = organizationSettings
         self.organizationAPIKey = organizationAPIKey
         self.suspendsOrganization = suspendsOrganization
+        self.suspendsPolish = suspendsPolish
         self.organizationErrors = organizationErrors
         self.organizationWriteFailures = organizationWriteFailures
         self.persistedRecords = persistedRecords
@@ -2518,11 +2655,13 @@ private final class CoordinatorHarness {
         self.livePreviewPipeline = livePreviewPipeline
         self.livePreviewAvailability = livePreviewAvailability
         self.now = now
+        self.continuousClock = continuousClock
         self.sessionsDirectory = sessionsDirectory
     }
 
     private func makeCoordinator() -> SessionCoordinator {
         store = sessionsDirectory.map(TranscriptStore.init(directory:))
+        let usesManualPolishDeadline = suspendsPolish
         return SessionCoordinator(
             dependencies: .init(
                 startRecording: { [weak self] sessionID, onPreview, onPreviewUnavailable, onLevel, onFinished, onFailed in
@@ -2598,6 +2737,9 @@ private final class CoordinatorHarness {
                 save: { [weak self] record in
                     guard let self else { throw TestError.deallocated }
                     if let saveError = self.saveError { throw saveError }
+                    let attempt = self.saveAttemptCount
+                    self.saveAttemptCount += 1
+                    if self.saveFailures.contains(attempt) { throw TestError.disk }
                     try self.store?.save(record)
                     self.events.append(.saved)
                     self.timeline.append("saved")
@@ -2608,6 +2750,14 @@ private final class CoordinatorHarness {
                     try self?.store?.updateDeliveryStatus(id: sessionID, to: status)
                     self?.events.append(.deliveryStatusUpdated)
                     self?.deliveryStatuses.append(status)
+                    self?.timeline.append("delivery:\(status.rawValue)")
+                },
+                updateDelivery: { [weak self] sessionID, status, receipt in
+                    if let statusWriteError = self?.statusWriteError { throw statusWriteError }
+                    try self?.store?.updateDelivery(id: sessionID, status: status, receipt: receipt)
+                    self?.events.append(.deliveryStatusUpdated)
+                    self?.deliveryStatuses.append(status)
+                    self?.deliveryReceipts.append(receipt)
                     self?.timeline.append("delivery:\(status.rawValue)")
                 },
                 copy: { [weak self] text in
@@ -2631,6 +2781,37 @@ private final class CoordinatorHarness {
                 currentOrganizationSettings: { [weak self] in
                     self?.organizationSettings ?? OrganizationSettings()
                 },
+                currentTerminology: { [weak self] in
+                    self?.organizationSettings.transcriptTerminology ?? []
+                },
+                polish: { [weak self] request, localOnly, willDispatch in
+                    guard let self else { throw TestError.deallocated }
+                    let dispatch = try AppController.makePolishDispatchSnapshot(
+                        localOnly: localOnly,
+                        loadSettings: { self.organizationSettings },
+                        loadAPIKey: { _ in self.organizationAPIKey }
+                    )
+                    let providerKind: ProviderKind = dispatch.endpoint.isLoopback ? .local : .remote
+                    willDispatch(dispatch.endpoint, providerKind)
+                    self.polishInputs.append(PolishInput(
+                        request: request,
+                        localOnly: localOnly,
+                        endpoint: dispatch.endpoint,
+                        providerKind: providerKind
+                    ))
+                    guard self.suspendsPolish else {
+                        throw TranscriptPolishDispatchError.notEligible
+                    }
+                    return try await withCheckedThrowingContinuation { self.polishContinuations.append($0) }
+                },
+                sleepForPolishDeadline: { [polishDeadlineSleeper] duration in
+                    if usesManualPolishDeadline {
+                        try await polishDeadlineSleeper.sleep(duration)
+                    } else {
+                        try await Task.sleep(for: duration)
+                    }
+                },
+                continuousNow: { [continuousClock] in continuousClock.now },
                 historySuggestions: { [weak self] _ in
                     if let error = self?.historySuggestionsError { throw error }
                     if self?.suspendsHistorySuggestions == true {
@@ -2703,6 +2884,22 @@ private final class CoordinatorHarness {
         } else {
             await waitForTerminalState()
         }
+    }
+
+    func runUntilPolishStarts() async {
+        await coordinator.handle(.toggleRecording)
+        await coordinator.handle(.toggleRecording)
+        await finishRecording()
+        await waitUntilPolishStarts()
+        await waitUntilPolishDeadlineStarts()
+    }
+
+    func waitUntilPolishDeadlineStarts() async {
+        let deadlineStarted = await polishDeadlineSleeper.waitUntilStarted()
+        let durations = await polishDeadlineSleeper.requestedDurations()
+        XCTAssertTrue(deadlineStarted)
+        XCTAssertEqual(durations, [.milliseconds(1_500)])
+        XCTAssertEqual(savedRecords.count, 1)
     }
 
     func finishRecording(at index: Int? = nil) async {
@@ -2833,6 +3030,23 @@ private final class CoordinatorHarness {
         XCTFail("Timed out waiting for organization to start")
     }
 
+    func waitUntilPolishStarts(count: Int = 1) async {
+        for _ in 0..<100 {
+            if polishInputs.count >= count { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for transcript polish")
+    }
+
+    func completePolish(_ outcome: TranscriptPolishOutcome, at index: Int = 0) {
+        polishContinuations[index]?.resume(returning: outcome)
+        polishContinuations[index] = nil
+    }
+
+    func firePolishDeadline(at index: Int = 0) async {
+        await polishDeadlineSleeper.fire(at: index)
+    }
+
     func waitUntilOrganizationFinishes() async {
         for _ in 0..<100 {
             if let state = organizationUpdates.last?.organization.state, state != .pending { return }
@@ -2926,6 +3140,18 @@ private func loopbackOrganizationSettings() -> OrganizationSettings {
             baseURL: URL(string: "http://127.0.0.1:11434/v1/chat/completions")!,
             model: "local-model"
         )
+    )
+}
+
+private func polishSettings() -> OrganizationSettings {
+    OrganizationSettings(
+        endpoint: try! OrganizationEndpointSettings(
+            baseURL: URL(string: "https://example.test/v1/chat/completions")!,
+            model: "polish-model"
+        ),
+        cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+        polishEnabled: true,
+        polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
     )
 }
 

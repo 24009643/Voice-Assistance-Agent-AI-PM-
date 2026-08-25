@@ -205,6 +205,34 @@ final class TranscriptStoreTests: XCTestCase {
         XCTAssertEqual(plain.deliveredText, plain.localCleanedText)
     }
 
+    func testSavingAcceptedPolishAtomicallyKeepsDurableLocalArtifactAndReceipt() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TranscriptStore(directory: directory)
+        let local = makeRecord()
+        try store.save(local)
+        var accepted = local
+        accepted.polish = TranscriptPolishRecord(
+            requestID: UUID(), state: .accepted, baseCandidateID: .offline, polishedText: "polished",
+            reviewCandidateText: nil, edits: [], provider: "openai-compatible", model: "polish-model",
+            providerKind: .remote, sentCharacterCount: local.localCleanedText.count,
+            elapsedMilliseconds: 100, errorCode: nil, updatedAt: Date()
+        )
+        accepted.deliveryReceipt = TranscriptDeliveryReceipt(
+            source: .polished,
+            stopToLocalFinalMilliseconds: 10,
+            stopToCopyMilliseconds: 110
+        )
+
+        try store.save(accepted)
+
+        let loaded = try store.load(id: local.id)
+        XCTAssertEqual(loaded.localCleanedText, local.localCleanedText)
+        XCTAssertEqual(loaded.polish, accepted.polish)
+        XCTAssertEqual(loaded.deliveryReceipt, accepted.deliveryReceipt)
+        XCTAssertEqual(loaded.deliveredText, "polished")
+    }
+
     func testUpdateOrganizationAtomicallyRewritesTheCanonicalRecord() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

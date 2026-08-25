@@ -88,7 +88,7 @@ struct TranscriptRecord: Equatable, Codable, Sendable {
     let reviewState: TranscriptReviewState
     let intendedUse: TranscriptIntendedUse
     let terminologyEdits: [TranscriptTerminologyEdit]
-    let polish: TranscriptPolishRecord?
+    var polish: TranscriptPolishRecord?
     var deliveryReceipt: TranscriptDeliveryReceipt?
     var organization: OrganizationRecord?
 
