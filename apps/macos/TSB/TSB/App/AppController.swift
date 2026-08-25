@@ -128,7 +128,7 @@ final class AppController: ObservableObject {
         let transcriber: SenseVoiceTranscriber?
         let modelError: String?
         do {
-            transcriber = try SenseVoiceTranscriber(location: try SenseVoiceModelLocation.developmentLocation())
+            transcriber = try SenseVoiceTranscriber(location: try SenseVoiceModelLocation.resolvedLocation())
             modelError = nil
         } catch {
             transcriber = nil

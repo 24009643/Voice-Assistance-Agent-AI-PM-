@@ -12,6 +12,7 @@ enum SenseVoiceTranscriberError: Error, Equatable {
 
 struct SenseVoiceModelLocation: Sendable {
     private static let requiredFileNames = ["model.int8.onnx", "tokens.txt", "LICENSE"]
+    static let modelName = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
 
     let model: URL
     let tokens: URL
@@ -42,6 +43,25 @@ struct SenseVoiceModelLocation: Sendable {
             throw SenseVoiceTranscriberError.missingDevelopmentModelDirectory
         }
         return try SenseVoiceModelLocation(directory: URL(fileURLWithPath: path, isDirectory: true))
+    }
+
+    static func resolvedLocation(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        applicationSupportDirectory: URL? = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first
+    ) throws -> SenseVoiceModelLocation {
+        if let override = environment["TSB_SENSEVOICE_MODEL_DIR"], !override.isEmpty {
+            return try SenseVoiceModelLocation(directory: URL(fileURLWithPath: override, isDirectory: true))
+        }
+        guard let applicationSupportDirectory else {
+            throw SenseVoiceTranscriberError.missingDevelopmentModelDirectory
+        }
+        let directory = applicationSupportDirectory
+            .appendingPathComponent("TSB/Models", isDirectory: true)
+            .appendingPathComponent(modelName, isDirectory: true)
+        return try SenseVoiceModelLocation(directory: directory)
     }
 
 }
