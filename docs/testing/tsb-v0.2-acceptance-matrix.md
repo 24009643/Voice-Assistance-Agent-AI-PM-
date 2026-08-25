@@ -23,6 +23,29 @@ Current implementation commit: `12139cb0609da2f87ad6e89050bbddb4e9b8064e`. Lifec
 
 The lifecycle-correction implementation through `12139cb` separates destructive active-capture cancellation from Stop preservation, shutdown/task cleanup, callback handoff and Debug cleanup; it also closes controller task ownership and privacy-receipt propagation. The independent whole-range review is preserved in tracked commit `2cde526` and was committed before the fresh post-review gate. Current/additions count-only scans across 12 changed files are zero for provider-token, Bearer, AWS key, GitHub token, PEM private key, private absolute path and `.env` patterns. This is automated evidence only: no merge or release authorization is implied.
 
+## Transcript-polish Task 6 evidence (`323d7bb`)
+
+| ID | Requirement | Evidence | Current result | Status |
+|---|---|---|---|---|
+| V02-P01 | Transcript-polish focused aggregate | Normal invocation reached the existing signing artifact; rerun with `CODE_SIGNING_ALLOWED=NO` selected `TranscriptTerminology`, polish model/validator/client, settings, coordinator, store and acceptance-runner groups | **208/208 passed, 0 failed, 0 skipped** | passed-automated |
+| V02-P02 | Fresh full macOS app suite | Normal run wrote `/tmp/tsb-polish-full.xcresult` but stopped during app signing. Signing-disabled run wrote `/tmp/tsb-polish-full-unsigned.xcresult` and was interrupted after stalling in `SettingsSourceTests.testAPIKeyUsesNonLoginContentTypeAndModelIsNotACredentialField`; no final suite count exists | No full-suite pass result | blocked |
+| V02-P03 | Fresh Debug build | Normal build stopped during `CodeSign TSB.app`: `code object is not signed at all`, subcomponent `onnxruntime.framework`; separate `CODE_SIGNING_ALLOWED=NO` build at `/tmp/tsb-polish-build-unsigned` completed | Unsigned Debug build succeeded; signed Debug build remains blocked by the copied framework artifact | passed-automated (unsigned only) |
+| V02-P04 | Range hygiene and bounded privacy scan | `git diff --check eba721b..323d7bb` was clean; pre-documentation `git status --short` was empty. Added production lines: 0 credential signatures, 0 Bearer value literals, 0 private absolute paths, 0 logging calls; one coordinator delivery copy call and 0 direct `clipboard.copy` additions | Static scan clean within the stated patterns | passed-automated |
+
+The request constructor sends only `schema_version`, `request_id`, candidate `candidate_id`/`text`/`text_sha256`, and approved terminology; the changed current code has no audio, path, history, clipboard, record, or session-ID request field. This bounded static scan and focused test evidence do not prove a real Provider request, real clipboard/disk state, or absence of every possible sensitive-data path.
+
+### Transcript-polish manual boundary
+
+| Gate | Current result | Status |
+|---|---|---|
+| Real mixed Chinese-English microphone quality and durable recording evidence | Not performed in Task 6 | pending-manual |
+| One authorized real Provider polish request and measured latency | Not performed in Task 6 | pending-manual |
+| Target-Mac Stop-to-copy timing and immediate clipboard/disk equality | Not performed in Task 6 | pending-manual |
+| Figma/SwiftUI visual and accessibility acceptance | Not performed in Task 6 | pending-manual |
+| Mixed-language Golden Set and M10 | Not performed in Task 6; existing matrix blockers remain | blocked |
+
+Task 6 does not make a release, merge, push, or manual-acceptance claim. The incomplete full suite and the normal signed-build artifact remain release blockers.
+
 ## Exact-HEAD lifecycle-correction gate boundary
 
 The lifecycle-correction post-review automated gate at exact `2cde526` is `passed-automated` only. It does **not** pass the following user-present gates:
