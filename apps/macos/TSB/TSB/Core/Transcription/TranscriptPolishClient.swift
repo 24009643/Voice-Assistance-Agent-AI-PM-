@@ -34,4 +34,4 @@ struct TranscriptPolishClient: Sendable {
     """
 }
 
-private final class TranscriptPolishRejectRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable { private let onRejected: @Sendable () -> Void; init(onRejected: @escaping @Sendable () -> Void) { self.onRejected = onRejected }; func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { onRejected(); completionHandler(nil) } }
+private final class TranscriptPolishRejectRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable { private let onRejected: @Sendable () -> Void; init(onRejected: @escaping @Sendable () -> Void) { self.onRejected = onRejected }; func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil); onRejected() } }

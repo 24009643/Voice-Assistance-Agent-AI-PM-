@@ -29,3 +29,7 @@ RED coverage adds exact system-contract clauses, origin-only redirect behavior, 
 RED expands the request-contract assertions to every fixed schema/edit/limit/immutability/anchor/non-inference clause and changes redirect verification to wait for the production delegate's rejection callback. The internal callback is default-inert and invokes immediately before `completionHandler(nil)`.
 
 GREEN: `xcodebuild CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -derivedDataPath /tmp/tsb-polish-task2-round3 -only-testing:TSBTests/TranscriptPolishValidatorTests -only-testing:TSBTests/TranscriptPolishClientTests test` passed 15 tests, 0 failures. `git diff --check` passed. Self-review: provider instructions now enumerate the complete required contract; redirect test observes actual delegate rejection before asserting origin-only routing and cancelling.
+
+## Fix round 4
+
+Moved the default-inert redirect observation hook after `completionHandler(nil)`, so its test signal means the production rejection decision is committed. Focused round-4 command passed 15 tests, 0 failures; `git diff --check` passed.
