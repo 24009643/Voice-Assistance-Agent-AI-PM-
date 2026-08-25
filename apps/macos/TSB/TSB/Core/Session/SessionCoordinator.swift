@@ -6,6 +6,7 @@ final class SessionCoordinator {
         let startRecording: @MainActor (
             SessionID,
             @escaping @MainActor (SessionID, String) -> Void,
+            @escaping @MainActor (SessionID) -> Void,
             @escaping @Sendable (Float) -> Void,
             @escaping @Sendable (RecordedAudio) -> Void,
             @escaping @Sendable (RecordedAudio) -> Void
@@ -44,6 +45,7 @@ final class SessionCoordinator {
         var status: SessionStatus = .recording
         var durationMilliseconds = 0
         var previewText = ""
+        var livePreviewAvailability: LivePreviewAvailability
         var message = "Recording"
         var audioLevel: Float = 0
         var lastAudioLevelUpdate: TimeInterval = -.infinity
@@ -78,7 +80,7 @@ final class SessionCoordinator {
     }
 
     private let dependencies: Dependencies
-    private let livePreviewAvailability: LivePreviewAvailability
+    private let initialLivePreviewAvailability: LivePreviewAvailability
     private let now: @MainActor () -> Date
     private let onSnapshot: (AppSnapshot) -> Void
     private var sessions: [SessionID: Session] = [:]
@@ -102,7 +104,7 @@ final class SessionCoordinator {
         onSnapshot: @escaping (AppSnapshot) -> Void
     ) {
         self.dependencies = dependencies
-        self.livePreviewAvailability = livePreviewAvailability
+        self.initialLivePreviewAvailability = livePreviewAvailability
         self.now = now
         self.onSnapshot = onSnapshot
     }
@@ -214,7 +216,9 @@ final class SessionCoordinator {
     }
 #endif
 
-    private func startRecording() -> SessionID? {
+    @discardableResult
+    func startRecording() -> SessionID? {
+        guard recordingSessionID == nil else { return nil }
         guard processingSessionCount < 3 else {
             publishSnapshot()
             return nil
@@ -232,7 +236,8 @@ final class SessionCoordinator {
         let session = Session(
             id: SessionID(rawValue: UUID()),
             ordinal: SessionOrdinal(rawValue: nextOrdinal),
-            createdAt: now()
+            createdAt: now(),
+            livePreviewAvailability: initialLivePreviewAvailability
         )
         nextOrdinal += 1
         sessions[session.id] = session
@@ -247,6 +252,9 @@ final class SessionCoordinator {
                 session.id,
                 { [weak self] sessionID, text in
                     self?.receivePreview(text, for: sessionID)
+                },
+                { [weak self] sessionID in
+                    self?.receivePreviewUnavailable(for: sessionID)
                 },
                 { [weak self] level in
                     Task { @MainActor [weak self] in
@@ -282,6 +290,16 @@ final class SessionCoordinator {
               text != session.previewText else { return }
         session.previewText = text
         session.message = "实时草稿"
+        sessions[sessionID] = session
+        publishSnapshot()
+    }
+
+    private func receivePreviewUnavailable(for sessionID: SessionID) {
+        guard recordingSessionID == sessionID,
+              var session = sessions[sessionID],
+              session.status == .recording,
+              session.livePreviewAvailability != .unavailable else { return }
+        session.livePreviewAvailability = .unavailable
         sessions[sessionID] = session
         publishSnapshot()
     }
@@ -1066,7 +1084,7 @@ final class SessionCoordinator {
             originalText: main.transcript?.originalText ?? "",
             message: main.message,
             audioLevel: main.audioLevel,
-            livePreviewAvailability: livePreviewAvailability,
+            livePreviewAvailability: main.livePreviewAvailability,
             organizationPhase: main.organizationPhase,
             organizationRequestID: main.organizationRequestID,
             suggestedRecords: main.suggestedRecords,

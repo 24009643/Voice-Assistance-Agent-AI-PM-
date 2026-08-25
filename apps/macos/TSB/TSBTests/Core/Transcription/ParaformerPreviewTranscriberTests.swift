@@ -80,6 +80,32 @@ final class ParaformerPreviewTranscriberTests: XCTestCase {
         }
     }
 
+    func testDevelopmentLocationWithoutOverrideKeepsStrictMissingDirectoryError() {
+        XCTAssertThrowsError(try ParaformerModelLocation.developmentLocation(environment: [:])) { error in
+            XCTAssertEqual(error as? ParaformerPreviewError, .missingDevelopmentModelDirectory)
+        }
+    }
+
+    @MainActor
+    func testAppControllerBuildsLivePreviewFactoryFromCanonicalBundle() throws {
+        try withTemporaryParaformerDirectory { root in
+            let appSupport = root.appendingPathComponent("Application Support", isDirectory: true)
+            let model = appSupport
+                .appendingPathComponent("TSB/Models", isDirectory: true)
+                .appendingPathComponent(ParaformerModelLocation.modelName, isDirectory: true)
+            try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+            try writeValidParaformerBundle(in: model)
+
+            let runtime = AppController.makeLivePreviewRuntime(
+                environment: [:],
+                applicationSupportDirectory: appSupport
+            )
+
+            XCTAssertEqual(runtime.availability, .available)
+            XCTAssertTrue(runtime.pipeline.hasOperationsFactory)
+        }
+    }
+
     func testStatePublishesOnlyChangedFullPreview() {
         var state = ParaformerPreviewState()
 

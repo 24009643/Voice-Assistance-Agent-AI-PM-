@@ -638,7 +638,7 @@ private final class RunnerFailureHarness {
 
     private(set) lazy var coordinator = SessionCoordinator(
         dependencies: .init(
-            startRecording: { [weak self] _, onPreview, _, onFinished, _ in
+            startRecording: { [weak self] _, onPreview, _, _, onFinished, _ in
                 guard let self else { return }
                 startCount += 1
                 self.onPreview = onPreview

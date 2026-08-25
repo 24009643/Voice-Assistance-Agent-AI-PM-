@@ -56,6 +56,17 @@ final class IslandPresentationTests: XCTestCase {
         )
     }
 
+    func testElapsedTimeCapsAtTenMinutes() {
+        XCTAssertEqual(
+            IslandPresentation.make(for: snapshot(status: .recording, elapsedMilliseconds: 600_000)).elapsedText,
+            "10:00"
+        )
+        XCTAssertEqual(
+            IslandPresentation.make(for: snapshot(status: .recording, elapsedMilliseconds: 600_001)).elapsedText,
+            "10:00"
+        )
+    }
+
     func testUnavailableLivePreviewIsVisibleWithoutPretendingItIsTranscriptText() {
         let value = snapshot(
             status: .recording,
@@ -361,6 +372,17 @@ final class IslandPresentationTests: XCTestCase {
 
         XCTAssertTrue(presentation.controls.map(\.action).contains(.openSettings))
         XCTAssertEqual(presentation.intent(for: .openSettings), .openSettings)
+    }
+
+    func testMicrophonePermissionFailureOffersDedicatedRecoveryIntent() {
+        let presentation = IslandPresentation.make(for: snapshot(
+            status: .failed,
+            message: "Microphone access is required to record."
+        ))
+
+        XCTAssertTrue(presentation.controls.map(\.action).contains(.openMicrophoneSettings))
+        XCTAssertFalse(presentation.controls.map(\.action).contains(.openSettings))
+        XCTAssertEqual(presentation.intent(for: .openMicrophoneSettings), .openMicrophoneSettings)
     }
 
     func testDeterministicResultDoesNotOfferImpossibleLinkGeneration() {

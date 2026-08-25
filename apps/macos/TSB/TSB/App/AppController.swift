@@ -11,6 +11,11 @@ final class AppState: ObservableObject {
 
 @MainActor
 final class AppController: ObservableObject {
+    struct LivePreviewRuntime {
+        let pipeline: LivePreviewPipeline
+        let availability: LivePreviewAvailability
+    }
+
     struct OrganizationDispatchSnapshot {
         let endpoint: OrganizationEndpointSettings
         let apiKey: String
@@ -74,8 +79,32 @@ final class AppController: ObservableObject {
             .retry(sessionID: sessionID, requestID: requestID)
         case let .generateLinks(sessionID, selectedRecordIDs):
             .enrichLinks(sessionID: sessionID, selectedRecordIDs: selectedRecordIDs)
-        case .stopRecording, .cancelRecording, .copy, .openSettings:
+        case .stopRecording, .cancelRecording, .copy, .openSettings, .openMicrophoneSettings:
             nil
+        }
+    }
+
+    static func makeLivePreviewRuntime(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        applicationSupportDirectory: URL? = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first
+    ) -> LivePreviewRuntime {
+        do {
+            let location = try ParaformerModelLocation.resolvedLocation(
+                environment: environment,
+                applicationSupportDirectory: applicationSupportDirectory
+            )
+            return LivePreviewRuntime(
+                pipeline: LivePreviewPipeline(modelLocation: location),
+                availability: .available
+            )
+        } catch {
+            return LivePreviewRuntime(
+                pipeline: LivePreviewPipeline(modelLocation: nil),
+                availability: .unavailable
+            )
         }
     }
 
@@ -104,21 +133,17 @@ final class AppController: ObservableObject {
             modelError = "SenseVoice model is unavailable. Set TSB_SENSEVOICE_MODEL_DIR to a validated model directory."
         }
 
-        let previewModelLocation: ParaformerModelLocation?
-        let livePreviewAvailability: LivePreviewAvailability
-        do {
-            previewModelLocation = try ParaformerModelLocation.resolvedLocation()
-            livePreviewAvailability = .available
-        } catch {
-            previewModelLocation = nil
-            livePreviewAvailability = .unavailable
-        }
-        let livePreview = LivePreviewPipeline(modelLocation: previewModelLocation)
+        let livePreviewRuntime = Self.makeLivePreviewRuntime()
+        let livePreview = livePreviewRuntime.pipeline
 
         let coordinator = SessionCoordinator(
             dependencies: .init(
-                startRecording: { sessionID, onPreview, onLevel, onFinished, onFailed in
-                    let feed = livePreview.start(sessionID: sessionID, onPreview: onPreview)
+                startRecording: { sessionID, onPreview, onPreviewUnavailable, onLevel, onFinished, onFailed in
+                    let feed = livePreview.start(
+                        sessionID: sessionID,
+                        onPreview: onPreview,
+                        onPreviewUnavailable: onPreviewUnavailable
+                    )
                     try recorder.start(
                         sessionID: sessionID,
                         onPCMChunk: feed,
@@ -199,7 +224,7 @@ final class AppController: ObservableObject {
                     }
                 }
             ),
-            livePreviewAvailability: livePreviewAvailability,
+            livePreviewAvailability: livePreviewRuntime.availability,
             onSnapshot: { snapshot in
                 state.snapshot = snapshot
                 notchOverlay?.update(snapshot)
@@ -328,8 +353,24 @@ final class AppController: ObservableObject {
         receive(.toggleRecording)
     }
 
+    func startRecordingFromUI() {
+        startRecordingIfPossible()
+    }
+
+    func stopRecordingFromUI(sessionID: SessionID) {
+        enqueue { [weak self] in
+            self?.coordinator.stopRecording(sessionID: sessionID)
+        }
+    }
+
     func cancelRecordingFromUI() {
         receive(.cancelRecording)
+    }
+
+    func cancelRecordingFromUI(sessionID: SessionID) {
+        enqueue { [weak self] in
+            await self?.coordinator.cancelRecording(sessionID: sessionID)
+        }
     }
 
     func openMicrophoneSettings() {
@@ -343,38 +384,36 @@ final class AppController: ObservableObject {
             return
         }
 
-        if intent == .toggleRecording, state.snapshot.status != .recording {
-            switch MicrophonePermission.decision(for: microphoneAuthorizationStatus()) {
-            case .proceed:
-                break
-            case .request:
-                guard microphoneRequestLatch.begin() else { return }
-                requestMicrophonePermission { [weak self] granted in
-                    guard let self else { return }
-                    self.microphoneRequestLatch.finish()
-                    if granted {
-                        self.receive(.toggleRecording)
-                    } else {
-                        self.publishMicrophoneRequirement()
-                    }
-                }
-                return
-            case .openSettings:
-                publishMicrophoneRequirement()
-                return
-            }
-        }
         switch intent {
         case .cancelRecording:
             dispatch(intent)
         case .toggleRecording:
-            switch state.snapshot.status {
-            case .recording:
+            if state.snapshot.status == .recording {
                 dispatch(intent)
-            case .idle, .transcribing, .saving, .delivered, .failed, .cancelled:
-                guard state.snapshot.canStartRecording else { return }
-                dispatchRecordingStart()
+            } else {
+                startRecordingIfPossible()
             }
+        }
+    }
+
+    private func startRecordingIfPossible() {
+        guard state.snapshot.status != .recording, state.snapshot.canStartRecording else { return }
+        switch MicrophonePermission.decision(for: microphoneAuthorizationStatus()) {
+        case .proceed:
+            dispatchRecordingStart()
+        case .request:
+            guard microphoneRequestLatch.begin() else { return }
+            requestMicrophonePermission { [weak self] granted in
+                guard let self else { return }
+                self.microphoneRequestLatch.finish()
+                if granted {
+                    self.startRecordingIfPossible()
+                } else {
+                    self.publishMicrophoneRequirement()
+                }
+            }
+        case .openSettings:
+            publishMicrophoneRequirement()
         }
     }
 
@@ -408,6 +447,8 @@ final class AppController: ObservableObject {
             }
         case .openSettings:
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .openMicrophoneSettings:
+            openMicrophoneSettings()
         case .setLocalOnly, .cancelOrganization, .retryOrganization, .generateLinks:
             break
         }
@@ -427,7 +468,7 @@ final class AppController: ObservableObject {
             guard let self else { return }
             let error = Self.startRecordingAfterEscapePreflight(
                 startEscape: { self.escapeMonitor.start() },
-                startRecording: { self.coordinator.handleToggleRecording() }
+                startRecording: { _ = self.coordinator.startRecording() }
             )
             if let error {
                 state.snapshot = AppSnapshot(

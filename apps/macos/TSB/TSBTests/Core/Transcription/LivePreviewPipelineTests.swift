@@ -43,7 +43,12 @@ final class LivePreviewPipelineTests: XCTestCase {
         let firstFinish = Task { await pipeline.finish(sessionID: firstID) }
         await harness.waitForFirstFinishStart()
 
-        let feed = pipeline.start(sessionID: overflowedID) { _, _ in }
+        var unavailableSessionIDs: [SessionID] = []
+        let feed = pipeline.start(
+            sessionID: overflowedID,
+            onPreview: { _, _ in },
+            onPreviewUnavailable: { unavailableSessionIDs.append($0) }
+        )
         for value in 1 ... 5 { feed([Float(value)]) }
         let overflowedFinish = Task { await pipeline.finish(sessionID: overflowedID) }
 
@@ -55,6 +60,7 @@ final class LivePreviewPipelineTests: XCTestCase {
         XCTAssertEqual(overflowedResult, "")
         XCTAssertEqual(overflowEvents.last, "cancel:1")
         XCTAssertFalse(overflowEvents.contains(where: { $0.hasPrefix("accept:") }))
+        XCTAssertEqual(unavailableSessionIDs, [overflowedID])
 
         let thirdID = SessionID(rawValue: UUID())
         let thirdFeed = pipeline.start(sessionID: thirdID) { _, _ in }

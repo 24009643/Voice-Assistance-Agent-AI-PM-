@@ -41,6 +41,7 @@ enum IslandAction: Hashable, Sendable {
     case copyChamber(IslandChamber)
     case generateLinks
     case openSettings
+    case openMicrophoneSettings
 }
 
 enum IslandIntent: Equatable, Sendable {
@@ -52,6 +53,7 @@ enum IslandIntent: Equatable, Sendable {
     case generateLinks(sessionID: SessionID, selectedRecordIDs: Set<SessionID>)
     case copy(String)
     case openSettings
+    case openMicrophoneSettings
 }
 
 struct IslandControl: Equatable, Hashable, Sendable {
@@ -138,7 +140,6 @@ struct IslandPresentation: Equatable, Sendable {
             hasLatestResult: hasLatestResult
         )
         let draft = snapshot.status == .recording
-            && snapshot.previewText.isEmpty
             && snapshot.livePreviewAvailability == .unavailable
             ? "停止后仍会生成全文"
             : snapshot.previewText
@@ -203,6 +204,8 @@ struct IslandPresentation: Equatable, Sendable {
                 : .generateLinks(sessionID: targetSessionID, selectedRecordIDs: allowed)
         case .openSettings:
             return .openSettings
+        case .openMicrophoneSettings:
+            return .openMicrophoneSettings
         case .selectChamber, .reopenLatest, .dismiss:
             return nil
         }
@@ -256,7 +259,7 @@ struct IslandPresentation: Equatable, Sendable {
         case .idle:
             return ("Ready", .neutral, nil, "TSB ready")
         case .recording:
-            if snapshot.previewText.isEmpty, snapshot.livePreviewAvailability == .unavailable {
+            if snapshot.livePreviewAvailability == .unavailable {
                 return ("实时草稿不可用", .neutral, "waveform", "实时草稿不可用，停止后仍会生成全文")
             }
             let text = snapshot.previewText.isEmpty ? "正在录音" : "实时草稿"
@@ -347,6 +350,9 @@ struct IslandPresentation: Equatable, Sendable {
             return result
         case .failed:
             var result = [control(.dismiss, "收起", "收起灵动岛")]
+            if snapshot.message == "Microphone access is required to record." {
+                result.insert(control(.openMicrophoneSettings, "打开麦克风设置", "打开麦克风设置"), at: 0)
+            }
             if case .authorizationRequired = snapshot.organizationPhase {
                 result.insert(control(.openSettings, "打开设置", "打开整理模型设置"), at: 0)
             }

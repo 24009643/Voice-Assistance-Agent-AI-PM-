@@ -10,6 +10,9 @@ final class LivePreviewPipeline {
 
     typealias Feed = @Sendable ([Float]) -> Void
     typealias Preview = @MainActor (SessionID, String) -> Void
+    typealias PreviewUnavailable = @MainActor (SessionID) -> Void
+
+    var hasOperationsFactory: Bool { operationsFactory != nil }
 
     private let operationsFactory: (() -> Operations)?
     private var sessions: [SessionID: Session] = [:]
@@ -36,11 +39,19 @@ final class LivePreviewPipeline {
         self.operationsFactory = operationsFactory
     }
 
-    func start(sessionID: SessionID, onPreview: @escaping Preview) -> Feed {
+    func start(
+        sessionID: SessionID,
+        onPreview: @escaping Preview,
+        onPreviewUnavailable: @escaping PreviewUnavailable = { _ in }
+    ) -> Feed {
         latestSessionID = sessionID
         guard let operations = operationsFactory?() else { return { _ in } }
 
-        let input = SessionInput()
+        let input = SessionInput {
+            Task { @MainActor in
+                onPreviewUnavailable(sessionID)
+            }
+        }
         let task = Task { @MainActor [weak self] in
             guard let self else { return "" }
             return await self.run(
@@ -127,13 +138,15 @@ private extension LivePreviewPipeline {
 
         let stream: AsyncStream<[Float]>
         private let continuation: AsyncStream<[Float]>.Continuation
+        private let onOverflow: @Sendable () -> Void
         private let lock = NSLock()
         private var storedEndReason: EndReason?
 
-        init() {
+        init(onOverflow: @escaping @Sendable () -> Void) {
             let pair = AsyncStream<[Float]>.makeStream(bufferingPolicy: .bufferingOldest(4))
             stream = pair.stream
             continuation = pair.continuation
+            self.onOverflow = onOverflow
         }
 
         var endReason: EndReason? {
@@ -153,6 +166,7 @@ private extension LivePreviewPipeline {
                 if case .dropped = continuation.yield(samples) {
                     storedEndReason = .overflow
                     continuation.finish()
+                    onOverflow()
                 }
             }
         }

@@ -265,6 +265,21 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 0)
     }
 
+    func testPreviewOverflowMarksOnlyCurrentSessionUnavailableWithoutChangingDraft() async {
+        let harness = CoordinatorHarness(transcript: "final")
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishPreview("last live draft")
+        harness.disableLivePreview()
+
+        XCTAssertEqual(harness.coordinator.snapshot.livePreviewAvailability, .unavailable)
+        XCTAssertEqual(harness.coordinator.snapshot.previewText, "last live draft")
+        XCTAssertEqual(
+            IslandPresentation.make(for: harness.coordinator.snapshot).draft,
+            "停止后仍会生成全文"
+        )
+    }
+
     func testSenseVoiceSuccessWinsAndPersistsBothCandidates() async throws {
         let harness = CoordinatorHarness(transcript: "SenseVoice final", streamingText: "Paraformer draft")
 
@@ -358,6 +373,57 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(microphoneRequestCount, 0)
         XCTAssertEqual(state.snapshot.status, .recording)
         XCTAssertEqual(state.snapshot.message, "Recording")
+    }
+
+    func testStaleMenuActionsForSessionADoNotStartOrAffectSessionB() async throws {
+        let harness = CoordinatorHarness(transcript: "final")
+        await harness.coordinator.handle(.toggleRecording)
+        let sessionA = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        let controller = AppController(state: AppState(), coordinator: harness.coordinator)
+        let barrier = IntentBarrier()
+
+        controller.enqueueBarrierForDevelopment { await barrier.wait() }
+        await barrier.waitUntilEntered()
+        controller.stopRecordingFromUI(sessionID: sessionA)
+        controller.cancelRecordingFromUI(sessionID: sessionA)
+
+        await harness.coordinator.cancelRecording(sessionID: sessionA)
+        await harness.coordinator.handle(.toggleRecording)
+        let sessionB = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        await barrier.release()
+        for _ in 0..<100 { await Task.yield() }
+
+        XCTAssertNotEqual(sessionA, sessionB)
+        XCTAssertEqual(harness.startedSessionIDs.count, 2)
+        XCTAssertEqual(harness.stopCount, 0)
+        XCTAssertEqual(harness.cancelledSessionIDs, [sessionA])
+        XCTAssertEqual(harness.coordinator.snapshot.sessionID, sessionB)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+    }
+
+    func testStaleMenuStartDoesNotCreateSessionCAfterSessionBStarts() async throws {
+        let harness = CoordinatorHarness(transcript: "final")
+        let state = AppState()
+        let controller = AppController(
+            state: state,
+            coordinator: harness.coordinator,
+            microphoneAuthorizationStatus: { .authorized }
+        )
+        let barrier = IntentBarrier()
+
+        controller.enqueueBarrierForDevelopment { await barrier.wait() }
+        await barrier.waitUntilEntered()
+        controller.startRecordingFromUI()
+
+        await harness.coordinator.handle(.toggleRecording)
+        let sessionB = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        state.snapshot = harness.coordinator.snapshot
+        await barrier.release()
+        for _ in 0..<100 { await Task.yield() }
+
+        XCTAssertEqual(harness.startedSessionIDs.count, 1)
+        XCTAssertEqual(harness.coordinator.snapshot.sessionID, sessionB)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
     }
 
     func testBlockedHistoryScanDoesNotBlockANewRecordingIntent() async {
@@ -1499,6 +1565,29 @@ private final class TestClock {
     }
 }
 
+private actor IntentBarrier {
+    private var entered = false
+    private var enteredWaiter: CheckedContinuation<Void, Never>?
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        entered = true
+        enteredWaiter?.resume()
+        enteredWaiter = nil
+        await withCheckedContinuation { releaseWaiter = $0 }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { enteredWaiter = $0 }
+    }
+
+    func release() {
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
 @MainActor
 private final class CoordinatorHarness {
     enum Event: Equatable {
@@ -1544,6 +1633,7 @@ private final class CoordinatorHarness {
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
     private var onPreview: [(@MainActor (SessionID, String) -> Void)] = []
+    private var onPreviewUnavailable: [(@MainActor (SessionID) -> Void)] = []
     private var onLevel: [(@Sendable (Float) -> Void)] = []
     private var pcmFeeds: [LivePreviewPipeline.Feed] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
@@ -1625,7 +1715,7 @@ private final class CoordinatorHarness {
     private func makeCoordinator() -> SessionCoordinator {
         SessionCoordinator(
             dependencies: .init(
-                startRecording: { [weak self] sessionID, onPreview, onLevel, onFinished, onFailed in
+                startRecording: { [weak self] sessionID, onPreview, onPreviewUnavailable, onLevel, onFinished, onFailed in
                     let attempt = self?.startedSessionIDs.count ?? 0
                     self?.events.append(.recordingStarted)
                     self?.startedSessionIDs.append(sessionID)
@@ -1634,11 +1724,16 @@ private final class CoordinatorHarness {
                         throw error
                     }
                     self?.onPreview.append(onPreview)
+                    self?.onPreviewUnavailable.append(onPreviewUnavailable)
                     self?.onLevel.append(onLevel)
                     self?.onFinished.append(onFinished)
                     self?.onFailed.append(onFailed)
                     if let pipeline = self?.livePreviewPipeline {
-                        self?.pcmFeeds.append(pipeline.start(sessionID: sessionID, onPreview: onPreview))
+                        self?.pcmFeeds.append(pipeline.start(
+                            sessionID: sessionID,
+                            onPreview: onPreview,
+                            onPreviewUnavailable: onPreviewUnavailable
+                        ))
                     }
                 },
                 stopRecording: { [weak self] in
@@ -1793,6 +1888,11 @@ private final class CoordinatorHarness {
     func publishPreview(_ text: String, at index: Int? = nil) {
         let target = index ?? onPreview.count - 1
         onPreview[target](startedSessionIDs[target], text)
+    }
+
+    func disableLivePreview(at index: Int? = nil) {
+        let target = index ?? onPreviewUnavailable.count - 1
+        onPreviewUnavailable[target](startedSessionIDs[target])
     }
 
     func publishAudioLevel(_ level: Float, at index: Int? = nil) {

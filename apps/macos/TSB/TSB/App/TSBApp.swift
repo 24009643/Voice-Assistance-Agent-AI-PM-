@@ -12,7 +12,8 @@ struct TSBApp: App {
         MenuBarExtra {
             MenuBarView(
                 state: appDelegate.controller.state,
-                toggleRecording: appDelegate.controller.toggleRecordingFromUI,
+                startRecording: appDelegate.controller.startRecordingFromUI,
+                stopRecording: appDelegate.controller.stopRecordingFromUI,
                 cancelRecording: appDelegate.controller.cancelRecordingFromUI,
                 openMicrophoneSettings: appDelegate.controller.openMicrophoneSettings,
                 quit: { NSApplication.shared.terminate(nil) }
