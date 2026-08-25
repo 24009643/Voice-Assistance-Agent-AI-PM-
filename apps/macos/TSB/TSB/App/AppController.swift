@@ -4,6 +4,10 @@ import Combine
 import Foundation
 import Carbon
 
+enum TranscriptPolishDispatchError: Error, Equatable {
+    case notEligible
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil)
@@ -67,6 +71,28 @@ final class AppController: ObservableObject {
         guard let apiKey = try loadAPIKey(endpoint),
               !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OrganizationDispatchError.authorizationRequired
+        }
+        return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: apiKey)
+    }
+
+    static func makePolishDispatchSnapshot(
+        localOnly: Bool = false,
+        loadSettings: () -> OrganizationSettings,
+        loadAPIKey: (OrganizationEndpointSettings) throws -> String?
+    ) throws -> OrganizationDispatchSnapshot {
+        let settings = loadSettings()
+        guard !localOnly, let endpoint = settings.endpoint else {
+            throw TranscriptPolishDispatchError.notEligible
+        }
+        guard settings.isPolishDispatchEligible else {
+            throw TranscriptPolishDispatchError.notEligible
+        }
+        if endpoint.isLoopback {
+            return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: "")
+        }
+        guard let apiKey = try loadAPIKey(endpoint),
+              !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TranscriptPolishDispatchError.notEligible
         }
         return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: apiKey)
     }

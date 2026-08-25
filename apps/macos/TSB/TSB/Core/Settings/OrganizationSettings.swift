@@ -54,19 +54,34 @@ struct OrganizationEndpointSettings: Equatable, Codable, Sendable {
 
 struct OrganizationSettings: Equatable, Codable, Sendable {
     static let currentCloudConsentVersion = OrganizationRequestContract.consentVersion
+    static let currentPolishConsentVersion = 1
 
     var endpoint: OrganizationEndpointSettings?
     var cloudConsentVersion: Int?
     var allowUserSelectedHistorySummaries: Bool
+    var polishEnabled: Bool
+    var polishConsentVersion: Int?
+    var transcriptTerminology: [TranscriptTerminologyEntry]
+
+    private enum CodingKeys: String, CodingKey {
+        case endpoint, cloudConsentVersion, allowUserSelectedHistorySummaries
+        case polishEnabled, polishConsentVersion, transcriptTerminology
+    }
 
     init(
         endpoint: OrganizationEndpointSettings? = nil,
         cloudConsentVersion: Int? = nil,
-        allowUserSelectedHistorySummaries: Bool = false
+        allowUserSelectedHistorySummaries: Bool = false,
+        polishEnabled: Bool = false,
+        polishConsentVersion: Int? = nil,
+        transcriptTerminology: [TranscriptTerminologyEntry] = []
     ) {
         self.endpoint = endpoint
         self.cloudConsentVersion = cloudConsentVersion
         self.allowUserSelectedHistorySummaries = allowUserSelectedHistorySummaries
+        self.polishEnabled = polishEnabled
+        self.polishConsentVersion = polishConsentVersion
+        self.transcriptTerminology = transcriptTerminology
     }
 
     var isRemoteDispatchEligible: Bool {
@@ -75,5 +90,24 @@ struct OrganizationSettings: Equatable, Codable, Sendable {
 
     var canSendUserSelectedHistorySummaries: Bool {
         isRemoteDispatchEligible && allowUserSelectedHistorySummaries
+    }
+
+    var isPolishDispatchEligible: Bool {
+        guard polishEnabled, let endpoint else { return false }
+        return endpoint.isLoopback || polishConsentVersion == Self.currentPolishConsentVersion
+    }
+
+    var requiresRemoteCredential: Bool {
+        endpoint?.isRemote == true && (isRemoteDispatchEligible || isPolishDispatchEligible)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpoint = try container.decodeIfPresent(OrganizationEndpointSettings.self, forKey: .endpoint)
+        cloudConsentVersion = try container.decodeIfPresent(Int.self, forKey: .cloudConsentVersion)
+        allowUserSelectedHistorySummaries = try container.decodeIfPresent(Bool.self, forKey: .allowUserSelectedHistorySummaries) ?? false
+        polishEnabled = try container.decodeIfPresent(Bool.self, forKey: .polishEnabled) ?? false
+        polishConsentVersion = try container.decodeIfPresent(Int.self, forKey: .polishConsentVersion)
+        transcriptTerminology = try container.decodeIfPresent([TranscriptTerminologyEntry].self, forKey: .transcriptTerminology) ?? []
     }
 }

@@ -531,6 +531,37 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(secretLoadCount, 0)
     }
 
+    func testPolishDispatchUsesNoKeyForLoopbackAndLocalOnlyFallsBackFirst() throws {
+        let endpoint = try OrganizationEndpointSettings(
+            baseURL: URL(string: "http://127.0.0.1:11434/v1/chat/completions")!,
+            model: "local-model"
+        )
+        let loopback = OrganizationSettings(endpoint: endpoint, polishEnabled: true)
+
+        let dispatch = try AppController.makePolishDispatchSnapshot(
+            loadSettings: { loopback },
+            loadAPIKey: { _ in
+                XCTFail("Loopback polish must not load Keychain")
+                return nil
+            }
+        )
+        XCTAssertEqual(dispatch.apiKey, "")
+
+        var secretLoadCount = 0
+        let remote = try remoteSettings()
+        XCTAssertThrowsError(try AppController.makePolishDispatchSnapshot(
+            localOnly: true,
+            loadSettings: { remote },
+            loadAPIKey: { _ in
+                secretLoadCount += 1
+                return "must-not-load"
+            }
+        )) { error in
+            XCTAssertEqual(error as? TranscriptPolishDispatchError, .notEligible)
+        }
+        XCTAssertEqual(secretLoadCount, 0)
+    }
+
     func testRemoteHTTPIsRejectedWithoutChangingPersistence() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

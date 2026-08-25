@@ -21,6 +21,29 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         XCTAssertEqual(OrganizationRequestContract.schemaVersion, "tsb.organization.request.v1")
     }
 
+    func testOrganizationConsentNeverAuthorizesPolish() throws {
+        let settings = OrganizationSettings(
+            endpoint: try remoteEndpoint(),
+            cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+            polishEnabled: true
+        )
+
+        XCTAssertFalse(settings.isPolishDispatchEligible)
+    }
+
+    func testLegacyV1SettingsDecodeWithPolishDisabled() throws {
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "endpoint": ["baseURL": "https://example.test/v1/chat/completions", "model": "test-model"],
+            "cloudConsentVersion": OrganizationSettings.currentCloudConsentVersion,
+            "allowUserSelectedHistorySummaries": true,
+        ])
+        let settings = try JSONDecoder().decode(OrganizationSettings.self, from: legacy)
+
+        XCTAssertFalse(settings.polishEnabled)
+        XCTAssertNil(settings.polishConsentVersion)
+        XCTAssertEqual(settings.transcriptTerminology, [])
+    }
+
     func testHistorySummariesRequireSeparateConsent() throws {
         let endpoint = try remoteEndpoint()
         let withoutHistoryConsent = OrganizationSettings(
@@ -90,6 +113,78 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         XCTAssertFalse(store.load().isRemoteDispatchEligible)
         XCTAssertFalse(store.load().canSendUserSelectedHistorySummaries)
         XCTAssertNil(try secretStore.load(for: endpoint))
+    }
+
+    func testRevokingPolishKeepsSecretNeededByOrganization() throws {
+        let (defaults, suiteName) = makeDefaults()
+        let keychain = try TemporaryKeychain()
+        let secretStore = makeSecretStore(keychain: keychain.reference)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            keychain.delete()
+        }
+        let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
+        let endpoint = try remoteEndpoint()
+        let settings = OrganizationSettings(
+            endpoint: endpoint,
+            cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        )
+
+        try store.save(settings, apiKey: "synthetic-key")
+        try store.revokePolishConsent()
+
+        XCTAssertTrue(store.load().isRemoteDispatchEligible)
+        XCTAssertFalse(store.load().isPolishDispatchEligible)
+        XCTAssertEqual(try secretStore.load(for: endpoint), "synthetic-key")
+    }
+
+    func testRevokingOrganizationKeepsSecretNeededByPolish() throws {
+        let (defaults, suiteName) = makeDefaults()
+        let keychain = try TemporaryKeychain()
+        let secretStore = makeSecretStore(keychain: keychain.reference)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            keychain.delete()
+        }
+        let store = OrganizationSettingsStore(defaults: defaults, secretStore: secretStore)
+        let endpoint = try remoteEndpoint()
+        let settings = OrganizationSettings(
+            endpoint: endpoint,
+            cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        )
+
+        try store.save(settings, apiKey: "synthetic-key")
+        try store.revokeCloudConsent()
+
+        XCTAssertFalse(store.load().isRemoteDispatchEligible)
+        XCTAssertTrue(store.load().isPolishDispatchEligible)
+        XCTAssertEqual(try secretStore.load(for: endpoint), "synthetic-key")
+    }
+
+    func testRemotePolishSaveRequiresABoundSecret() throws {
+        let (defaults, suiteName) = makeDefaults()
+        let keychain = try TemporaryKeychain()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            keychain.delete()
+        }
+        let store = OrganizationSettingsStore(
+            defaults: defaults,
+            secretStore: makeSecretStore(keychain: keychain.reference)
+        )
+        let settings = OrganizationSettings(
+            endpoint: try remoteEndpoint(),
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        )
+
+        XCTAssertThrowsError(try store.save(settings)) { error in
+            XCTAssertEqual(error as? OrganizationSettingsStoreError, .missingBoundSecret)
+        }
     }
 
     func testDeleteRemovesSavedSettingsAndSecret() throws {

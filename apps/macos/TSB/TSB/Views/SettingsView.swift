@@ -6,11 +6,14 @@ struct SettingsDraft: Equatable {
     var apiKey = ""
     var cloudConsent = false
     var allowSelectedHistorySummaries = false
+    var polishConsent = false
+    var terminology = ""
 }
 
 enum SettingsOperationStatus: Equatable {
     case saved
     case revoked
+    case polishRevoked
     case deleted
 }
 
@@ -43,24 +46,33 @@ final class SettingsModel: ObservableObject {
         draft.cloudConsent = true
     }
 
+    func confirmPolishConsent() {
+        draft.polishConsent = true
+    }
+
     func save() {
         do {
             let endpoint = try validatedEndpoint()
             let enteredKey = draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? nil
                 : draft.apiKey
+            let terminology = try TranscriptTerminologyParser.parse(draft.terminology)
             if endpoint.isRemote {
-                guard draft.cloudConsent else { throw SettingsValidationError.cloudConsentRequired }
+                guard draft.cloudConsent || draft.polishConsent else { throw SettingsValidationError.cloudConsentRequired }
                 guard enteredKey != nil || hasPersistedAPIKey else { throw SettingsValidationError.apiKeyRequired }
             }
             try store.save(
                 OrganizationSettings(
                     endpoint: endpoint,
                     cloudConsentVersion: endpoint.isRemote
-                        ? OrganizationSettings.currentCloudConsentVersion
+                        && draft.cloudConsent ? OrganizationSettings.currentCloudConsentVersion
                         : nil,
                     allowUserSelectedHistorySummaries: endpoint.isRemote
-                        && draft.allowSelectedHistorySummaries
+                        && draft.cloudConsent && draft.allowSelectedHistorySummaries,
+                    polishEnabled: draft.polishConsent,
+                    polishConsentVersion: endpoint.isRemote && draft.polishConsent
+                        ? OrganizationSettings.currentPolishConsentVersion : nil,
+                    transcriptTerminology: terminology
                 ),
                 apiKey: enteredKey
             )
@@ -93,6 +105,17 @@ final class SettingsModel: ObservableObject {
         }
     }
 
+    func revokePolishAccess() {
+        do {
+            try store.revokePolishConsent()
+            try reloadPersistedState()
+            status = .polishRevoked
+            errorMessage = nil
+        } catch {
+            reloadAfterFailedDestructiveAction("撤销润色授权失败；未确认密钥已删除。")
+        }
+    }
+
     func deleteProfile() {
         do {
             try store.delete()
@@ -120,7 +143,9 @@ final class SettingsModel: ObservableObject {
             baseURL: settings.endpoint?.baseURL.absoluteString ?? "",
             model: settings.endpoint?.model ?? "",
             cloudConsent: settings.isRemoteDispatchEligible,
-            allowSelectedHistorySummaries: settings.canSendUserSelectedHistorySummaries
+            allowSelectedHistorySummaries: settings.canSendUserSelectedHistorySummaries,
+            polishConsent: settings.isPolishDispatchEligible,
+            terminology: settings.transcriptTerminology.map { "\($0.canonical) = \($0.aliases.joined(separator: " | "))" }.joined(separator: "\n")
         )
         hasPersistedAPIKey = try settings.endpoint.map(store.hasAPIKey(for:)) ?? false
     }
@@ -149,6 +174,13 @@ final class SettingsModel: ObservableObject {
             "远程端点需先查看并确认云端授权范围。"
         case SettingsValidationError.apiKeyRequired:
             "远程端点需输入 API Key；已有密钥时留空会继续保留。"
+        case TranscriptTerminologyParserError.invalidEntry,
+             TranscriptTerminologyParserError.duplicateAlias,
+             TranscriptTerminologyParserError.tooManyEntries,
+             TranscriptTerminologyParserError.tooManyAliases,
+             TranscriptTerminologyParserError.fieldTooLong,
+             TranscriptTerminologyParserError.inputTooLong:
+            "术语格式应为：规范词 = 别名 1 | 别名 2。"
         case OrganizationEndpointSettingsError.insecureEndpoint:
             "远程端点必须使用 HTTPS；只有本机回环地址可使用 HTTP。"
         default:
@@ -160,6 +192,7 @@ final class SettingsModel: ObservableObject {
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @State private var showsConsent = false
+    @State private var showsPolishConsent = false
     @State private var destructiveAction: DestructiveAction?
 
     var body: some View {
@@ -188,6 +221,20 @@ struct SettingsView: View {
                     isOn: $model.draft.allowSelectedHistorySummaries
                 )
                 .disabled(!model.draft.cloudConsent)
+            }
+
+            Section("文本润色") {
+                LabeledContent("当前状态", value: model.draft.polishConsent ? "已启用" : "仅本地")
+                Button("查看润色授权范围") { showsPolishConsent = true }
+                Button("撤销文本润色授权", role: .destructive) {
+                    destructiveAction = .revokePolish
+                }
+                TextEditor(text: $model.draft.terminology)
+                    .frame(minHeight: 80)
+                    .accessibilityLabel("术语表，格式为规范词等于别名一竖线别名二")
+                Text("术语格式：规范词 = 别名 1 | 别名 2")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("出站预览") {
@@ -225,6 +272,9 @@ struct SettingsView: View {
         .sheet(isPresented: $showsConsent) {
             consentSheet
         }
+        .sheet(isPresented: $showsPolishConsent) {
+            polishConsentSheet
+        }
         .confirmationDialog(
             "确认操作",
             isPresented: Binding(
@@ -235,6 +285,11 @@ struct SettingsView: View {
             if destructiveAction == .revoke {
                 Button("撤销云端授权并删除密钥", role: .destructive) {
                     model.revokeCloudAccess()
+                    destructiveAction = nil
+                }
+            } else if destructiveAction == .revokePolish {
+                Button("撤销文本润色授权", role: .destructive) {
+                    model.revokePolishAccess()
                     destructiveAction = nil
                 }
             } else if destructiveAction == .delete {
@@ -269,10 +324,33 @@ struct SettingsView: View {
         .frame(width: 500)
     }
 
+    private var polishConsentSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("文本润色授权")
+                .font(.title2.bold())
+            Text("允许发送本次当前转录文本用于校正；音频、录音历史、文件路径和完整记忆库不会发送。")
+            Text("润色最多会让剪贴板交付额外等待 1.5 秒。可随时撤销，之后立即回到仅本地。")
+            Text("如内容已经发往 Provider，撤销只能停止等待和拒绝结果，无法撤回已发送的文本。")
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("暂不授权") { showsPolishConsent = false }
+                Button("同意并启用") {
+                    model.confirmPolishConsent()
+                    showsPolishConsent = false
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 500)
+    }
+
     private func successMessage(for status: SettingsOperationStatus) -> String {
         switch status {
         case .saved: "已保存。"
         case .revoked: "已撤销云端授权并删除密钥。"
+        case .polishRevoked: "已撤销文本润色授权。"
         case .deleted: "已删除配置与密钥。"
         }
     }
@@ -280,5 +358,6 @@ struct SettingsView: View {
 
 private enum DestructiveAction {
     case revoke
+    case revokePolish
     case delete
 }

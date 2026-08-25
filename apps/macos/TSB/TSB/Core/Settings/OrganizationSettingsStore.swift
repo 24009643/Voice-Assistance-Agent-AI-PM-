@@ -29,13 +29,13 @@ final class OrganizationSettingsStore {
 
     func save(_ settings: OrganizationSettings, apiKey: String? = nil) throws {
         let data = try JSONEncoder().encode(settings)
-        if settings.isRemoteDispatchEligible, let endpoint = settings.endpoint {
+        if settings.requiresRemoteCredential, let endpoint = settings.endpoint {
             if let apiKey, !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 try secretStore.save(apiKey, for: endpoint)
             } else if try !secretStore.hasSecret(for: endpoint) {
                 throw OrganizationSettingsStoreError.missingBoundSecret
             }
-        } else if !settings.isRemoteDispatchEligible {
+        } else {
             try secretStore.delete()
         }
         defaults.set(data, forKey: Self.storageKey)
@@ -46,7 +46,19 @@ final class OrganizationSettingsStore {
         settings.cloudConsentVersion = nil
         settings.allowUserSelectedHistorySummaries = false
         defaults.set(try JSONEncoder().encode(settings), forKey: Self.storageKey)
-        try secretStore.delete()
+        if !settings.requiresRemoteCredential {
+            try secretStore.delete()
+        }
+    }
+
+    func revokePolishConsent() throws {
+        var settings = load()
+        settings.polishEnabled = false
+        settings.polishConsentVersion = nil
+        defaults.set(try JSONEncoder().encode(settings), forKey: Self.storageKey)
+        if !settings.requiresRemoteCredential {
+            try secretStore.delete()
+        }
     }
 
     func delete() throws {
