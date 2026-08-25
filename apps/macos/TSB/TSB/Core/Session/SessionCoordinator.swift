@@ -209,10 +209,15 @@ final class SessionCoordinator {
             return identity.organizationRequestID == nil
         }
         guard session.organizationRequestID == identity.organizationRequestID else { return false }
-        if recordingSessionID == identity.sessionID || session.isProcessing {
+        if !session.stopRequested,
+           recordingSessionID == identity.sessionID || session.isProcessing {
             beginSessionCancellation(identity.sessionID)
         } else {
             processingTasks[identity.sessionID]?.cancel()
+            if recordingSessionID == identity.sessionID {
+                recordingSessionID = nil
+                _ = trackPreviewCancellation(identity.sessionID)
+            }
         }
         if let requestID = identity.organizationRequestID {
             cancelOrganization(for: identity.sessionID, expectedRequestID: requestID)
@@ -522,7 +527,7 @@ final class SessionCoordinator {
 
     @discardableResult
     private func beginSessionCancellation(_ sessionID: SessionID) -> Task<Void, Never>? {
-        guard var session = sessions[sessionID] else { return nil }
+        guard var session = sessions[sessionID], !session.stopRequested else { return nil }
 
         processingTasks[sessionID]?.cancel()
         dependencies.cancelRecording(sessionID)

@@ -354,7 +354,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 0)
     }
 
-    func testCancelAfterFinishedAudioBeforeTranscriptionCompletesDeletesWAVWithoutSavingOrCopying() async throws {
+    func testCancelAfterStoppedAudioDuringTranscriptionDoesNotInterruptFinalization() async throws {
         let harness = CoordinatorHarness(transcript: "原始文本", suspendsTranscription: true)
 
         await harness.coordinator.handle(.toggleRecording)
@@ -363,13 +363,13 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.waitUntilTranscriptionStarts()
         await harness.coordinator.handle(.cancelRecording)
         harness.completeTranscription()
-        await Task.yield()
+        await harness.waitForDelivery()
 
-        XCTAssertTrue(harness.audioWasDeleted)
-        XCTAssertEqual(harness.cancelledSessionIDs, [try XCTUnwrap(harness.startedSessionIDs.single)])
-        XCTAssertEqual(harness.cancelledPreviewSessionIDs, harness.startedSessionIDs)
-        XCTAssertTrue(harness.savedRecords.isEmpty)
-        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertFalse(harness.audioWasDeleted)
+        XCTAssertTrue(harness.cancelledSessionIDs.isEmpty)
+        XCTAssertTrue(harness.cancelledPreviewSessionIDs.isEmpty)
+        XCTAssertEqual(harness.savedRecords.single?.outcome, .success)
+        XCTAssertEqual(harness.copyCount, 1)
     }
 
     func testLateAudioCallbackFromCancelledSessionCannotOverwriteNewSession() async throws {
@@ -387,7 +387,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
     }
 
-    func testLateASRCallbackCannotClearTheNewSessionProcessingOwnership() async throws {
+    func testOlderASRCompletionCannotClearTheNewSessionProcessingOwnership() async throws {
         let harness = CoordinatorHarness(transcript: "原始文本", suspendsTranscription: true)
 
         await harness.coordinator.handle(.toggleRecording)
@@ -405,8 +405,8 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.finishRecording(at: 1)
 
         XCTAssertEqual(harness.events.filter { $0 == .transcribed }.count, 2)
-        XCTAssertTrue(harness.savedRecords.isEmpty)
-        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.savedRecords.count, 1)
+        XCTAssertEqual(harness.copyCount, 1)
         XCTAssertEqual(harness.coordinator.snapshot.status, .transcribing)
     }
 
@@ -615,6 +615,61 @@ final class SessionCoordinatorTests: XCTestCase {
 
             XCTAssertFalse(FileManager.default.fileExists(atPath: sessionDirectory.path))
             XCTAssertEqual(harness.cancelledSessionIDs, [sessionID])
+        }
+    }
+
+    func testCancelAfterStopBeforeFinishedAudioPreservesRealSessionDirectory() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(transcript: "stopped", sessionsDirectory: root)
+
+            await harness.coordinator.handle(.toggleRecording)
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("stopped audio".utf8).write(to: audioURL)
+
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.coordinator.handle(.cancelRecording)
+
+            XCTAssertEqual(try Data(contentsOf: audioURL), Data("stopped audio".utf8))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionDirectory.path))
+            XCTAssertEqual(harness.stopCount, 1)
+            XCTAssertEqual(harness.cancelCount, 0)
+            XCTAssertTrue(harness.cancelledSessionIDs.isEmpty)
+        }
+    }
+
+    func testDevelopmentCleanupAfterStopCancelsProcessingWithoutDeletingAudio() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "stopped processing",
+                suspendsTranscription: true,
+                sessionsDirectory: root
+            )
+
+            await harness.coordinator.handle(.toggleRecording)
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let identity = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+            let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("processing audio".utf8).write(to: audioURL)
+
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.finishRecording()
+            await harness.waitUntilTranscriptionStarts()
+            XCTAssertTrue(harness.coordinator.cancelDevelopmentWork(identity))
+            harness.completeTranscription()
+            for _ in 0..<100 where !harness.coordinator.isDevelopmentWorkDrained(identity) {
+                await Task.yield()
+            }
+
+            XCTAssertTrue(harness.coordinator.isDevelopmentWorkDrained(identity))
+            XCTAssertEqual(try Data(contentsOf: audioURL), Data("processing audio".utf8))
+            XCTAssertEqual(harness.cancelCount, 0)
+            XCTAssertTrue(harness.savedRecords.isEmpty)
+            XCTAssertEqual(harness.copyCount, 0)
         }
     }
 
