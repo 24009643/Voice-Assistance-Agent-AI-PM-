@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import Carbon
 import XCTest
@@ -331,6 +332,32 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.cancelCount, 2)
         harness.completeTranscription()
         await Task.yield()
+    }
+
+    func testMenuStopRemainsSessionBoundWhenPermissionIsDenied() async throws {
+        let harness = CoordinatorHarness(transcript: "final")
+        await harness.coordinator.handle(.toggleRecording)
+        let recordingSessionID = try XCTUnwrap(harness.coordinator.snapshot.sessionID)
+        let state = AppState()
+        state.snapshot = harness.coordinator.snapshot
+        var microphoneRequestCount = 0
+        let controller = AppController(
+            state: state,
+            coordinator: harness.coordinator,
+            microphoneAuthorizationStatus: { .denied },
+            requestMicrophonePermission: { _ in microphoneRequestCount += 1 }
+        )
+
+        controller.toggleRecordingFromUI()
+        for _ in 0..<100 where harness.stopCount == 0 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(harness.stopCount, 1)
+        XCTAssertEqual(harness.coordinator.snapshot.sessionID, recordingSessionID)
+        XCTAssertEqual(microphoneRequestCount, 0)
+        XCTAssertEqual(state.snapshot.status, .recording)
+        XCTAssertEqual(state.snapshot.message, "Recording")
     }
 
     func testBlockedHistoryScanDoesNotBlockANewRecordingIntent() async {

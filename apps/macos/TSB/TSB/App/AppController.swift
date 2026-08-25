@@ -22,6 +22,8 @@ final class AppController: ObservableObject {
     private let escapeMonitor: EscapeKeyMonitor
     private let modelError: String?
     private let bypassesMicrophonePermissionForDevelopment: Bool
+    private let microphoneAuthorizationStatus: () -> AVAuthorizationStatus
+    private let requestMicrophonePermission: (@escaping @MainActor (Bool) -> Void) -> Void
     private var notchOverlay: NotchOverlayPanel?
     private let manualCopy: (String) -> Bool
     private var screenParameterObserver: ScreenParameterObserver?
@@ -212,6 +214,12 @@ final class AppController: ObservableObject {
         self.escapeMonitor = escapeMonitor
         self.modelError = modelError
         self.bypassesMicrophonePermissionForDevelopment = false
+        self.microphoneAuthorizationStatus = {
+            AVCaptureDevice.authorizationStatus(for: .audio)
+        }
+        self.requestMicrophonePermission = { completion in
+            MicrophonePermission.request(completion)
+        }
         self.notchOverlay = nil
         self.manualCopy = { clipboard.copy($0) }
         self.screenParameterObserver = nil
@@ -232,7 +240,16 @@ final class AppController: ObservableObject {
     }
 
 #if DEBUG
-    init(state: AppState, coordinator: SessionCoordinator) {
+    init(
+        state: AppState,
+        coordinator: SessionCoordinator,
+        microphoneAuthorizationStatus: @escaping () -> AVAuthorizationStatus = {
+            AVCaptureDevice.authorizationStatus(for: .audio)
+        },
+        requestMicrophonePermission: @escaping (@escaping @MainActor (Bool) -> Void) -> Void = {
+            MicrophonePermission.request($0)
+        }
+    ) {
         self.state = state
         self.coordinator = coordinator
         self.escapeMonitor = EscapeKeyMonitor(
@@ -240,6 +257,8 @@ final class AppController: ObservableObject {
         )
         self.modelError = nil
         self.bypassesMicrophonePermissionForDevelopment = true
+        self.microphoneAuthorizationStatus = microphoneAuthorizationStatus
+        self.requestMicrophonePermission = requestMicrophonePermission
         self.notchOverlay = nil
         self.manualCopy = { _ in false }
         self.screenParameterObserver = nil
@@ -324,13 +343,13 @@ final class AppController: ObservableObject {
             return
         }
 
-        if intent == .toggleRecording {
-            switch MicrophonePermission.decision(for: AVCaptureDevice.authorizationStatus(for: .audio)) {
+        if intent == .toggleRecording, state.snapshot.status != .recording {
+            switch MicrophonePermission.decision(for: microphoneAuthorizationStatus()) {
             case .proceed:
                 break
             case .request:
                 guard microphoneRequestLatch.begin() else { return }
-                MicrophonePermission.request { [weak self] granted in
+                requestMicrophonePermission { [weak self] granted in
                     guard let self else { return }
                     self.microphoneRequestLatch.finish()
                     if granted {
