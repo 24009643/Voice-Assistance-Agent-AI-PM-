@@ -11,33 +11,37 @@ final class LivePreviewPipeline {
     typealias Feed = @Sendable ([Float]) -> Void
     typealias Preview = @MainActor (SessionID, String) -> Void
 
-    private let operations: Operations?
+    private let operationsFactory: (() -> Operations)?
     private var sessions: [SessionID: Session] = [:]
-    private var tail: Task<String, Never>?
     private var latestSessionID: SessionID?
 
-    init(transcriber: ParaformerPreviewTranscriber?) {
-        operations = transcriber.map { transcriber in
-            Operations(
-                accept: { await transcriber.accept(samples: $0) },
-                finish: { await transcriber.finish() },
-                cancel: { await transcriber.cancel() }
-            )
+    init(modelLocation: ParaformerModelLocation?) {
+        operationsFactory = modelLocation.map { location in
+            {
+                let transcriber = ParaformerPreviewTranscriber(location: location)
+                return Operations(
+                    accept: { await transcriber.accept(samples: $0) },
+                    finish: { await transcriber.finish() },
+                    cancel: { await transcriber.cancel() }
+                )
+            }
         }
     }
 
     init(operations: Operations?) {
-        self.operations = operations
+        operationsFactory = operations.map { operations in { operations } }
+    }
+
+    init(operationsFactory: @escaping () -> Operations) {
+        self.operationsFactory = operationsFactory
     }
 
     func start(sessionID: SessionID, onPreview: @escaping Preview) -> Feed {
         latestSessionID = sessionID
-        guard let operations else { return { _ in } }
+        guard let operations = operationsFactory?() else { return { _ in } }
 
         let input = SessionInput()
-        let previous = tail
         let task = Task { @MainActor [weak self] in
-            _ = await previous?.value
             guard let self else { return "" }
             return await self.run(
                 sessionID: sessionID,
@@ -48,7 +52,6 @@ final class LivePreviewPipeline {
         }
         let session = Session(input: input, task: task)
         sessions[sessionID] = session
-        tail = task
         return { input.feed($0) }
     }
 

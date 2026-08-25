@@ -230,6 +230,10 @@ final class V02AcceptanceRunner {
     private var capture: Capture?
     private var observation: AnyCancellable?
 
+    static func hasDurableLocalFinal(sessionID: SessionID, store: TranscriptStore) -> Bool {
+        (try? store.load(id: sessionID)) != nil
+    }
+
     static func startIfConfigured(
         controller: AppController,
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -339,7 +343,16 @@ final class V02AcceptanceRunner {
 
         capture?.stopInstant = clock.now
         controller.stopRecordingForDevelopment(sessionID: sessionID)
-        guard await wait(until: { self.capture?.localFinalInstant != nil || self.capture?.failureCategory != nil }, seconds: 30),
+        guard await wait(until: {
+            guard let sessionID = self.capture?.sessionID,
+                  Self.hasDurableLocalFinal(sessionID: sessionID, store: self.store) else {
+                return self.capture?.failureCategory != nil
+            }
+            if self.capture?.localFinalInstant == nil {
+                self.capture?.localFinalInstant = self.clock.now
+            }
+            return true
+        }, seconds: 30),
               capture?.localFinalInstant != nil else {
             return await failureEvidence("local_final_timeout")
         }
@@ -392,11 +405,6 @@ final class V02AcceptanceRunner {
            snapshot.status == .recording,
            !snapshot.previewText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             capture?.firstPreviewInstant = now
-        }
-        if capture?.stopInstant != nil,
-           capture?.localFinalInstant == nil,
-           snapshot.status == .saving {
-            capture?.localFinalInstant = now
         }
         if capture?.deliveredInstant == nil, snapshot.status == .delivered {
             captureDelivered(snapshot, at: now)

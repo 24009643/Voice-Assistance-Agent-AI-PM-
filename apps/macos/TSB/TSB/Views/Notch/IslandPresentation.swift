@@ -39,6 +39,7 @@ enum IslandAction: Hashable, Sendable {
     case dismiss
     case copyChamber(IslandChamber)
     case generateLinks
+    case openSettings
 }
 
 enum IslandIntent: Equatable, Sendable {
@@ -48,6 +49,7 @@ enum IslandIntent: Equatable, Sendable {
     case retryOrganization(sessionID: SessionID, requestID: UUID)
     case generateLinks(sessionID: SessionID, selectedRecordIDs: Set<SessionID>)
     case copy(String)
+    case openSettings
 }
 
 struct IslandControl: Equatable, Hashable, Sendable {
@@ -88,6 +90,7 @@ struct IslandPresentation: Equatable, Sendable {
     let knownRecordLinks: [KnownRecordLink]
     let speculativeConnections: [IslandSpeculativeConnection]
     let suggestions: [SuggestedRecordSnapshot]
+    let privacyReceiptText: String
     let chambers: [IslandChamber]
     let controls: [IslandControl]
     let autoHideDelay: TimeInterval?
@@ -148,6 +151,7 @@ struct IslandPresentation: Equatable, Sendable {
             knownRecordLinks: output?.knownRecordLinks ?? [],
             speculativeConnections: speculative,
             suggestions: snapshot.suggestedRecords,
+            privacyReceiptText: privacyReceipt(for: snapshot),
             chambers: mode == .organized ? IslandChamber.allCases : [],
             controls: controls,
             autoHideDelay: autoHideDelay(for: snapshot, mode: mode),
@@ -181,6 +185,8 @@ struct IslandPresentation: Equatable, Sendable {
             return allowed.isEmpty
                 ? nil
                 : .generateLinks(sessionID: targetSessionID, selectedRecordIDs: allowed)
+        case .openSettings:
+            return .openSettings
         case .selectChamber, .reopenLatest, .dismiss:
             return nil
         }
@@ -212,6 +218,18 @@ struct IslandPresentation: Equatable, Sendable {
         case .failed, .cancelled: .failed
         case .transcribing, .saving: .organizing
         }
+    }
+
+    private static func privacyReceipt(for snapshot: AppSnapshot) -> String {
+        guard case let .organized(record) = snapshot.organizationPhase,
+              let characterCount = record.sentCharacterCount else { return "" }
+        let historyCount = record.selectedRecordIDs.count
+        let action = record.providerKind == .local ? "本地处理" : "已发送"
+        let historyIDs = record.selectedRecordIDs.map(\.rawValue.uuidString).joined(separator: "、")
+        let historyReceipt = historyIDs.isEmpty
+            ? "\(historyCount) 条历史摘要"
+            : "\(historyCount) 条历史摘要（\(historyIDs)）"
+        return "\(action) \(characterCount) 个字符 · \(historyReceipt)"
     }
 
     private static func status(
@@ -295,13 +313,18 @@ struct IslandPresentation: Equatable, Sendable {
             result += IslandChamber.allCases.map {
                 control(.copyChamber($0), "复制\($0.title)", "手动复制\($0.title)舱内容")
             }
-            if !snapshot.suggestedRecords.isEmpty {
+            if !snapshot.suggestedRecords.isEmpty,
+               case let .organized(record) = snapshot.organizationPhase,
+               record.provider != "deterministic" {
                 result.append(control(.generateLinks, "生成关联", "使用已选择的本地建议生成关联"))
             }
             result.append(control(.dismiss, "收起", "收起灵动岛"))
             return result
         case .failed:
             var result = [control(.dismiss, "收起", "收起灵动岛")]
+            if case .authorizationRequired = snapshot.organizationPhase {
+                result.insert(control(.openSettings, "打开设置", "打开整理模型设置"), at: 0)
+            }
             if !snapshot.originalText.isEmpty {
                 result.insert(control(.copyChamber(.original), "复制原文", "手动复制保留的本地原文"), at: 0)
             }
@@ -338,5 +361,3 @@ struct IslandPresentation: Equatable, Sendable {
 
     private static let localCopySuccessMessage = "已复制 · 按 ⌘V 粘贴"
 }
-
-typealias NotchPresentation = IslandPresentation

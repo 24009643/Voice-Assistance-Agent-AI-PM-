@@ -15,9 +15,12 @@ enum OrganizationClientError: Error, Equatable {
     case invalidHTTPResponse
     case httpStatus(Int)
     case missingResponseContent
+    case responseTooLarge
 }
 
 struct OrganizationClient: Sendable {
+    static let maximumResponseBytes = 1_048_576
+
     private let endpoint: OrganizationEndpoint
     private let session: URLSession
     private let timeoutSleeper: @Sendable (Duration) async throws -> Void
@@ -115,8 +118,19 @@ struct OrganizationClient: Sendable {
         try Task.checkCancellation()
         return try await withThrowingTaskGroup(of: NetworkRaceResult.self) { group in
             group.addTask {
-                let value = try await session.data(for: request, delegate: RejectRedirectDelegate())
-                return .response(value.0, value.1)
+                let (bytes, response) = try await session.bytes(for: request, delegate: RejectRedirectDelegate())
+                guard response.expectedContentLength <= Int64(Self.maximumResponseBytes) else {
+                    throw OrganizationClientError.responseTooLarge
+                }
+                var data = Data()
+                data.reserveCapacity(min(max(Int(response.expectedContentLength), 0), Self.maximumResponseBytes))
+                for try await byte in bytes {
+                    guard data.count < Self.maximumResponseBytes else {
+                        throw OrganizationClientError.responseTooLarge
+                    }
+                    data.append(byte)
+                }
+                return .response(data, response)
             }
             group.addTask {
                 try await timeoutSleeper(timeout)

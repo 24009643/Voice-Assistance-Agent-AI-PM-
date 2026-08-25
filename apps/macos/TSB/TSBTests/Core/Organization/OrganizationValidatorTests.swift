@@ -170,6 +170,41 @@ final class OrganizationValidatorTests: XCTestCase {
         XCTAssertEqual(output.speculativeConnections.map(\.whySpeculative), ["rationale"])
     }
 
+    func testRejectsExcessiveOutputItemsAndVisibleText() throws {
+        let excessivePoints = (1...(OrganizationValidator.maximumNumberedPoints + 1)).map {
+            NumberedPointDTO(number: $0, text: "point", sourceSegmentIDs: ["c1"])
+        }
+        let excessiveItemResponse = OrganizationResponseDTO(
+            schemaVersion: "tsb.organization.output.v1",
+            requestID: requestID,
+            sourceTextHash: inputHash,
+            noResultReason: nil,
+            numberedPoints: excessivePoints,
+            knownRecordLinks: [],
+            speculativeConnections: []
+        )
+        XCTAssertThrowsError(try makeValidator().validate(excessiveItemResponse)) { error in
+            XCTAssertEqual(error as? OrganizationValidatorError, .responseLimitExceeded)
+        }
+
+        let excessiveTextResponse = OrganizationResponseDTO(
+            schemaVersion: "tsb.organization.output.v1",
+            requestID: requestID,
+            sourceTextHash: inputHash,
+            noResultReason: nil,
+            numberedPoints: [NumberedPointDTO(
+                number: 1,
+                text: String(repeating: "a", count: OrganizationValidator.maximumVisibleTextCharacters + 1),
+                sourceSegmentIDs: ["c1"]
+            )],
+            knownRecordLinks: [],
+            speculativeConnections: []
+        )
+        XCTAssertThrowsError(try makeValidator().validate(excessiveTextResponse)) { error in
+            XCTAssertEqual(error as? OrganizationValidatorError, .responseLimitExceeded)
+        }
+    }
+
     private func makeValidator() throws -> OrganizationValidator {
         OrganizationValidator(
             requestID: requestID,

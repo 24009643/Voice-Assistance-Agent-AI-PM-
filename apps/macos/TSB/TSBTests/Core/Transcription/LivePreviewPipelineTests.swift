@@ -3,34 +3,34 @@ import XCTest
 
 @MainActor
 final class LivePreviewPipelineTests: XCTestCase {
-    func testChunksStayOrderedAndNextSessionWaitsForPreviousFinish() async {
-        let harness = PipelineOperationsHarness(blockFirstFinish: true)
-        let pipeline = LivePreviewPipeline(operations: harness.operations)
+    func testNextSessionKeepsFallbackWhilePreviousFinalizerIsBlocked() async {
+        let first = PipelineOperationsHarness(blockFirstFinish: true)
+        let second = PipelineOperationsHarness()
+        var sessionIndex = 0
+        let pipeline = LivePreviewPipeline(operationsFactory: {
+            sessionIndex += 1
+            return sessionIndex == 1 ? first.operations : second.operations
+        })
         let firstID = SessionID(rawValue: UUID())
         let secondID = SessionID(rawValue: UUID())
 
         let firstFeed = pipeline.start(sessionID: firstID) { _, _ in }
         firstFeed([1])
-        firstFeed([2])
         let firstFinish = Task { await pipeline.finish(sessionID: firstID) }
-        await harness.waitForFirstFinishStart()
+        await first.waitForFirstFinishStart()
 
         let secondFeed = pipeline.start(sessionID: secondID) { _, _ in }
-        secondFeed([3])
-        await Task.yield()
-        let beforeRelease = await harness.snapshot()
-        XCTAssertFalse(beforeRelease.contains("accept:3"))
-
-        await harness.releaseFirstFinish()
-        let firstResult = await firstFinish.value
+        for value in 1 ... 5 {
+            secondFeed([Float(value)])
+            await Task.yield()
+        }
         let secondResult = await pipeline.finish(sessionID: secondID)
-        let events = await harness.snapshot()
-        XCTAssertEqual(firstResult, "final:1")
-        XCTAssertEqual(secondResult, "final:2")
-        XCTAssertEqual(
-            events,
-            ["accept:1", "accept:2", "finish:1:start", "finish:1:end", "accept:3", "finish:2:start", "finish:2:end"]
-        )
+        let secondEvents = await second.snapshot()
+
+        XCTAssertEqual(secondResult, "final:1")
+        XCTAssertEqual(secondEvents.filter { $0.hasPrefix("accept:") }.count, 5)
+        await first.releaseFirstFinish()
+        _ = await firstFinish.value
     }
 
     func testFifthQueuedChunkDisablesOnlyOverflowedSession() async {
@@ -63,31 +63,6 @@ final class LivePreviewPipelineTests: XCTestCase {
         let finalEvents = await harness.snapshot()
         XCTAssertEqual(thirdResult, "final:2")
         XCTAssertTrue(finalEvents.contains("accept:9"))
-    }
-
-    func testFinishDrainsChunksBufferedBehindPreviousSession() async {
-        let harness = PipelineOperationsHarness(blockFirstFinish: true)
-        let pipeline = LivePreviewPipeline(operations: harness.operations)
-        let firstID = SessionID(rawValue: UUID())
-        let secondID = SessionID(rawValue: UUID())
-
-        _ = pipeline.start(sessionID: firstID) { _, _ in }
-        let firstFinish = Task { await pipeline.finish(sessionID: firstID) }
-        await harness.waitForFirstFinishStart()
-
-        let feed = pipeline.start(sessionID: secondID) { _, _ in }
-        feed([3])
-        feed([4])
-        let secondFinish = Task { await pipeline.finish(sessionID: secondID) }
-        await Task.yield()
-
-        await harness.releaseFirstFinish()
-        _ = await firstFinish.value
-        let secondResult = await secondFinish.value
-        let events = await harness.snapshot()
-
-        XCTAssertEqual(secondResult, "final:2")
-        XCTAssertEqual(Array(events.suffix(4)), ["accept:3", "accept:4", "finish:2:start", "finish:2:end"])
     }
 
     func testCancelDropsBufferedInputAndCancelsRecognizer() async {
@@ -155,7 +130,7 @@ final class LivePreviewPipelineTests: XCTestCase {
     }
 }
 
-private actor PipelineOperationsHarness {
+actor PipelineOperationsHarness {
     private(set) var events: [String] = []
     private let blockFirstFinish: Bool
     private let blockFirstAccept: Bool

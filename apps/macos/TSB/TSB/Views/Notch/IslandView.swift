@@ -150,6 +150,7 @@ struct IslandView: View {
             actionButton(.dismiss, icon: "chevron.up")
                 .padding(6)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
     }
 
@@ -191,6 +192,12 @@ struct IslandView: View {
                         Text("\(point.number). \(point.text)")
                             .font(.caption2)
                             .foregroundStyle(.white.opacity(0.76))
+                    }
+                    if !presentation.privacyReceiptText.isEmpty {
+                        Text(presentation.privacyReceiptText)
+                            .font(.system(size: 9))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .accessibilityLabel("整理隐私回执，\(presentation.privacyReceiptText)")
                     }
                 }
             }

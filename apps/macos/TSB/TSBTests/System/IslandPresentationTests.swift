@@ -322,6 +322,55 @@ final class IslandPresentationTests: XCTestCase {
         )
     }
 
+    func testAuthorizationFailureOffersOpenSettings() {
+        let presentation = IslandPresentation.make(
+            for: snapshot(status: .delivered, organizationPhase: .authorizationRequired)
+        )
+
+        XCTAssertTrue(presentation.controls.map(\.action).contains(.openSettings))
+        XCTAssertEqual(presentation.intent(for: .openSettings), .openSettings)
+    }
+
+    func testDeterministicResultDoesNotOfferImpossibleLinkGeneration() {
+        let presentation = IslandPresentation.make(
+            for: snapshot(
+                status: .delivered,
+                organizationPhase: .organized(organizedRecord(provider: "deterministic")),
+                suggestedRecords: [
+                    SuggestedRecordSnapshot(id: SessionID(rawValue: UUID()), summary: "local suggestion"),
+                ]
+            )
+        )
+
+        XCTAssertFalse(presentation.controls.map(\.action).contains(.generateLinks))
+    }
+
+    func testOrganizedResultShowsLocalPrivacyReceiptWithoutText() {
+        let presentation = IslandPresentation.make(
+            for: snapshot(status: .delivered, organizationPhase: .organized(organizedRecord())),
+            screenWidth: 1_440
+        )
+
+        XCTAssertEqual(
+            presentation.privacyReceiptText,
+            "已发送 128 个字符 · 1 条历史摘要（00000000-0000-0000-0000-000000000201）"
+        )
+    }
+
+    func testLoopbackOrganizationShowsLocalPrivacyReceipt() {
+        let presentation = IslandPresentation.make(
+            for: snapshot(
+                status: .delivered,
+                organizationPhase: .organized(organizedRecord(providerKind: .local))
+            )
+        )
+
+        XCTAssertEqual(
+            presentation.privacyReceiptText,
+            "本地处理 128 个字符 · 1 条历史摘要（00000000-0000-0000-0000-000000000201）"
+        )
+    }
+
     private func snapshot(
         sessionID: SessionID? = nil,
         status: SessionStatus,
@@ -347,15 +396,20 @@ final class IslandPresentationTests: XCTestCase {
         )
     }
 
-    private func organizedRecord() -> OrganizationRecord {
-        OrganizationRecord(
+    private func organizedRecord(
+        provider: String = "openai-compatible",
+        providerKind: ProviderKind = .remote
+    ) -> OrganizationRecord {
+        let selectedID = SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!)
+        return OrganizationRecord(
             requestID: UUID(),
             inputTextSHA256: String(repeating: "a", count: 64),
             state: .succeeded,
-            provider: "local",
-            model: "deterministic",
-            providerKind: .local,
-            selectedRecordIDs: [],
+            provider: provider,
+            model: "test-model",
+            providerKind: providerKind,
+            selectedRecordIDs: [selectedID],
+            sentCharacterCount: 128,
             output: OrganizationOutput(
                 noResultReason: nil,
                 numberedPoints: [

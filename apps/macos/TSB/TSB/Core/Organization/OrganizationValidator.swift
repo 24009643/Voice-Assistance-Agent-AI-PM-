@@ -13,6 +13,7 @@ enum OrganizationValidatorError: Error, Equatable {
     case unknownCandidateID(String)
     case missingNoResultReason
     case unexpectedNoResultReason
+    case responseLimitExceeded
 }
 
 struct OrganizationResponseDTO: Decodable, Sendable {
@@ -105,6 +106,11 @@ struct SpeculativeConnectionDTO: Decodable, Sendable {
 }
 
 struct OrganizationValidator {
+    static let maximumNumberedPoints = 64
+    static let maximumKnownRecordLinks = 32
+    static let maximumSpeculativeConnections = 32
+    static let maximumVisibleTextCharacters = 2_000
+
     private let requestID: UUID
     private let inputTextSHA256: String
     private let currentSegmentByID: [String: TextSegment]
@@ -131,6 +137,17 @@ struct OrganizationValidator {
         }
         guard response.sourceTextHash == inputTextSHA256 else {
             throw OrganizationValidatorError.wrongInputHash
+        }
+        guard response.numberedPoints.count <= Self.maximumNumberedPoints,
+              response.knownRecordLinks.count <= Self.maximumKnownRecordLinks,
+              response.speculativeConnections.count <= Self.maximumSpeculativeConnections else {
+            throw OrganizationValidatorError.responseLimitExceeded
+        }
+        let visibleTexts = response.numberedPoints.map(\.text)
+            + response.knownRecordLinks.map(\.reason)
+            + response.speculativeConnections.flatMap { [$0.statement, $0.whySpeculative] }
+        guard visibleTexts.allSatisfy({ $0.count <= Self.maximumVisibleTextCharacters }) else {
+            throw OrganizationValidatorError.responseLimitExceeded
         }
         guard response.numberedPoints.enumerated().allSatisfy({ $0.element.number == $0.offset + 1 }) else {
             throw OrganizationValidatorError.nonconsecutivePointNumbers

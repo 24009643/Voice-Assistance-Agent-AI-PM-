@@ -71,7 +71,7 @@ final class AppController: ObservableObject {
             .retry(sessionID: sessionID, requestID: requestID)
         case let .generateLinks(sessionID, selectedRecordIDs):
             .enrichLinks(sessionID: sessionID, selectedRecordIDs: selectedRecordIDs)
-        case .stopRecording, .copy:
+        case .stopRecording, .copy, .openSettings:
             nil
         }
     }
@@ -101,10 +101,8 @@ final class AppController: ObservableObject {
             modelError = "SenseVoice model is unavailable. Set TSB_SENSEVOICE_MODEL_DIR to a validated model directory."
         }
 
-        let previewTranscriber = try? ParaformerPreviewTranscriber(
-            location: ParaformerModelLocation.developmentLocation()
-        )
-        let livePreview = LivePreviewPipeline(transcriber: previewTranscriber)
+        let previewModelLocation = try? ParaformerModelLocation.developmentLocation()
+        let livePreview = LivePreviewPipeline(modelLocation: previewModelLocation)
 
         let coordinator = SessionCoordinator(
             dependencies: .init(
@@ -157,7 +155,13 @@ final class AppController: ObservableObject {
                     organizationSettingsStore.load()
                 },
                 historySuggestions: { sessionID in
-                    try HistorySelector().suggestions(for: store.load(id: sessionID), from: store.list())
+                    try await Task.detached(priority: .userInitiated) {
+                        let historyStore = TranscriptStore(directory: sessionsDirectory)
+                        return try HistorySelector().suggestions(
+                            for: historyStore.load(id: sessionID),
+                            from: historyStore.list()
+                        )
+                    }.value
                 },
                 organize: { requestID, segments, suggestions, selectedCandidateIDs, localOnly, willDispatch in
                     let dispatch = try Self.makeOrganizationDispatchSnapshot(
@@ -275,6 +279,7 @@ final class AppController: ObservableObject {
     func stop() {
         intentTask?.cancel()
         intentTask = nil
+        coordinator.shutdown()
         hotkey.stop()
         escapeMonitor.stop()
         screenParameterObserver?.stop()
@@ -338,6 +343,8 @@ final class AppController: ObservableObject {
             enqueue { [weak self] in
                 _ = self?.manualCopy(text)
             }
+        case .openSettings:
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         case .setLocalOnly, .cancelOrganization, .retryOrganization, .generateLinks:
             break
         }

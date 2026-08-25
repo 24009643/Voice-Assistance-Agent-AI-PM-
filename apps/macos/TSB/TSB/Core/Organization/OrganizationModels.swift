@@ -103,7 +103,34 @@ struct OrganizationRecord: Equatable, Codable, Sendable {
     let model: String
     let providerKind: ProviderKind
     let selectedRecordIDs: [SessionID]
+    let sentCharacterCount: Int?
     let output: OrganizationOutput?
     let errorCode: String?
     let updatedAt: Date
+
+    init(
+        requestID: UUID,
+        inputTextSHA256: String,
+        state: OrganizationPersistenceState,
+        provider: String,
+        model: String,
+        providerKind: ProviderKind,
+        selectedRecordIDs: [SessionID],
+        sentCharacterCount: Int? = nil,
+        output: OrganizationOutput?,
+        errorCode: String?,
+        updatedAt: Date
+    ) {
+        self.requestID = requestID
+        self.inputTextSHA256 = inputTextSHA256
+        self.state = state
+        self.provider = provider
+        self.model = model
+        self.providerKind = providerKind
+        self.selectedRecordIDs = selectedRecordIDs
+        self.sentCharacterCount = sentCharacterCount
+        self.output = output
+        self.errorCode = errorCode
+        self.updatedAt = updatedAt
+    }
 }

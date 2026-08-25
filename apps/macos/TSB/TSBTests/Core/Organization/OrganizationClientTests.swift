@@ -395,6 +395,30 @@ final class OrganizationClientTests: XCTestCase {
         }
     }
 
+    func testRejectsResponseBodyBeyondMaximumBeforeDecoding() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        URLProtocolStub.handler = { _ in
+            .response(200, Data(repeating: 0x20, count: OrganizationClient.maximumResponseBytes + 1))
+        }
+        let client = OrganizationClient(
+            endpoint: OrganizationEndpoint(baseURL: URL(string: "https://example.test/chat")!, model: "test-model"),
+            session: makeSession()
+        )
+
+        do {
+            _ = try await client.organize(
+                requestID: requestID,
+                segments: [try TextSegment(id: "c1", text: "alpha")],
+                historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+                userSelectedCandidateIDs: [],
+                apiKey: "secret"
+            )
+            XCTFail("Expected response limit error")
+        } catch {
+            XCTAssertEqual(error as? OrganizationClientError, .responseTooLarge)
+        }
+    }
+
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [URLProtocolStub.self]

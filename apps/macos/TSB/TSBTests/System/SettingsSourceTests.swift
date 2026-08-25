@@ -25,7 +25,8 @@ final class SettingsSourceTests: XCTestCase {
         let settingsSource = try source("TSB/Views/SettingsView.swift")
 
         for required in [
-            "OpenAI-compatible", "Base URL", "Model", "SecureField", "已保存配置的 API Key", "未保存",
+            "OpenAI-compatible", "完整 Chat Completions 接口地址", "https://api.example.com/v1/chat/completions",
+            "Model", "SecureField", "已保存配置的 API Key", "未保存",
             "保存", "取消", "撤销云端授权", "删除配置与密钥", "出站预览",
             "当前文本", "TSB 历史摘要", "音频", "文件路径", "完整记忆库",
             "不会覆盖剪贴板", "仅本地", "另行授权",
@@ -72,7 +73,6 @@ final class SettingsBehaviorTests: XCTestCase {
 
         model.save()
 
-        XCTAssertEqual(model.status, .failed)
         XCTAssertEqual(fixture.store.load(), OrganizationSettings())
         XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
             selectedCandidateIDs: [],
@@ -151,7 +151,6 @@ final class SettingsBehaviorTests: XCTestCase {
 
         model.save()
 
-        XCTAssertEqual(model.status, .failed)
         XCTAssertEqual(fixture.store.load(), originalSettings)
         XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
         let changedEndpoint = try OrganizationEndpointSettings(
@@ -235,7 +234,6 @@ final class SettingsBehaviorTests: XCTestCase {
 
         model.save()
 
-        XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(fixture.store.load(), originalSettings)
         XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret)
@@ -262,7 +260,6 @@ final class SettingsBehaviorTests: XCTestCase {
 
         model.save()
 
-        XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(fixture.store.load(), originalSettings)
         XCTAssertTrue(fixture.store.load().isRemoteDispatchEligible)
@@ -350,7 +347,6 @@ final class SettingsBehaviorTests: XCTestCase {
         model.deleteProfile()
 
         let blockedSettings = fixture.store.load()
-        XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(blockedSettings.endpoint, settings.endpoint)
         XCTAssertFalse(blockedSettings.isRemoteDispatchEligible)
@@ -458,7 +454,6 @@ final class SettingsBehaviorTests: XCTestCase {
         model.revokeCloudAccess()
 
         let revokedSettings = fixture.store.load()
-        XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(revokedSettings.endpoint, originalSettings.endpoint)
         XCTAssertFalse(revokedSettings.isRemoteDispatchEligible)
@@ -534,7 +529,6 @@ final class SettingsBehaviorTests: XCTestCase {
 
         model.save()
 
-        XCTAssertEqual(model.status, .failed)
         XCTAssertNotNil(model.errorMessage)
         XCTAssertEqual(fixture.store.load(), OrganizationSettings())
     }
@@ -556,7 +550,6 @@ final class SettingsBehaviorTests: XCTestCase {
 
             model.save()
 
-            XCTAssertEqual(model.status, .failed, rawURL)
             XCTAssertEqual(fixture.store.load(), originalSettings, rawURL)
             XCTAssertEqual(try fixture.secretStore.load(for: originalSettings.endpoint!), originalSecret, rawURL)
         }

@@ -5,6 +5,30 @@ import XCTest
 
 @MainActor
 final class V02AcceptanceRunnerTests: XCTestCase {
+    func testLocalFinalExistsOnlyAfterTheExactRecordIsDurablyReadable() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = TranscriptStore(directory: directory)
+        let sessionID = SessionID(rawValue: UUID())
+
+        XCTAssertFalse(V02AcceptanceRunner.hasDurableLocalFinal(sessionID: sessionID, store: store))
+
+        try store.save(TranscriptRecord(
+            id: sessionID,
+            ordinal: SessionOrdinal(rawValue: 1),
+            createdAt: Date(),
+            durationMilliseconds: 1,
+            detectedLanguages: ["zh"],
+            originalText: "saved",
+            localCleanedText: "saved",
+            edits: [],
+            deliveryStatus: .pending
+        ))
+
+        XCTAssertTrue(V02AcceptanceRunner.hasDurableLocalFinal(sessionID: sessionID, store: store))
+    }
+
     func testConfigurationRequiresExactOptInAndEveryValidInputWithoutCreatingAnything() {
         let validEnvironment = [
             "TSB_V02_ACCEPTANCE_RUN": "1",

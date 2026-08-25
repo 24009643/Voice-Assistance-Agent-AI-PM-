@@ -301,16 +301,89 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 0)
     }
 
-    func testSuccessfulEmptySenseVoiceIsNoSpeechAndNeverUsesStreamingFallback() async throws {
-        let harness = CoordinatorHarness(transcript: "   ", streamingText: "draft should not win")
+    func testSuccessfulEmptySenseVoiceUsesNonemptyStreamingFallback() async throws {
+        let harness = CoordinatorHarness(transcript: "   ", streamingText: "Paraformer fallback")
 
         await harness.runOneSession()
 
-        XCTAssertEqual(harness.savedRecords.single?.outcome, .noSpeech)
-        XCTAssertEqual(harness.savedRecords.single?.finalSource, .senseVoice)
-        XCTAssertEqual(harness.savedRecords.single?.streamingText, "draft should not win")
+        XCTAssertEqual(harness.savedRecords.single?.outcome, .success)
+        XCTAssertEqual(harness.savedRecords.single?.originalText, "Paraformer fallback")
+        XCTAssertEqual(harness.savedRecords.single?.finalSource, .streamingFallback)
+        XCTAssertEqual(harness.savedRecords.single?.streamingText, "Paraformer fallback")
         XCTAssertEqual(harness.savedRecords.single?.senseVoiceText, "   ")
-        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.copiedTexts, ["Paraformer fallback"])
+    }
+
+    func testControllerStopCancelsEveryIncompleteSession() async throws {
+        let harness = CoordinatorHarness(transcript: "late", suspendsTranscription: true)
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitUntilTranscriptionStarts()
+        await harness.coordinator.handle(.toggleRecording)
+        let incompleteSessionIDs = Set(harness.startedSessionIDs)
+        let controller = AppController(state: AppState(), coordinator: harness.coordinator)
+
+        controller.stop()
+
+        XCTAssertEqual(Set(harness.cancelledSessionIDs), incompleteSessionIDs)
+        XCTAssertEqual(harness.cancelCount, 2)
+        harness.completeTranscription()
+        await Task.yield()
+    }
+
+    func testBlockedHistoryScanDoesNotBlockANewRecordingIntent() async {
+        let harness = CoordinatorHarness(
+            transcript: "first result",
+            suspendsHistorySuggestions: true
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitUntilHistorySuggestionsStarts()
+
+        await harness.coordinator.handle(.toggleRecording)
+
+        XCTAssertEqual(harness.startedSessionIDs.count, 2)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        harness.completeHistorySuggestions()
+    }
+
+    func testSlowPreviousPreviewFinalizerCannotEraseNextSenseVoiceFallback() async {
+        let firstPreview = PipelineOperationsHarness(blockFirstFinish: true)
+        let secondPreview = PipelineOperationsHarness()
+        var previewSessionIndex = 0
+        let pipeline = LivePreviewPipeline(operationsFactory: {
+            previewSessionIndex += 1
+            return previewSessionIndex == 1 ? firstPreview.operations : secondPreview.operations
+        })
+        let harness = CoordinatorHarness(
+            transcript: "ignored",
+            transcriptionError: TestError.transcription,
+            livePreviewPipeline: pipeline
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.feedPCM([1], at: 0)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 0)
+        await firstPreview.waitForFirstFinishStart()
+
+        await harness.coordinator.handle(.toggleRecording)
+        for value in 1 ... 5 {
+            harness.feedPCM([Float(value)], at: 1)
+            await Task.yield()
+        }
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording(at: 1)
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.copiedTexts, ["final:1"])
+        XCTAssertEqual(harness.savedRecords.last?.finalSource, .streamingFallback)
+        await firstPreview.releaseFirstFinish()
+        await harness.waitForDelivery(count: 2)
     }
 
     func testStalePreviewCannotCrossIntoNewSession() async throws {
@@ -1215,6 +1288,37 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationInputs.first?.selectedCandidateIDs, [])
         XCTAssertEqual(harness.organizationInputs.last?.selectedCandidateIDs, ["h1"])
         XCTAssertEqual(harness.organizationUpdates.last?.organization.selectedRecordIDs, [selectedID])
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.sentCharacterCount, "enrich".count)
+    }
+
+    func testFailedEnrichmentRetryPreservesExactSelectedRecordIDs() async throws {
+        let selectedID = SessionID(rawValue: UUID())
+        let suggestions = HistorySuggestions(
+            suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: "selected")],
+            localRecordByCandidateID: ["h1": selectedID]
+        )
+        let harness = CoordinatorHarness(
+            transcript: "retry enrichment",
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true),
+            organizationErrors: [nil, TestError.organization, nil],
+            historySuggestions: suggestions
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        await harness.waitUntilOrganizationStarts(count: 2)
+        await harness.waitUntilOrganizationFinishes()
+        let failedRequestID = try XCTUnwrap(harness.coordinator.snapshot.organizationRequestID)
+
+        await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: failedRequestID))
+        await harness.waitUntilOrganizationStarts(count: 3)
+        await harness.waitUntilOrganizationFinishes()
+
+        XCTAssertEqual(harness.organizationInputs[1].selectedCandidateIDs, ["h1"])
+        XCTAssertEqual(harness.organizationInputs[2].selectedCandidateIDs, ["h1"])
+        XCTAssertEqual(harness.organizationUpdates.last?.organization.selectedRecordIDs, [selectedID])
     }
 
     func testLaunchMarksPersistedPendingOrganizationInterruptedWithoutRedispatch() throws {
@@ -1352,13 +1456,17 @@ private final class CoordinatorHarness {
     private let organizationWriteFailures: Set<Int>
     private let persistedRecords: [TranscriptRecord]
     private let historySuggestions: HistorySuggestions
+    private let suspendsHistorySuggestions: Bool
+    private let livePreviewPipeline: LivePreviewPipeline?
     private var historySuggestionsError: Error?
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
     private var onPreview: [(@MainActor (SessionID, String) -> Void)] = []
     private var onLevel: [(@Sendable (Float) -> Void)] = []
+    private var pcmFeeds: [LivePreviewPipeline.Feed] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
     private var organizationContinuations: [UnsafeContinuation<OrganizationOutput, Never>?] = []
+    private var historySuggestionsContinuations: [CheckedContinuation<HistorySuggestions, Error>?] = []
     let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
     private(set) var events: [Event] = []
@@ -1402,7 +1510,9 @@ private final class CoordinatorHarness {
         organizationWriteFailures: Set<Int> = [],
         persistedRecords: [TranscriptRecord] = [],
         historySuggestions: HistorySuggestions = HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
-        historySuggestionsError: Error? = nil
+        historySuggestionsError: Error? = nil,
+        suspendsHistorySuggestions: Bool = false,
+        livePreviewPipeline: LivePreviewPipeline? = nil
     ) {
         self.transcript = transcript
         self.cleanedText = cleanedText
@@ -1422,6 +1532,8 @@ private final class CoordinatorHarness {
         self.persistedRecords = persistedRecords
         self.historySuggestions = historySuggestions
         self.historySuggestionsError = historySuggestionsError
+        self.suspendsHistorySuggestions = suspendsHistorySuggestions
+        self.livePreviewPipeline = livePreviewPipeline
     }
 
     private func makeCoordinator() -> SessionCoordinator {
@@ -1439,6 +1551,9 @@ private final class CoordinatorHarness {
                     self?.onLevel.append(onLevel)
                     self?.onFinished.append(onFinished)
                     self?.onFailed.append(onFailed)
+                    if let pipeline = self?.livePreviewPipeline {
+                        self?.pcmFeeds.append(pipeline.start(sessionID: sessionID, onPreview: onPreview))
+                    }
                 },
                 stopRecording: { [weak self] in
                     self?.stopCount += 1
@@ -1450,10 +1565,14 @@ private final class CoordinatorHarness {
                 },
                 finishPreview: { [weak self] sessionID in
                     self?.finishedPreviewSessionIDs.append(sessionID)
+                    if let pipeline = self?.livePreviewPipeline {
+                        return await pipeline.finish(sessionID: sessionID)
+                    }
                     return self?.streamingText ?? ""
                 },
                 cancelPreview: { [weak self] sessionID in
                     self?.cancelledPreviewSessionIDs.append(sessionID)
+                    await self?.livePreviewPipeline?.cancel(sessionID: sessionID)
                 },
                 transcribe: { [weak self] _ in
                     guard let self else { throw TestError.deallocated }
@@ -1507,6 +1626,11 @@ private final class CoordinatorHarness {
                 },
                 historySuggestions: { [weak self] _ in
                     if let error = self?.historySuggestionsError { throw error }
+                    if self?.suspendsHistorySuggestions == true {
+                        return try await withCheckedThrowingContinuation { continuation in
+                            self?.historySuggestionsContinuations.append(continuation)
+                        }
+                    }
                     return self?.historySuggestions ?? HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:])
                 },
                 organize: { [weak self] requestID, segments, suggestions, selectedCandidateIDs, localOnly, willDispatch in
@@ -1588,6 +1712,10 @@ private final class CoordinatorHarness {
         onLevel[target](level)
     }
 
+    func feedPCM(_ samples: [Float], at index: Int) {
+        pcmFeeds[index](samples)
+    }
+
     func setOrganizationSettings(_ settings: OrganizationSettings) {
         organizationSettings = settings
     }
@@ -1599,6 +1727,19 @@ private final class CoordinatorHarness {
 
     func setHistorySuggestionsError(_ error: Error?) {
         historySuggestionsError = error
+    }
+
+    func waitUntilHistorySuggestionsStarts() async {
+        for _ in 0..<100 {
+            if !historySuggestionsContinuations.isEmpty { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for history suggestions")
+    }
+
+    func completeHistorySuggestions() {
+        historySuggestionsContinuations[0]?.resume(returning: historySuggestions)
+        historySuggestionsContinuations[0] = nil
     }
 
     func failRecording(at index: Int? = nil) async {

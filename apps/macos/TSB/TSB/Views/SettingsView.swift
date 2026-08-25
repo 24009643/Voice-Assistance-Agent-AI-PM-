@@ -12,7 +12,6 @@ enum SettingsOperationStatus: Equatable {
     case saved
     case revoked
     case deleted
-    case failed
 }
 
 private enum SettingsValidationError: Error {
@@ -136,14 +135,14 @@ final class SettingsModel: ObservableObject {
     }
 
     private func fail(_ message: String) {
-        status = .failed
+        status = nil
         errorMessage = message
     }
 
     private func message(for error: Error) -> String {
         switch error {
         case SettingsValidationError.endpointRequired:
-            "请输入完整的 Base URL。"
+            "请输入完整的 Chat Completions 接口地址。"
         case SettingsValidationError.modelRequired:
             "请输入 Model。"
         case SettingsValidationError.cloudConsentRequired:
@@ -167,8 +166,11 @@ struct SettingsView: View {
         Form {
             Section("整理模型") {
                 LabeledContent("Provider", value: "OpenAI-compatible")
-                TextField("Base URL", text: $model.draft.baseURL)
+                TextField("完整 Chat Completions 接口地址", text: $model.draft.baseURL)
                     .textContentType(.URL)
+                Text("例如：https://api.example.com/v1/chat/completions")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 TextField("Model", text: $model.draft.model)
                 SecureField("API Key", text: $model.draft.apiKey)
                     .textContentType(.oneTimeCode)
@@ -272,7 +274,6 @@ struct SettingsView: View {
         case .saved: "已保存。"
         case .revoked: "已撤销云端授权并删除密钥。"
         case .deleted: "已删除配置与密钥。"
-        case .failed: ""
         }
     }
 }

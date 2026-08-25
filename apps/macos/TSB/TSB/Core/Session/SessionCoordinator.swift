@@ -22,7 +22,7 @@ final class SessionCoordinator {
         let loadPersistedRecords: @MainActor () throws -> [TranscriptRecord]
         let updateOrganization: @MainActor (SessionID, OrganizationRecord) throws -> Void
         let currentOrganizationSettings: @MainActor () -> OrganizationSettings
-        let historySuggestions: @MainActor (SessionID) throws -> HistorySuggestions
+        let historySuggestions: @MainActor (SessionID) async throws -> HistorySuggestions
         let organize: @MainActor (
             UUID,
             [TextSegment],
@@ -54,6 +54,7 @@ final class SessionCoordinator {
         var organizationPhase: OrganizationPhase = .notRequested
         var suggestedRecords: [SuggestedRecordSnapshot] = []
         var organizationRequestID: UUID?
+        var lastOrganizationSelectedRecordIDs: Set<SessionID> = []
         var resultRetainedForDisplay = false
         var secondaryRemovalScheduled = false
 
@@ -113,11 +114,29 @@ final class SessionCoordinator {
         case let .cancel(sessionID, requestID):
             cancelOrganization(for: sessionID, expectedRequestID: requestID)
         case let .retry(sessionID, requestID):
-            guard sessions[sessionID]?.organizationRequestID == requestID else { return }
-            enqueueOrganization(for: sessionID, selectedRecordIDs: [])
+            guard let session = sessions[sessionID], session.organizationRequestID == requestID else { return }
+            await enqueueOrganization(for: sessionID, selectedRecordIDs: session.lastOrganizationSelectedRecordIDs)
         case let .enrichLinks(sessionID, selectedRecordIDs):
-            enqueueOrganization(for: sessionID, selectedRecordIDs: selectedRecordIDs)
+            await enqueueOrganization(for: sessionID, selectedRecordIDs: selectedRecordIDs)
         }
+    }
+
+    func shutdown() {
+        activeOrganization?.task.cancel()
+        activeOrganization = nil
+        organizationQueue.removeAll()
+
+        let incompleteSessionIDs = sessions.values.compactMap {
+            $0.status == .recording || $0.isProcessing ? $0.id : nil
+        }
+        for sessionID in incompleteSessionIDs {
+            processingTasks[sessionID]?.cancel()
+            dependencies.cancelRecording(sessionID)
+            _ = trackPreviewCancellation(sessionID)
+            sessions.removeValue(forKey: sessionID)
+        }
+        recordingSessionID = nil
+        processingTasks.removeAll()
     }
 
     func handleToggleRecording() {
@@ -341,10 +360,20 @@ final class SessionCoordinator {
         let senseVoiceText: String?
         switch senseVoiceResult {
         case let .success(result):
-            selectedText = result.text
-            detectedLanguages = result.detectedLanguage.map { [$0] } ?? []
-            finalSource = .senseVoice
             senseVoiceText = result.text
+            if let senseVoiceText = nonempty(result.text) {
+                selectedText = senseVoiceText
+                detectedLanguages = result.detectedLanguage.map { [$0] } ?? []
+                finalSource = .senseVoice
+            } else if let streamingText {
+                selectedText = streamingText
+                detectedLanguages = []
+                finalSource = .streamingFallback
+            } else {
+                selectedText = result.text
+                detectedLanguages = result.detectedLanguage.map { [$0] } ?? []
+                finalSource = .senseVoice
+            }
         case .failure:
             guard let streamingText else {
                 let session = sessions[sessionID]!
@@ -417,8 +446,8 @@ final class SessionCoordinator {
                 message: didCopy ? "已复制 · 按 ⌘V 粘贴" : "Could not copy to clipboard."
             )
             if didCopy {
-                refreshHistorySuggestions(for: sessionID)
-                enqueueOrganization(for: sessionID, selectedRecordIDs: [])
+                await refreshHistorySuggestions(for: sessionID)
+                await enqueueOrganization(for: sessionID, selectedRecordIDs: [])
             }
         } catch {
             finish(
@@ -492,10 +521,14 @@ final class SessionCoordinator {
         publishSnapshot()
     }
 
-    private func enqueueOrganization(for sessionID: SessionID, selectedRecordIDs requestedRecordIDs: Set<SessionID>) {
+    private func enqueueOrganization(
+        for sessionID: SessionID,
+        selectedRecordIDs requestedRecordIDs: Set<SessionID>
+    ) async {
         guard var session = sessions[sessionID], let transcript = session.transcript else { return }
         let requestID = UUID()
         session.organizationRequestID = requestID
+        session.lastOrganizationSelectedRecordIDs = requestedRecordIDs
         session.secondaryRemovalScheduled = false
         sessions[sessionID] = session
         let settings = dependencies.currentOrganizationSettings()
@@ -527,7 +560,7 @@ final class SessionCoordinator {
                 scheduleSecondaryRemovalIfEligible(sessionID)
                 return
             }
-            guard let available = try? dependencies.historySuggestions(sessionID) else {
+            guard let available = try? await dependencies.historySuggestions(sessionID) else {
                 failOrganizationPreparation(sessionID, message: "Could not load history suggestions.")
                 return
             }
@@ -696,6 +729,7 @@ final class SessionCoordinator {
                 model: cancelledJob.model,
                 providerKind: cancelledJob.providerKind,
                 selectedRecordIDs: cancelledJob.selectedRecordIDs,
+                sentCharacterCount: cancelledJob.segments.reduce(0) { $0 + $1.text.count },
                 output: nil,
                 errorCode: "cancelled",
                 updatedAt: Date()
@@ -793,6 +827,7 @@ final class SessionCoordinator {
             model: job.model,
             providerKind: job.providerKind,
             selectedRecordIDs: job.selectedRecordIDs,
+            sentCharacterCount: job.segments.reduce(0) { $0 + $1.text.count },
             output: output,
             errorCode: errorCode,
             updatedAt: Date()
@@ -809,9 +844,9 @@ final class SessionCoordinator {
         scheduleSecondaryRemovalIfEligible(sessionID)
     }
 
-    private func refreshHistorySuggestions(for sessionID: SessionID) {
+    private func refreshHistorySuggestions(for sessionID: SessionID) async {
         guard var session = sessions[sessionID],
-              let suggestions = try? dependencies.historySuggestions(sessionID) else { return }
+              let suggestions = try? await dependencies.historySuggestions(sessionID) else { return }
         session.suggestedRecords = suggestedRecords(from: suggestions)
         sessions[sessionID] = session
     }
@@ -848,6 +883,7 @@ final class SessionCoordinator {
                 model: organization.model,
                 providerKind: organization.providerKind,
                 selectedRecordIDs: organization.selectedRecordIDs,
+                sentCharacterCount: organization.sentCharacterCount,
                 output: nil,
                 errorCode: "interrupted",
                 updatedAt: Date()
