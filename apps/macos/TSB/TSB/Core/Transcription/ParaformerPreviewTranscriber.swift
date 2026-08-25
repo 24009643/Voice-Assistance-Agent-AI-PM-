@@ -11,6 +11,7 @@ enum ParaformerPreviewError: Error, Equatable {
 
 struct ParaformerModelLocation: Sendable {
     static let requiredFileNames = ["encoder.int8.onnx", "decoder.int8.onnx", "tokens.txt", "LICENSE"]
+    static let modelName = "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en"
 
     let encoder: URL
     let decoder: URL
@@ -37,13 +38,29 @@ struct ParaformerModelLocation: Sendable {
         }
     }
 
+    static func resolvedLocation(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        applicationSupportDirectory: URL? = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first
+    ) throws -> ParaformerModelLocation {
+        if let override = environment["TSB_PARAFORMER_MODEL_DIR"], !override.isEmpty {
+            return try ParaformerModelLocation(directory: URL(fileURLWithPath: override, isDirectory: true))
+        }
+        guard let applicationSupportDirectory else {
+            throw ParaformerPreviewError.missingDevelopmentModelDirectory
+        }
+        let directory = applicationSupportDirectory
+            .appendingPathComponent("TSB/Models", isDirectory: true)
+            .appendingPathComponent(modelName, isDirectory: true)
+        return try ParaformerModelLocation(directory: directory)
+    }
+
     static func developmentLocation(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> ParaformerModelLocation {
-        guard let path = environment["TSB_PARAFORMER_MODEL_DIR"], !path.isEmpty else {
-            throw ParaformerPreviewError.missingDevelopmentModelDirectory
-        }
-        return try ParaformerModelLocation(directory: URL(fileURLWithPath: path, isDirectory: true))
+        try resolvedLocation(environment: environment, applicationSupportDirectory: nil)
     }
 }
 

@@ -46,9 +46,37 @@ final class ParaformerPreviewTranscriberTests: XCTestCase {
         }
     }
 
-    func testDevelopmentLocationUsesExplicitEnvironmentOnly() throws {
-        XCTAssertThrowsError(try ParaformerModelLocation.developmentLocation(environment: [:])) { error in
-            XCTAssertEqual(error as? ParaformerPreviewError, .missingDevelopmentModelDirectory)
+    func testResolvedLocationPrefersExplicitEnvironmentOverride() throws {
+        try withTemporaryParaformerDirectory { root in
+            let override = root.appendingPathComponent("override", isDirectory: true)
+            let appSupport = root.appendingPathComponent("Application Support", isDirectory: true)
+            try FileManager.default.createDirectory(at: override, withIntermediateDirectories: true)
+            try writeValidParaformerBundle(in: override)
+
+            let location = try ParaformerModelLocation.resolvedLocation(
+                environment: ["TSB_PARAFORMER_MODEL_DIR": override.path],
+                applicationSupportDirectory: appSupport
+            )
+
+            XCTAssertEqual(location.encoder.standardizedFileURL, override.appendingPathComponent("encoder.int8.onnx").standardizedFileURL)
+        }
+    }
+
+    func testResolvedLocationUsesCanonicalApplicationSupportBundle() throws {
+        try withTemporaryParaformerDirectory { root in
+            let appSupport = root.appendingPathComponent("Application Support", isDirectory: true)
+            let model = appSupport
+                .appendingPathComponent("TSB/Models", isDirectory: true)
+                .appendingPathComponent(ParaformerModelLocation.modelName, isDirectory: true)
+            try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+            try writeValidParaformerBundle(in: model)
+
+            let location = try ParaformerModelLocation.resolvedLocation(
+                environment: [:],
+                applicationSupportDirectory: appSupport
+            )
+
+            XCTAssertEqual(location.decoder.standardizedFileURL, model.appendingPathComponent("decoder.int8.onnx").standardizedFileURL)
         }
     }
 
