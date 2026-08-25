@@ -58,6 +58,23 @@ final class TranscriptPolishValidatorTests: XCTestCase {
         XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
     }
 
+    func testRejectsSignedAndDecimalPunctuationChangesInLongText() throws {
+        for (original, corrected, changed) in [
+            ("预算计划最终增加 +5 个百分点并保持其他所有内容完全不变", "预算计划最终增加 -5 个百分点并保持其他所有内容完全不变", "+"),
+            ("版本数值从 1.5 开始并保持后续所有说明内容完全不变", "版本数值从 1,5 开始并保持后续所有说明内容完全不变", "."),
+        ] {
+            let request = makeRequest(offline: original)
+            let range = (original as NSString).range(of: changed)
+            let replacement = (corrected as NSString).substring(with: range)
+            XCTAssertThrowsError(try TranscriptPolishValidator().validate(
+                response(for: request, base: .offline, corrected: corrected, edits: [
+                    edit(.formatting, range.location, range.length, changed, replacement, "bad numeric formatting")
+                ]),
+                for: request
+            ))
+        }
+    }
+
     func testRejectsZeroLengthInsertionBeyondChangeLimitAndUnanchoredCandidateEvidence() throws {
         let request = makeRequest(offline: String(repeating: "a", count: 20), streaming: "xxxxEARTHyyyy")
         XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: String(repeating: "a", count: 20) + "abcdef", edits: [edit(.formatting, 20, 0, "", "abcdef", "insert")]), for: request))
@@ -83,6 +100,18 @@ final class TranscriptPolishValidatorTests: XCTestCase {
         let suffix = makeRequest(offline: "long enough start stays stable until wrong", streaming: "long enough start stays stable until right noise")
         let suffixOutcome = try TranscriptPolishValidator().validate(response(for: suffix, base: .offline, corrected: "long enough start stays stable until right", edits: [edit(.candidateSupported, 37, 5, "wrong", "right", "boundary")]), for: suffix)
         guard case .reviewRequired = suffixOutcome else { return XCTFail("replacement not at other suffix") }
+    }
+
+    func testTerminologyAliasInsideLargerLatinTokenIsNotAutoAccepted() throws {
+        let request = makeRequest(offline: "Use XTBx for this sufficiently long dictation")
+        let outcome = try TranscriptPolishValidator().validate(response(
+            for: request,
+            base: .offline,
+            corrected: "Use XTSBx for this sufficiently long dictation",
+            edits: [edit(.terminology, 5, 2, "TB", "TSB", "embedded alias")]
+        ), for: request)
+
+        guard case .reviewRequired = outcome else { return XCTFail("embedded alias must not auto-accept") }
     }
 
     func testRejectsInnerResponseOver48KiB() throws {

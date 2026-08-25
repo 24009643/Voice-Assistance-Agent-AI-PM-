@@ -46,6 +46,17 @@ The request constructor sends only `schema_version`, `request_id`, candidate `ca
 
 Task 6 does not make a release, merge, push, or manual-acceptance claim. The incomplete full suite and the normal signed-build artifact remain release blockers.
 
+## Transcript-polish final-fix evidence (post-`1358a47`)
+
+| ID | Requirement | Evidence | Current result | Status |
+|---|---|---|---|---|
+| V02-P05 | Final blocking-fix affected aggregate | Fresh `CODE_SIGNING_ALLOWED=NO` run selected terminology, polish model/validator/client, settings, coordinator, store, and acceptance-runner groups; `/tmp/tsb-final-fixes-focused-final.xcresult` | **218/218 passed, 0 failed, 0 skipped** | passed-automated |
+| V02-P06 | Final blocking-fix Debug build | Fresh `CODE_SIGNING_ALLOWED=NO` Debug build at `/tmp/tsb-final-fixes-build-final` | Unsigned Debug build succeeded | passed-automated (unsigned only) |
+| V02-P07 | Full-suite source-bundle hypothesis | The exact five inspected `.swift` sources were temporarily configured as `TSBTests` resources and the project regenerated. The isolated named test completed, but Xcode reported that the Swift files cannot be processed by Copy Bundle Resources and bundle lookup returned nil. The experiment was reverted as required; no alternative was attempted | No full-suite pass or new full-suite count | blocked |
+| V02-P08 | Final-fix hygiene and bounded privacy scan | `git diff --check` clean; no final `project.yml`/generated-project resource-experiment diff. Added production lines from `1358a47`: 0 provider-token signatures, Bearer values, PEM private keys, private `/Users/` paths, `.env` references, logging calls, or clipboard calls | Static scan clean within the stated patterns | passed-automated |
+
+These final-fix results do not change the manual boundary. Normal signed test/build remains unproven and blocked on the copied `onnxruntime.framework` artifact; real Provider, microphone, target-Mac timing, clipboard/disk, Figma/SwiftUI, Golden Set, M10, merge, and release gates remain pending or blocked.
+
 ## Exact-HEAD lifecycle-correction gate boundary
 
 The lifecycle-correction post-review automated gate at exact `2cde526` is `passed-automated` only. It does **not** pass the following user-present gates:

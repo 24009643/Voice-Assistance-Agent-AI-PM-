@@ -18,5 +18,14 @@ final class TranscriptPolishModelsTests: XCTestCase {
         )
 
         XCTAssertEqual(try JSONDecoder().decode(TranscriptPolishRecord.self, from: JSONEncoder().encode(polish)), polish)
+        XCTAssertEqual(polish.selectedHistoryRecordCount, 0)
+
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(polish)) as? [String: Any])
+        legacy.removeValue(forKey: "selectedHistoryRecordCount")
+        let decodedLegacy = try JSONDecoder().decode(
+            TranscriptPolishRecord.self,
+            from: JSONSerialization.data(withJSONObject: legacy)
+        )
+        XCTAssertEqual(decodedLegacy.selectedHistoryRecordCount, 0)
     }
 }

@@ -78,8 +78,8 @@ final class AppController: ObservableObject {
     static func makePolishDispatchSnapshot(
         localOnly: Bool = false,
         loadSettings: () -> OrganizationSettings,
-        loadAPIKey: (OrganizationEndpointSettings) throws -> String?
-    ) throws -> OrganizationDispatchSnapshot {
+        loadAPIKey: (OrganizationEndpointSettings) async throws -> String?
+    ) async throws -> OrganizationDispatchSnapshot {
         let settings = loadSettings()
         guard !localOnly, let endpoint = settings.endpoint else {
             throw TranscriptPolishDispatchError.notEligible
@@ -90,7 +90,7 @@ final class AppController: ObservableObject {
         if endpoint.isLoopback {
             return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: "")
         }
-        guard let apiKey = try loadAPIKey(endpoint),
+        guard let apiKey = try await loadAPIKey(endpoint),
               !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw TranscriptPolishDispatchError.notEligible
         }
@@ -225,10 +225,14 @@ final class AppController: ObservableObject {
                     organizationSettingsStore.load().transcriptTerminology
                 },
                 polish: { request, localOnly, willDispatch in
-                    let dispatch = try Self.makePolishDispatchSnapshot(
+                    let dispatch = try await Self.makePolishDispatchSnapshot(
                         localOnly: localOnly,
                         loadSettings: organizationSettingsStore.load,
-                        loadAPIKey: { try organizationSecretStore.load(for: $0) }
+                        loadAPIKey: { endpoint in
+                            try await Task.detached(priority: .userInitiated) {
+                                try KeychainSecretStore().load(for: endpoint)
+                            }.value
+                        }
                     )
                     return try await TranscriptPolishClient(endpoint: TranscriptPolishEndpoint(
                         baseURL: dispatch.endpoint.baseURL,

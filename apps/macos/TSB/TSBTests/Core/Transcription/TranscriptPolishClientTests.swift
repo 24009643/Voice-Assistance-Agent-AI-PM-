@@ -72,12 +72,45 @@ final class TranscriptPolishClientTests: XCTestCase {
         XCTAssertEqual(events.values, ["dispatch", "transport"])
     }
 
+    func testCancellationDuringRequestPreparedStartsZeroTransport() async {
+        let events = EventLog()
+        PolishURLProtocol.handler = { _ in
+            events.append("transport")
+            throw URLError(.badServerResponse)
+        }
+
+        do {
+            _ = try await client().polish(fixtureRequest(), apiKey: "synthetic-key", onRequestPrepared: {
+                events.append("prepared")
+                withUnsafeCurrentTask { $0?.cancel() }
+            })
+            XCTFail("expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(events.values, ["prepared"])
+    }
+
     func testAllowsLoopbackAndRejectsEmptyOrIrrelevantTerminology() async throws {
         PolishURLProtocol.handler = { _ in .response(self.makeOuterResponse(content: self.makeInnerResponse(for: self.fixtureRequest()))) }
         _ = try await client(url: "http://127.0.0.1:11434/chat").polish(fixtureRequest(), apiKey: "")
         let invalid = TranscriptPolishRequest(requestID: UUID(), candidates: [.init(id: .offline, text: "alpha")], terminology: [.init(canonical: "", aliases: ["x"]), .init(canonical: "unused", aliases: ["never"])])
         PolishURLProtocol.handler = { _ in XCTFail("invalid terminology must not reach network"); throw URLError(.badServerResponse) }
         await XCTAssertThrowsErrorAsync { try await self.client().polish(invalid, apiKey: "key") }
+    }
+
+    func testLatinAliasInsideLargerTokenIsNotRelevantForSubmission() async {
+        let request = TranscriptPolishRequest(
+            requestID: UUID(),
+            candidates: [.init(id: .offline, text: "Use XTBx for this sufficiently long dictation")],
+            terminology: [.init(canonical: "TSB", aliases: ["TB"])]
+        )
+        PolishURLProtocol.handler = { _ in
+            XCTFail("embedded alias must not reach transport")
+            throw URLError(.badServerResponse)
+        }
+
+        await XCTAssertThrowsErrorAsync { try await self.client().polish(request, apiKey: "key") }
     }
 
     func testRejectsRedirectBeforeTargetReceivesTranscript() async throws {

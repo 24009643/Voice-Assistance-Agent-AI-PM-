@@ -57,6 +57,31 @@ enum TranscriptTerminologyParser {
     }
 }
 
+enum TranscriptTerminologyBoundary {
+    static func contains(_ value: String, in text: String) -> Bool {
+        guard !value.isEmpty,
+              let expression = try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: value)) else {
+            return false
+        }
+        return expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).contains {
+            matches(value, at: $0.range, in: text)
+        }
+    }
+
+    static func matches(_ value: String, at range: NSRange, in text: String) -> Bool {
+        guard let stringRange = Range(range, in: text), text[stringRange] == value else { return false }
+        if value.unicodeScalars.first.map(isLatinAlphanumeric) == true,
+           text[..<stringRange.lowerBound].unicodeScalars.last.map(isLatinAlphanumeric) == true { return false }
+        if value.unicodeScalars.last.map(isLatinAlphanumeric) == true,
+           text[stringRange.upperBound...].unicodeScalars.first.map(isLatinAlphanumeric) == true { return false }
+        return true
+    }
+
+    private static func isLatinAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
+        (48...57).contains(scalar.value) || (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
+    }
+}
+
 struct TranscriptTerminologyCorrector: Sendable {
     func correct(_ text: String, entries: [TranscriptTerminologyEntry]) -> TranscriptTerminologyResult {
         let aliases = entries.flatMap { entry in entry.aliases.map { ($0, entry.canonical) } }
@@ -65,12 +90,9 @@ struct TranscriptTerminologyCorrector: Sendable {
 
         for (alias, canonical) in aliases where !alias.isEmpty {
             let escaped = NSRegularExpression.escapedPattern(for: alias)
-            let scalars = alias.unicodeScalars
-            let prefix = scalars.first.map { CharacterSet.alphanumerics.contains($0) } == true ? "(?<![[:alnum:]])" : ""
-            let suffix = scalars.last.map { CharacterSet.alphanumerics.contains($0) } == true ? "(?![[:alnum:]])" : ""
-            let pattern = prefix + escaped + suffix
-            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            guard let expression = try? NSRegularExpression(pattern: escaped) else { continue }
             for range in expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).map(\.range) {
+                guard TranscriptTerminologyBoundary.matches(alias, at: range, in: text) else { continue }
                 guard !matches.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) else { continue }
                 matches.append((range, (text as NSString).substring(with: range), canonical))
             }

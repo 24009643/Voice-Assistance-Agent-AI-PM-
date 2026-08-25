@@ -75,7 +75,8 @@ final class SettingsSourceTests: XCTestCase {
             "organizationSettingsStore.load().transcriptTerminology",
             "polish: { request, localOnly, willDispatch in",
             "Self.makePolishDispatchSnapshot(",
-            "loadAPIKey: { try organizationSecretStore.load(for: $0) }",
+            "try await Task.detached(priority: .userInitiated)",
+            "try KeychainSecretStore().load(for: endpoint)",
             "TranscriptPolishClient(endpoint:",
             "onRequestPrepared:",
             "store.updateDelivery(id: sessionID, status: status, receipt: receipt)"
@@ -630,7 +631,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(secretLoadCount, 0)
     }
 
-    func testPolishDispatchUsesNoKeyForLoopbackAndLocalOnlyFallsBackFirst() throws {
+    func testPolishDispatchUsesNoKeyForLoopbackAndLocalOnlyFallsBackFirst() async throws {
         let endpoint = try OrganizationEndpointSettings(
             baseURL: URL(string: "http://127.0.0.1:11434/v1/chat/completions")!,
             model: "local-model"
@@ -638,7 +639,7 @@ final class SettingsBehaviorTests: XCTestCase {
         let loopback = OrganizationSettings(endpoint: endpoint, polishEnabled: true)
         var loopbackSecretLoadCount = 0
 
-        let dispatch = try AppController.makePolishDispatchSnapshot(
+        let dispatch = try await AppController.makePolishDispatchSnapshot(
             loadSettings: { loopback },
             loadAPIKey: { _ in
                 loopbackSecretLoadCount += 1
@@ -650,20 +651,23 @@ final class SettingsBehaviorTests: XCTestCase {
 
         var secretLoadCount = 0
         let remote = try remoteSettings()
-        XCTAssertThrowsError(try AppController.makePolishDispatchSnapshot(
-            localOnly: true,
-            loadSettings: { remote },
-            loadAPIKey: { _ in
-                secretLoadCount += 1
-                return "must-not-load"
-            }
-        )) { error in
+        do {
+            _ = try await AppController.makePolishDispatchSnapshot(
+                localOnly: true,
+                loadSettings: { remote },
+                loadAPIKey: { _ in
+                    secretLoadCount += 1
+                    return "must-not-load"
+                }
+            )
+            XCTFail("expected local-only fallback")
+        } catch {
             XCTAssertEqual(error as? TranscriptPolishDispatchError, .notEligible)
         }
         XCTAssertEqual(secretLoadCount, 0)
     }
 
-    func testPolishDispatchLoadsTheEndpointBoundRemoteSecretExactlyOnce() throws {
+    func testPolishDispatchLoadsTheEndpointBoundRemoteSecretExactlyOnce() async throws {
         let endpoint = try OrganizationEndpointSettings(
             baseURL: URL(string: "https://api.example.test/v1/chat/completions")!,
             model: "remote-model"
@@ -676,7 +680,7 @@ final class SettingsBehaviorTests: XCTestCase {
         )
         var secretLoadCount = 0
 
-        let dispatch = try AppController.makePolishDispatchSnapshot(
+        let dispatch = try await AppController.makePolishDispatchSnapshot(
             loadSettings: { remote },
             loadAPIKey: { loadedEndpoint in
                 secretLoadCount += 1

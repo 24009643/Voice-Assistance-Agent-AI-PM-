@@ -288,6 +288,29 @@ final class SessionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testDeadlineCopiesBeforeSlowTerminalPersistence() async throws {
+        let clock = ManualContinuousClock()
+        let harness = CoordinatorHarness(
+            transcript: "deadline local",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            saveClockAdvances: [1: .seconds(5)],
+            continuousClock: clock
+        )
+
+        await harness.runUntilPolishStarts()
+        clock.advance(by: .milliseconds(1_500))
+        await harness.firePolishDeadline()
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.copiedTexts, ["deadline local"])
+        XCTAssertEqual(harness.deliveryReceipts.single?.stopToCopyMilliseconds, 1_500)
+        XCTAssertLessThan(
+            try XCTUnwrap(harness.timeline.firstIndex(of: "copied")),
+            try XCTUnwrap(harness.timeline.lastIndex(of: "saved"))
+        )
+    }
+
     func testPhysicallyLateSuccessLosesBeforeDeadlineCallbackRuns() async throws {
         let clock = ManualContinuousClock()
         let harness = CoordinatorHarness(
@@ -398,6 +421,112 @@ final class SessionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testAcceptedPolishSaveFailureCopiesBeforeSlowFailureMetadataPersistence() async throws {
+        let clock = ManualContinuousClock()
+        let harness = CoordinatorHarness(
+            transcript: "durable fallback",
+            saveFailures: [1],
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            saveClockAdvances: [2: .seconds(5)],
+            continuousClock: clock
+        )
+
+        await harness.runUntilPolishStarts()
+        harness.completePolish(.accepted(baseCandidateID: .offline, text: "unsaved polish", edits: []))
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.copiedTexts, ["durable fallback"])
+        XCTAssertEqual(harness.deliveryReceipts.single?.stopToCopyMilliseconds, 0)
+        XCTAssertLessThan(
+            try XCTUnwrap(harness.timeline.firstIndex(of: "copied")),
+            try XCTUnwrap(harness.timeline.lastIndex(of: "saved"))
+        )
+    }
+
+    func testSuspendedRemoteKeyLoadCannotDelayDeadlineOrDispatchLate() async throws {
+        let clock = ManualContinuousClock()
+        let harness = CoordinatorHarness(
+            transcript: "key load fallback",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            suspendsPolishKeyLoad: true,
+            continuousClock: clock
+        )
+
+        await harness.runUntilPolishKeyLoadStarts()
+        clock.advance(by: .milliseconds(1_500))
+        await harness.firePolishDeadline()
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.copiedTexts, ["key load fallback"])
+        XCTAssertEqual(harness.polishTransportStarts, 0)
+        let timedOut = try XCTUnwrap(harness.savedRecords.last?.polish)
+        XCTAssertEqual(timedOut.state, .timedOut)
+        XCTAssertNil(timedOut.provider)
+        XCTAssertNil(timedOut.sentCharacterCount)
+        XCTAssertEqual(timedOut.selectedHistoryRecordCount, 0)
+        harness.completePolishKeyLoad()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(harness.copyCount, 1)
+        XCTAssertEqual(harness.polishTransportStarts, 0)
+    }
+
+    func testRevokeDuringSuspendedKeyLoadCopiesThenPersistsUnsentCancellation() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "revoke key fallback",
+            organizationSettings: polishSettings(),
+            suspendsPolish: true,
+            suspendsPolishKeyLoad: true
+        )
+
+        await harness.runUntilPolishKeyLoadStarts()
+        harness.coordinator.cancelPendingPolishAfterRevoke()
+        await harness.waitForDelivery()
+
+        XCTAssertEqual(harness.copiedTexts, ["revoke key fallback"])
+        XCTAssertEqual(harness.polishTransportStarts, 0)
+        let cancelled = try XCTUnwrap(harness.savedRecords.last?.polish)
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertNil(cancelled.provider)
+        XCTAssertNil(cancelled.sentCharacterCount)
+        XCTAssertEqual(cancelled.selectedHistoryRecordCount, 0)
+        harness.completePolishKeyLoad()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(harness.copyCount, 1)
+        XCTAssertEqual(harness.polishTransportStarts, 0)
+    }
+
+    func testStrictPolishErrorsRejectWhileTransportAndConfigurationErrorsFail() async throws {
+        let cases: [(Error, TranscriptPolishState)] = [
+            (TranscriptPolishValidationError.invalidShape, .rejected),
+            (TranscriptPolishValidationError.limitExceeded, .rejected),
+            (TranscriptPolishClientError.responseTooLarge, .rejected),
+            (TranscriptPolishClientError.invalidResponse, .rejected),
+            (TranscriptPolishClientError.httpStatus(503), .failed),
+            (TranscriptPolishClientError.insecureEndpoint, .failed),
+        ]
+
+        for (error, expectedState) in cases {
+            let harness = CoordinatorHarness(
+                transcript: "truthful terminal metadata",
+                organizationSettings: polishSettings(),
+                polishPostDispatchError: error
+            )
+
+            await harness.runOneSession()
+            let polish = try XCTUnwrap(harness.savedRecords.last?.polish)
+
+            XCTAssertEqual(polish.state, expectedState)
+            XCTAssertEqual(polish.provider, "openai-compatible")
+            XCTAssertEqual(polish.providerKind, .remote)
+            XCTAssertEqual(polish.sentCharacterCount, "truthful terminal metadata".count)
+            XCTAssertEqual(polish.selectedHistoryRecordCount, 0)
+            XCTAssertEqual(harness.copiedTexts, ["truthful terminal metadata"])
+            XCTAssertEqual(harness.deliveryReceipts.single?.source, .local)
+        }
+    }
+
     func testShutdownAfterLocalSavePreservesRecordAndCreatesNoCopy() async throws {
         try await withTemporarySessionsRoot { root in
             let harness = CoordinatorHarness(
@@ -493,6 +622,20 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.organizationUpdates.count, 0)
         XCTAssertEqual(harness.providerStarts, 0)
         XCTAssertEqual(harness.copiedTexts, ["local only"])
+    }
+
+    func testLargerLatinTokenDoesNotSubmitEmbeddedTerminologyAlias() async {
+        var settings = polishSettings()
+        settings.transcriptTerminology = [.init(canonical: "TSB", aliases: ["TB"])]
+        let harness = CoordinatorHarness(
+            transcript: "Use XTBx for this sufficiently long dictation",
+            organizationSettings: settings,
+            suspendsPolish: true
+        )
+
+        await harness.runUntilPolishStarts()
+
+        XCTAssertEqual(harness.polishInputs.single?.request.terminology, [])
     }
 
     func testOrganizationReceivesExactDeliveredTextAndNeverRecopies() async throws {
@@ -2699,6 +2842,8 @@ private final class CoordinatorHarness {
     private let suspendsPolish: Bool
     private let polishStartClockAdvance: Duration?
     private let polishPreDispatchError: Error?
+    private let polishPostDispatchError: Error?
+    private let suspendsPolishKeyLoad: Bool
     private let saveClockAdvances: [Int: Duration]
     private let copyClockAdvance: Duration?
     private let copyResult: Bool
@@ -2728,6 +2873,7 @@ private final class CoordinatorHarness {
     private var previewCancellationContinuations: [CheckedContinuation<Void, Never>?] = []
     private var organizationContinuations: [UnsafeContinuation<OrganizationOutput, Never>?] = []
     private var polishContinuations: [CheckedContinuation<TranscriptPolishOutcome, Error>?] = []
+    private var polishKeyLoadContinuations: [CheckedContinuation<String?, Error>?] = []
     private var historySuggestionsContinuations: [CheckedContinuation<HistorySuggestions, Error>?] = []
     let audioURL = FileManager.default.temporaryDirectory.appendingPathComponent("SessionCoordinatorTests.wav")
 
@@ -2746,6 +2892,7 @@ private final class CoordinatorHarness {
     private(set) var deliveryStatuses: [DeliveryStatus] = []
     private(set) var deliveryReceipts: [TranscriptDeliveryReceipt] = []
     private(set) var polishInputs: [PolishInput] = []
+    private(set) var polishTransportStarts = 0
     private(set) var organizationInputs: [OrganizationInput] = []
     private(set) var organizationSecretLoadCount = 0
     private(set) var organizationWriteAttempts: [(sessionID: SessionID, organization: OrganizationRecord)] = []
@@ -2776,8 +2923,10 @@ private final class CoordinatorHarness {
         organizationAPIKey: String = "synthetic-key",
         suspendsOrganization: Bool = false,
         suspendsPolish: Bool = false,
+        suspendsPolishKeyLoad: Bool = false,
         polishStartClockAdvance: Duration? = nil,
         polishPreDispatchError: Error? = nil,
+        polishPostDispatchError: Error? = nil,
         saveClockAdvances: [Int: Duration] = [:],
         copyClockAdvance: Duration? = nil,
         organizationErrors: [Error?] = [],
@@ -2808,8 +2957,10 @@ private final class CoordinatorHarness {
         self.organizationAPIKey = organizationAPIKey
         self.suspendsOrganization = suspendsOrganization
         self.suspendsPolish = suspendsPolish
+        self.suspendsPolishKeyLoad = suspendsPolishKeyLoad
         self.polishStartClockAdvance = polishStartClockAdvance
         self.polishPreDispatchError = polishPreDispatchError
+        self.polishPostDispatchError = polishPostDispatchError
         self.saveClockAdvances = saveClockAdvances
         self.copyClockAdvance = copyClockAdvance
         self.organizationErrors = organizationErrors
@@ -2961,19 +3112,31 @@ private final class CoordinatorHarness {
                     if let polishPreDispatchError = self.polishPreDispatchError {
                         throw polishPreDispatchError
                     }
-                    let dispatch = try AppController.makePolishDispatchSnapshot(
+                    let dispatch = try await AppController.makePolishDispatchSnapshot(
                         localOnly: localOnly,
                         loadSettings: { self.organizationSettings },
-                        loadAPIKey: { _ in self.organizationAPIKey }
+                        loadAPIKey: { _ in
+                            if self.suspendsPolishKeyLoad {
+                                return try await withCheckedThrowingContinuation {
+                                    self.polishKeyLoadContinuations.append($0)
+                                }
+                            }
+                            return self.organizationAPIKey
+                        }
                     )
+                    try Task.checkCancellation()
                     let providerKind: ProviderKind = dispatch.endpoint.isLoopback ? .local : .remote
                     willDispatch(dispatch.endpoint, providerKind)
+                    self.polishTransportStarts += 1
                     self.polishInputs.append(PolishInput(
                         request: request,
                         localOnly: localOnly,
                         endpoint: dispatch.endpoint,
                         providerKind: providerKind
                     ))
+                    if let polishPostDispatchError = self.polishPostDispatchError {
+                        throw polishPostDispatchError
+                    }
                     if let duration = self.polishStartClockAdvance {
                         self.continuousClock.advance(by: duration)
                     }
@@ -3069,6 +3232,18 @@ private final class CoordinatorHarness {
         await coordinator.handle(.toggleRecording)
         await finishRecording()
         await waitUntilPolishStarts()
+        await waitUntilPolishDeadlineStarts()
+    }
+
+    func runUntilPolishKeyLoadStarts() async {
+        await coordinator.handle(.toggleRecording)
+        await coordinator.handle(.toggleRecording)
+        await finishRecording()
+        for _ in 0..<100 {
+            if !polishKeyLoadContinuations.isEmpty { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(polishKeyLoadContinuations.count, 1)
         await waitUntilPolishDeadlineStarts()
     }
 
@@ -3219,6 +3394,11 @@ private final class CoordinatorHarness {
     func completePolish(_ outcome: TranscriptPolishOutcome, at index: Int = 0) {
         polishContinuations[index]?.resume(returning: outcome)
         polishContinuations[index] = nil
+    }
+
+    func completePolishKeyLoad(at index: Int = 0) {
+        polishKeyLoadContinuations[index]?.resume(returning: organizationAPIKey)
+        polishKeyLoadContinuations[index] = nil
     }
 
     func firePolishDeadline(at index: Int = 0) async {

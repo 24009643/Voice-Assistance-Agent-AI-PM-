@@ -44,7 +44,15 @@ struct TranscriptPolishValidator {
     private func isAutomatic(_ edit: TranscriptPolishEdit, base: String, request: TranscriptPolishRequest) -> Bool {
         switch edit.kind {
         case .formatting: let allowed: (Unicode.Scalar) -> Bool = { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) || ($0.value < 128 && CharacterSet.letters.contains($0)) }; return (edit.original.unicodeScalars.allSatisfy(allowed) && edit.replacement.unicodeScalars.allSatisfy(allowed) && edit.original.lowercased() == edit.replacement.lowercased()) || (edit.original.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) } && edit.replacement.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) })
-        case .terminology: return request.terminology.contains { $0.canonical == edit.replacement && $0.aliases.contains(edit.original) }
+        case .terminology: return request.terminology.contains {
+            $0.canonical == edit.replacement
+                && $0.aliases.contains(edit.original)
+                && TranscriptTerminologyBoundary.matches(
+                    edit.original,
+                    at: NSRange(location: edit.startUTF16, length: edit.lengthUTF16),
+                    in: base
+                )
+        }
         case .candidateSupported: return candidateSupported(edit, base: base, request: request)
         }
     }
@@ -59,5 +67,5 @@ struct TranscriptPolishValidator {
         if range.upperBound == base.endIndex { return other.hasSuffix(fragment) }
         return other.contains(fragment)
     }
-    private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\d+"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
+    private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?<![\p{L}\p{N}_])[+\-−]?\d+(?:[.,]\d+)*(?![\p{L}\p{N}_])"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
 }

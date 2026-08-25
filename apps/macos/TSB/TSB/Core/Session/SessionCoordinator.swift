@@ -548,7 +548,8 @@ final class SessionCoordinator {
         let candidateTexts = candidates.map(\.text)
         let relevantTerminology = terminology.filter { entry in
             candidateTexts.contains { text in
-                text.contains(entry.canonical) || entry.aliases.contains(where: text.contains)
+                TranscriptTerminologyBoundary.contains(entry.canonical, in: text)
+                    || entry.aliases.contains { TranscriptTerminologyBoundary.contains($0, in: text) }
             }
         }
         let request = TranscriptPolishRequest(
@@ -716,10 +717,11 @@ final class SessionCoordinator {
 
         var deliveredText = transcript.localCleanedText
         var source = TranscriptDeliverySource.local
+        var terminalPolish: TranscriptPolishRecord?
         let elapsedMilliseconds = milliseconds(from: localSavedAt, to: completionTime)
 
-        if case .cancelled = completion, session.polishProvider != nil {
-            transcript.polish = polishRecord(
+        if case .cancelled = completion {
+            terminalPolish = polishRecord(
                 requestID: requestID,
                 state: .cancelled,
                 baseCandidateID: nil,
@@ -730,9 +732,8 @@ final class SessionCoordinator {
                 elapsedMilliseconds: elapsedMilliseconds,
                 errorCode: "cancelled"
             )
-            _ = persistPolish(transcript, for: sessionID)
-        } else if deadlineExpired, session.polishProvider != nil {
-            transcript.polish = polishRecord(
+        } else if deadlineExpired {
+            terminalPolish = polishRecord(
                 requestID: requestID,
                 state: .timedOut,
                 baseCandidateID: nil,
@@ -743,7 +744,6 @@ final class SessionCoordinator {
                 elapsedMilliseconds: elapsedMilliseconds,
                 errorCode: "deadline"
             )
-            _ = persistPolish(transcript, for: sessionID)
         } else if case let .polish(.success(outcome)) = completion {
             let record: TranscriptPolishRecord
             switch outcome {
@@ -771,12 +771,13 @@ final class SessionCoordinator {
                 )
             }
             transcript.polish = record
-            if persistPolish(transcript, for: sessionID), record.state == .accepted,
-               let polishedText = record.polishedText {
+            if record.state == .reviewRequired {
+                terminalPolish = record
+            } else if persistPolish(transcript, for: sessionID), let polishedText = record.polishedText {
                 deliveredText = polishedText
                 source = .polished
-            } else if record.state == .accepted {
-                transcript.polish = polishRecord(
+            } else {
+                terminalPolish = polishRecord(
                     requestID: requestID,
                     state: .failed,
                     baseCandidateID: nil,
@@ -787,23 +788,22 @@ final class SessionCoordinator {
                     elapsedMilliseconds: elapsedMilliseconds,
                     errorCode: "polish_save_failed"
                 )
-                _ = persistPolish(transcript, for: sessionID)
             }
         } else if case let .polish(.failure(error)) = completion,
                   session.polishProvider != nil
                     || (error as? TranscriptPolishDispatchError) != .notEligible {
-            transcript.polish = polishRecord(
+            let state = polishFailureState(for: error)
+            terminalPolish = polishRecord(
                 requestID: requestID,
-                state: .failed,
+                state: state,
                 baseCandidateID: nil,
                 polishedText: nil,
                 reviewCandidateText: nil,
                 edits: [],
                 session: session,
                 elapsedMilliseconds: elapsedMilliseconds,
-                errorCode: "polish_failed"
+                errorCode: state == .rejected ? "polish_rejected" : "polish_failed"
             )
-            _ = persistPolish(transcript, for: sessionID)
         }
 
         let stopRequestedAt = session.stopRequestedAt ?? localSavedAt
@@ -814,6 +814,10 @@ final class SessionCoordinator {
             stopToLocalFinalMilliseconds: milliseconds(from: stopRequestedAt, to: localSavedAt),
             stopToCopyMilliseconds: milliseconds(from: stopRequestedAt, to: copiedAt)
         )
+        if let terminalPolish {
+            transcript.polish = terminalPolish
+            _ = persistPolish(transcript, for: sessionID)
+        }
         sessions[sessionID]?.deliverySucceeded = didCopy
         do {
             if let updateDelivery = dependencies.updateDelivery {
@@ -855,6 +859,16 @@ final class SessionCoordinator {
             return true
         } catch {
             return false
+        }
+    }
+
+    private func polishFailureState(for error: Error) -> TranscriptPolishState {
+        if error is TranscriptPolishValidationError { return .rejected }
+        switch error as? TranscriptPolishClientError {
+        case .invalidRequest, .responseTooLarge, .invalidResponse:
+            return .rejected
+        case .insecureEndpoint, .httpStatus(_), nil:
+            return .failed
         }
     }
 

@@ -406,7 +406,7 @@ final class V02AcceptanceRunner {
         } else if capture?.copyChangeCountDelta != 1 {
             capture?.failureCategory = "copy_delta_invalid"
         } else if capture?.immediateEqualsDelivered != true {
-            capture?.failureCategory = "clipboard_not_local"
+            capture?.failureCategory = "clipboard_not_delivered"
         } else if capture?.terminalCategory.hasPrefix("organized_") != true {
             capture?.failureCategory = "organization_not_successful"
         } else if capture?.organizationDidNotRecopy != true {
