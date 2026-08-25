@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Combine
 import Foundation
 import Carbon
@@ -304,25 +305,45 @@ final class AppController: ObservableObject {
         }
     }
 
+    func toggleRecordingFromUI() {
+        receive(.toggleRecording)
+    }
+
+    func cancelRecordingFromUI() {
+        receive(.cancelRecording)
+    }
+
+    func openMicrophoneSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     private func receive(_ intent: UserIntent) {
         guard modelError == nil else {
             state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: modelError)
             return
         }
 
-        guard intent != .toggleRecording || MicrophonePermission.isGranted else {
-            guard microphoneRequestLatch.begin() else { return }
-            MicrophonePermission.request { [weak self] granted in
-                guard let self else { return }
-                self.microphoneRequestLatch.finish()
-                if granted {
-                    self.receive(.toggleRecording)
-                } else {
-                    self.state.snapshot = AppSnapshot(status: .failed, elapsedMilliseconds: 0, previewText: "", message: "Microphone access is required to record.")
-                    self.notchOverlay?.update(self.state.snapshot)
+        if intent == .toggleRecording {
+            switch MicrophonePermission.decision(for: AVCaptureDevice.authorizationStatus(for: .audio)) {
+            case .proceed:
+                break
+            case .request:
+                guard microphoneRequestLatch.begin() else { return }
+                MicrophonePermission.request { [weak self] granted in
+                    guard let self else { return }
+                    self.microphoneRequestLatch.finish()
+                    if granted {
+                        self.receive(.toggleRecording)
+                    } else {
+                        self.publishMicrophoneRequirement()
+                    }
                 }
+                return
+            case .openSettings:
+                publishMicrophoneRequirement()
+                return
             }
-            return
         }
         switch intent {
         case .cancelRecording:
@@ -336,6 +357,16 @@ final class AppController: ObservableObject {
                 dispatchRecordingStart()
             }
         }
+    }
+
+    private func publishMicrophoneRequirement() {
+        state.snapshot = AppSnapshot(
+            status: .failed,
+            elapsedMilliseconds: 0,
+            previewText: "",
+            message: "Microphone access is required to record."
+        )
+        notchOverlay?.update(state.snapshot)
     }
 
     private func receive(_ intent: IslandIntent) {

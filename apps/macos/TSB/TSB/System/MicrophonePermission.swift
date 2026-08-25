@@ -1,5 +1,11 @@
 import AVFoundation
 
+enum MicrophonePermissionDecision: Equatable {
+    case proceed
+    case request
+    case openSettings
+}
+
 struct MicrophoneRequestLatch {
     private var isInFlight = false
 
@@ -21,16 +27,23 @@ enum MicrophonePermission {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
+    nonisolated static func decision(for status: AVAuthorizationStatus) -> MicrophonePermissionDecision {
+        switch status {
+        case .authorized: .proceed
+        case .notDetermined: .request
+        case .denied, .restricted: .openSettings
+        @unknown default: .openSettings
+        }
+    }
+
     static func request(_ completion: @escaping @MainActor (Bool) -> Void) {
         Task { @MainActor in
-            switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized:
+            switch decision(for: AVCaptureDevice.authorizationStatus(for: .audio)) {
+            case .proceed:
                 completion(true)
-            case .notDetermined:
+            case .request:
                 completion(await AVCaptureDevice.requestAccess(for: .audio))
-            case .denied, .restricted:
-                completion(false)
-            @unknown default:
+            case .openSettings:
                 completion(false)
             }
         }
