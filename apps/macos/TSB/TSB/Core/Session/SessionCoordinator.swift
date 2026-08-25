@@ -143,17 +143,18 @@ final class SessionCoordinator {
         activeOrganization = nil
         organizationQueue.removeAll()
 
-        let activeSessionIDs = Set(processingTasks.keys).union(
-            sessions.values.compactMap { $0.status == .recording || $0.isProcessing ? $0.id : nil }
-        )
-        for sessionID in activeSessionIDs {
-            processingTasks[sessionID]?.cancel()
+        for task in processingTasks.values {
+            task.cancel()
+        }
+        for sessionID in sessions.values.compactMap({
+            $0.status == .recording || $0.status == .transcribing || $0.status == .saving ? $0.id : nil
+        }) {
             dependencies.cancelRecording(sessionID)
             _ = trackPreviewCancellation(sessionID)
-            sessions.removeValue(forKey: sessionID)
         }
         recordingSessionID = nil
         processingTasks.removeAll()
+        sessions.removeAll()
         mainSessionID = nil
         latestTerminalSessionID = nil
         snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil)
@@ -605,7 +606,15 @@ final class SessionCoordinator {
                 scheduleSecondaryRemovalIfEligible(sessionID)
                 return
             }
-            guard let available = try? await dependencies.historySuggestions(sessionID) else {
+            let available: HistorySuggestions
+            do {
+                available = try await dependencies.historySuggestions(sessionID)
+            } catch {
+                guard !Task.isCancelled,
+                      !isShuttingDown,
+                      let current = sessions[sessionID],
+                      current.organizationRequestID == requestID,
+                      current.transcript?.id == transcript.id else { return }
                 failOrganizationPreparation(sessionID, message: "Could not load history suggestions.")
                 return
             }

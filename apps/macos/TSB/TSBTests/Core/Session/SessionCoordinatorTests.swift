@@ -372,6 +372,89 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
     }
 
+    func testShutdownDuringDeliveredHistoryLoadPreservesDurableRecordAndStartsNoOrganization() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "durable delivered text",
+                organizationSettings: remoteOrganizationSettings(),
+                suspendsHistorySuggestions: true,
+                sessionsDirectory: root
+            )
+
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.finishRecording()
+            await harness.waitForDelivery()
+            await harness.waitUntilHistorySuggestionsStarts()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+
+            harness.coordinator.shutdown()
+            harness.completeHistorySuggestions()
+            for _ in 0..<100 { await Task.yield() }
+
+            XCTAssertEqual(try harness.store?.load(id: sessionID).id, sessionID)
+            XCTAssertEqual(harness.organizationInputs.count, 0)
+            XCTAssertEqual(harness.providerStarts, 0)
+            XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+        }
+    }
+
+    func testSelectedHistorySuccessAfterShutdownCannotWriteOrEnqueue() async throws {
+        let selectedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(
+            transcript: "delivered text",
+            historySuggestions: HistorySuggestions(
+                suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: "related")],
+                localRecordByCandidateID: ["h1": selectedID]
+            )
+        )
+        await harness.runOneSession()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        harness.setOrganizationSettings(remoteOrganizationSettings(allowsHistory: true))
+        harness.setSuspendsHistorySuggestions(true)
+        Task { @MainActor in
+            await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        }
+        await harness.waitUntilHistorySuggestionsStarts()
+
+        harness.coordinator.shutdown()
+        let shutdownSnapshot = harness.coordinator.snapshot
+        harness.completeHistorySuggestions()
+        for _ in 0..<100 { await Task.yield() }
+
+        XCTAssertEqual(harness.coordinator.snapshot, shutdownSnapshot)
+        XCTAssertNil(harness.coordinator.snapshot.sessionID)
+        XCTAssertNil(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+    }
+
+    func testSelectedHistoryErrorAfterShutdownCannotPublishFailureOrEnqueue() async throws {
+        let selectedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(transcript: "delivered text")
+        await harness.runOneSession()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        harness.setOrganizationSettings(remoteOrganizationSettings(allowsHistory: true))
+        harness.setSuspendsHistorySuggestions(true)
+        Task { @MainActor in
+            await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        }
+        await harness.waitUntilHistorySuggestionsStarts()
+
+        harness.coordinator.shutdown()
+        let shutdownSnapshot = harness.coordinator.snapshot
+        harness.failHistorySuggestions(TestError.disk)
+        for _ in 0..<100 { await Task.yield() }
+
+        XCTAssertEqual(harness.coordinator.snapshot, shutdownSnapshot)
+        XCTAssertNil(harness.coordinator.snapshot.sessionID)
+        XCTAssertNil(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+    }
+
     func testMenuStopRemainsSessionBoundWhenPermissionIsDenied() async throws {
         let harness = CoordinatorHarness(transcript: "final")
         await harness.coordinator.handle(.toggleRecording)
@@ -1668,6 +1751,15 @@ private actor IntentBarrier {
 }
 
 @MainActor
+private func withTemporarySessionsRoot(_ body: (URL) async throws -> Void) async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("SessionCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try await body(root)
+}
+
+@MainActor
 private final class CoordinatorHarness {
     enum Event: Equatable {
         case recordingStarted
@@ -1708,6 +1800,7 @@ private final class CoordinatorHarness {
     private let livePreviewPipeline: LivePreviewPipeline?
     private let livePreviewAvailability: LivePreviewAvailability
     private let now: @MainActor () -> Date
+    private let sessionsDirectory: URL?
     private var historySuggestionsError: Error?
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
@@ -1737,9 +1830,11 @@ private final class CoordinatorHarness {
     private(set) var organizationWriteAttempts: [(sessionID: SessionID, organization: OrganizationRecord)] = []
     private(set) var organizationUpdates: [(sessionID: SessionID, organization: OrganizationRecord)] = []
     private(set) var activeOrganizationCallCount = 0
+    private(set) var providerStarts = 0
     private(set) var maximumOrganizationCallCount = 0
     private(set) var timeline: [String] = []
     private(set) var scheduledSecondaryRemovals: [(delay: TimeInterval, action: @MainActor () -> Void)] = []
+    private(set) var store: TranscriptStore?
 
     private(set) lazy var coordinator = makeCoordinator()
 
@@ -1765,7 +1860,8 @@ private final class CoordinatorHarness {
         suspendsHistorySuggestions: Bool = false,
         livePreviewPipeline: LivePreviewPipeline? = nil,
         livePreviewAvailability: LivePreviewAvailability = .available,
-        now: @escaping @MainActor () -> Date = Date.init
+        now: @escaping @MainActor () -> Date = Date.init,
+        sessionsDirectory: URL? = nil
     ) {
         self.transcript = transcript
         self.cleanedText = cleanedText
@@ -1789,10 +1885,13 @@ private final class CoordinatorHarness {
         self.livePreviewPipeline = livePreviewPipeline
         self.livePreviewAvailability = livePreviewAvailability
         self.now = now
+        self.sessionsDirectory = sessionsDirectory
     }
 
     private func makeCoordinator() -> SessionCoordinator {
-        SessionCoordinator(
+        let recorder = sessionsDirectory.map { AudioRecordingService(sessionsDirectory: $0) }
+        store = sessionsDirectory.map(TranscriptStore.init(directory:))
+        return SessionCoordinator(
             dependencies: .init(
                 startRecording: { [weak self] sessionID, onPreview, onPreviewUnavailable, onLevel, onFinished, onFailed in
                     let attempt = self?.startedSessionIDs.count ?? 0
@@ -1819,6 +1918,7 @@ private final class CoordinatorHarness {
                     self?.stopCount += 1
                 },
                 cancelRecording: { [weak self] sessionID in
+                    recorder?.cancel(sessionID: sessionID)
                     self?.cancelCount += 1
                     self?.cancelledSessionIDs.append(sessionID)
                     self?.audioWasDeleted = true
@@ -1853,12 +1953,14 @@ private final class CoordinatorHarness {
                 save: { [weak self] record in
                     guard let self else { throw TestError.deallocated }
                     if let saveError = self.saveError { throw saveError }
+                    try self.store?.save(record)
                     self.events.append(.saved)
                     self.timeline.append("saved")
                     self.savedRecords.append(record)
                 },
-                updateDeliveryStatus: { [weak self] _, status in
+                updateDeliveryStatus: { [weak self] sessionID, status in
                     if let statusWriteError = self?.statusWriteError { throw statusWriteError }
+                    try self?.store?.updateDeliveryStatus(id: sessionID, to: status)
                     self?.events.append(.deliveryStatusUpdated)
                     self?.deliveryStatuses.append(status)
                     self?.timeline.append("delivery:\(status.rawValue)")
@@ -1895,6 +1997,7 @@ private final class CoordinatorHarness {
                 },
                 organize: { [weak self] requestID, segments, suggestions, selectedCandidateIDs, localOnly, willDispatch in
                     guard let self else { throw TestError.deallocated }
+                    self.providerStarts += 1
                     let dispatch = try AppController.makeOrganizationDispatchSnapshot(
                         localOnly: localOnly,
                         selectedCandidateIDs: selectedCandidateIDs,
@@ -2010,6 +2113,11 @@ private final class CoordinatorHarness {
 
     func completeHistorySuggestions() {
         historySuggestionsContinuations[0]?.resume(returning: historySuggestions)
+        historySuggestionsContinuations[0] = nil
+    }
+
+    func failHistorySuggestions(_ error: Error) {
+        historySuggestionsContinuations[0]?.resume(throwing: error)
         historySuggestionsContinuations[0] = nil
     }
 
