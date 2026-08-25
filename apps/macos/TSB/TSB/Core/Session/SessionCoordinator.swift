@@ -209,14 +209,24 @@ final class SessionCoordinator {
             return identity.organizationRequestID == nil
         }
         guard session.organizationRequestID == identity.organizationRequestID else { return false }
-        if !session.stopRequested,
-           recordingSessionID == identity.sessionID || session.isProcessing {
+        if recordingSessionID == identity.sessionID,
+           session.status == .recording,
+           !session.stopRequested {
             beginSessionCancellation(identity.sessionID)
         } else {
             processingTasks[identity.sessionID]?.cancel()
-            if recordingSessionID == identity.sessionID {
-                recordingSessionID = nil
+            if session.status == .recording || session.isProcessing {
+                if recordingSessionID == identity.sessionID {
+                    recordingSessionID = nil
+                }
                 _ = trackPreviewCancellation(identity.sessionID)
+                var cancelled = session
+                cancelled.status = .cancelled
+                cancelled.audioLevel = 0
+                cancelled.message = "Recording cancelled."
+                cancelled.resultRetainedForDisplay = true
+                sessions[identity.sessionID] = cancelled
+                publishSnapshot()
             }
         }
         if let requestID = identity.organizationRequestID {
@@ -527,7 +537,10 @@ final class SessionCoordinator {
 
     @discardableResult
     private func beginSessionCancellation(_ sessionID: SessionID) -> Task<Void, Never>? {
-        guard var session = sessions[sessionID], !session.stopRequested else { return nil }
+        guard var session = sessions[sessionID],
+              recordingSessionID == sessionID,
+              session.status == .recording,
+              !session.stopRequested else { return nil }
 
         processingTasks[sessionID]?.cancel()
         dependencies.cancelRecording(sessionID)
