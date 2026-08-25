@@ -34,6 +34,7 @@ final class AppController: ObservableObject {
     private var screenParameterObserver: ScreenParameterObserver?
     private var recordingIntentTask: Task<Void, Never>?
     private var organizationIntentTask: Task<Void, Never>?
+    private var intentTasks: [UUID: Task<Void, Never>] = [:]
     private var microphoneRequestLatch = MicrophoneRequestLatch()
 
     private lazy var hotkey = HotkeyService(
@@ -295,6 +296,10 @@ final class AppController: ObservableObject {
         enqueueRecording(action)
     }
 
+    func enqueueOrganizationBarrierForDevelopment(_ action: @escaping @MainActor () async -> Void) {
+        enqueueOrganizationIntent(action)
+    }
+
     func dispatchOrganizationForDevelopment(_ intent: OrganizationIntent) {
         dispatch(intent)
     }
@@ -337,10 +342,12 @@ final class AppController: ObservableObject {
     }
 
     func stop() {
-        recordingIntentTask?.cancel()
+        for task in intentTasks.values {
+            task.cancel()
+        }
         recordingIntentTask = nil
-        organizationIntentTask?.cancel()
         organizationIntentTask = nil
+        intentTasks.removeAll()
         coordinator.shutdown()
         hotkey.stop()
         escapeMonitor.stop()
@@ -520,20 +527,28 @@ final class AppController: ObservableObject {
 
     private func enqueueRecording(_ action: @escaping @MainActor () async -> Void) {
         let previous = recordingIntentTask
-        recordingIntentTask = Task { @MainActor in
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            defer { self?.intentTasks[id] = nil }
             await previous?.value
             guard !Task.isCancelled else { return }
             await action()
         }
+        recordingIntentTask = task
+        intentTasks[id] = task
     }
 
     private func enqueueOrganizationIntent(_ action: @escaping @MainActor () async -> Void) {
         let previous = organizationIntentTask
-        organizationIntentTask = Task { @MainActor in
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            defer { self?.intentTasks[id] = nil }
             await previous?.value
             guard !Task.isCancelled else { return }
             await action()
         }
+        organizationIntentTask = task
+        intentTasks[id] = task
     }
 }
 

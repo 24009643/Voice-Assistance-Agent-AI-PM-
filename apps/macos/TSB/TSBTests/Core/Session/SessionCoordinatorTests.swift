@@ -399,6 +399,65 @@ final class SessionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testControllerStopCancelsRunningAndQueuedOrganizationLaneTasks() async throws {
+        let (harness, sessionID, selectedID) = try await makeBlockedSelectedHistoryHarness()
+        let controller = AppController(state: AppState(), coordinator: harness.coordinator)
+        let barrier = IntentBarrier()
+        let recordingStartsBeforeStop = harness.startedSessionIDs.count
+        let copiesBeforeStop = harness.copyCount
+        var queuedActionRan = false
+
+        controller.enqueueOrganizationBarrierForDevelopment { await barrier.wait() }
+        await barrier.waitUntilEntered()
+        controller.enqueueOrganizationBarrierForDevelopment {
+            queuedActionRan = true
+            await harness.coordinator.handle(
+                .enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID])
+            )
+        }
+
+        controller.stop()
+        await barrier.release()
+
+        let cancellationObserved = await barrier.waitUntilFinished()
+        XCTAssertTrue(cancellationObserved)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertFalse(queuedActionRan)
+        XCTAssertEqual(harness.startedSessionIDs.count, recordingStartsBeforeStop)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+        XCTAssertEqual(harness.copyCount, copiesBeforeStop)
+        XCTAssertNil(harness.coordinator.snapshot.sessionID)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+    }
+
+    func testControllerStopCancelsRunningAndQueuedRecordingLaneTasks() async {
+        let harness = CoordinatorHarness(transcript: "late")
+        let controller = AppController(
+            state: AppState(),
+            coordinator: harness.coordinator,
+            microphoneAuthorizationStatus: { .authorized }
+        )
+        let barrier = IntentBarrier()
+
+        controller.enqueueBarrierForDevelopment { await barrier.wait() }
+        await barrier.waitUntilEntered()
+        controller.startRecordingFromUI()
+
+        controller.stop()
+        await barrier.release()
+
+        let cancellationObserved = await barrier.waitUntilFinished()
+        XCTAssertTrue(cancellationObserved)
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertTrue(harness.startedSessionIDs.isEmpty)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertNil(harness.coordinator.snapshot.sessionID)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+    }
+
     func testSelectedHistorySuccessAfterShutdownCannotWriteOrEnqueue() async throws {
         let selectedID = SessionID(rawValue: UUID())
         let harness = CoordinatorHarness(
@@ -1851,12 +1910,17 @@ private actor IntentBarrier {
     private var entered = false
     private var enteredWaiter: CheckedContinuation<Void, Never>?
     private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var observedCancellation: Bool?
+    private var completionWaiter: CheckedContinuation<Bool, Never>?
 
     func wait() async {
         entered = true
         enteredWaiter?.resume()
         enteredWaiter = nil
         await withCheckedContinuation { releaseWaiter = $0 }
+        observedCancellation = Task.isCancelled
+        completionWaiter?.resume(returning: Task.isCancelled)
+        completionWaiter = nil
     }
 
     func waitUntilEntered() async {
@@ -1867,6 +1931,11 @@ private actor IntentBarrier {
     func release() {
         releaseWaiter?.resume()
         releaseWaiter = nil
+    }
+
+    func waitUntilFinished() async -> Bool {
+        if let observedCancellation { return observedCancellation }
+        return await withCheckedContinuation { completionWaiter = $0 }
     }
 }
 
