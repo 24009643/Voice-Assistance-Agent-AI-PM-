@@ -111,26 +111,37 @@ final class SettingsModel: ObservableObject {
     }
 
     func revokePolishAccess() {
+        var didNotifyRevocation = false
         do {
             try store.revokePolishConsent()
+            notifyPolishRevocationIfPersisted(&didNotifyRevocation)
             try reloadPersistedState()
             status = .polishRevoked
             errorMessage = nil
-            onPolishAccessRevoked()
         } catch {
+            notifyPolishRevocationIfPersisted(&didNotifyRevocation)
             reloadAfterFailedDestructiveAction("撤销润色授权失败；未确认密钥已删除。")
         }
     }
 
     func deleteProfile() {
+        var didNotifyRevocation = false
         do {
             try store.delete()
+            notifyPolishRevocationIfPersisted(&didNotifyRevocation)
             try reloadPersistedState()
             status = .deleted
             errorMessage = nil
         } catch {
+            notifyPolishRevocationIfPersisted(&didNotifyRevocation)
             reloadAfterFailedDestructiveAction("删除失败；未确认密钥已删除。")
         }
+    }
+
+    private func notifyPolishRevocationIfPersisted(_ didNotify: inout Bool) {
+        guard !didNotify, !store.load().isPolishDispatchEligible else { return }
+        didNotify = true
+        onPolishAccessRevoked()
     }
 
     private func validatedEndpoint() throws -> OrganizationEndpointSettings {

@@ -107,6 +107,43 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertFalse(fixture.store.load().isPolishDispatchEligible)
     }
 
+    func testPolishRevokeKeyDeletionFailureStillCancelsPendingDeliveryOnce() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let endpoint = try OrganizationEndpointSettings(
+            baseURL: URL(string: "https://example.test/v1/chat/completions")!,
+            model: "polish-model"
+        )
+        let originalSecret = UUID().uuidString
+        try fixture.store.save(OrganizationSettings(
+            endpoint: endpoint,
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        ), apiKey: originalSecret)
+        let failingStore = OrganizationSettingsStore(
+            defaults: fixture.defaults,
+            secretStore: KeychainSecretStore(
+                service: fixture.service,
+                account: fixture.account,
+                keychain: fixture.keychain.reference,
+                deleteItem: { _ in errSecAuthFailed }
+            )
+        )
+        var cancellations = 0
+        let model = SettingsModel(
+            store: failingStore,
+            onPolishAccessRevoked: { cancellations += 1 }
+        )
+
+        model.revokePolishAccess()
+
+        XCTAssertNil(model.status)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertEqual(cancellations, 1)
+        XCTAssertFalse(fixture.store.load().isPolishDispatchEligible)
+        XCTAssertEqual(try fixture.secretStore.load(for: endpoint), originalSecret)
+    }
+
     func testRemoteSaveRequiresConfirmedConsentAndLaterDispatchUsesPersistedConsent() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
@@ -376,7 +413,9 @@ final class SettingsBehaviorTests: XCTestCase {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
         let originalSecret = UUID().uuidString
-        let settings = try remoteSettings(historyConsent: true)
+        var settings = try remoteSettings(historyConsent: true)
+        settings.polishEnabled = true
+        settings.polishConsentVersion = OrganizationSettings.currentPolishConsentVersion
         try fixture.store.save(settings, apiKey: originalSecret)
         let failingSecretStore = KeychainSecretStore(
             service: fixture.service,
@@ -384,10 +423,14 @@ final class SettingsBehaviorTests: XCTestCase {
             keychain: fixture.keychain.reference,
             deleteItem: { _ in errSecAuthFailed }
         )
-        let model = SettingsModel(store: OrganizationSettingsStore(
-            defaults: fixture.defaults,
-            secretStore: failingSecretStore
-        ))
+        var cancellations = 0
+        let model = SettingsModel(
+            store: OrganizationSettingsStore(
+                defaults: fixture.defaults,
+                secretStore: failingSecretStore
+            ),
+            onPolishAccessRevoked: { cancellations += 1 }
+        )
 
         model.deleteProfile()
 
@@ -396,6 +439,8 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertEqual(blockedSettings.endpoint, settings.endpoint)
         XCTAssertFalse(blockedSettings.isRemoteDispatchEligible)
         XCTAssertFalse(blockedSettings.canSendUserSelectedHistorySummaries)
+        XCTAssertFalse(blockedSettings.isPolishDispatchEligible)
+        XCTAssertEqual(cancellations, 1)
         XCTAssertTrue(model.hasPersistedAPIKey)
         XCTAssertEqual(try fixture.secretStore.load(for: settings.endpoint!), originalSecret)
         XCTAssertThrowsError(try AppController.makeOrganizationDispatchSnapshot(
@@ -444,11 +489,15 @@ final class SettingsBehaviorTests: XCTestCase {
     func testDeleteRemovesProfileAndKeyBeforeClaimingSuccess() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }
-        try fixture.store.save(
-            try remoteSettings(historyConsent: true),
-            apiKey: UUID().uuidString
+        var settings = try remoteSettings(historyConsent: true)
+        settings.polishEnabled = true
+        settings.polishConsentVersion = OrganizationSettings.currentPolishConsentVersion
+        try fixture.store.save(settings, apiKey: UUID().uuidString)
+        var cancellations = 0
+        let model = SettingsModel(
+            store: fixture.store,
+            onPolishAccessRevoked: { cancellations += 1 }
         )
-        let model = SettingsModel(store: fixture.store)
 
         model.deleteProfile()
 
@@ -457,6 +506,7 @@ final class SettingsBehaviorTests: XCTestCase {
         XCTAssertFalse(model.draft.cloudConsent)
         XCTAssertFalse(model.draft.allowSelectedHistorySummaries)
         XCTAssertFalse(model.hasPersistedAPIKey)
+        XCTAssertEqual(cancellations, 1)
         XCTAssertNil(try fixture.secretStore.load(for: remoteSettings().endpoint!))
     }
 

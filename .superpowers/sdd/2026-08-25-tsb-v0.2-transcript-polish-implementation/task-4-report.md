@@ -68,3 +68,23 @@
 - Result: 150 tests passed, zero failures: 112 coordinator, 17 storage, and 21 settings/AppDelegate behavior tests.
 - `git diff --check` is clean. Focused scan found no task group, drain pattern, or new logging. No consent persistence semantics, dependency package, network client, or UI styling changed.
 - Default signing remains blocked by the pre-existing malformed static `onnxruntime.framework`; the focused source/test build passes with signing disabled.
+
+## Fix round 2
+
+### RED
+
+- Added a polish-only remote-consent case whose settings are persisted disabled before injected Keychain deletion fails.
+- Command: `xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -derivedDataPath /tmp/tsb-polish-task4-fix2-red CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/SettingsBehaviorTests/testPolishRevokeKeyDeletionFailureStillCancelsPendingDeliveryOnce test`.
+- Expected failure: callback count was `0` instead of `1`, proving pending delivery ownership survived fail-closed persisted revocation.
+
+### Fix and coverage
+
+- `revokePolishAccess()` and `deleteProfile()` now keep a per-action notification latch and invoke the cancellation callback whenever `store.load().isPolishDispatchEligible` is false after the store attempt.
+- On a successful store write, notification occurs before reload, so a later reload failure cannot retain request ownership. If the store throws after fail-closed persistence, the catch path rechecks persisted eligibility and notifies before preserving the existing error/reload behavior. If eligibility remains enabled, it does not notify.
+- Tests cover successful polish revoke, polish-only Keychain deletion failure after persisted disable, successful profile deletion, and profile-deletion failure after fail-closed persistence. Each asserts exactly one callback and disabled polish eligibility while retaining the prior status/error expectations.
+
+### GREEN and self-review
+
+- Command: `xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -derivedDataPath /tmp/tsb-polish-task4-fix2-final CODE_SIGNING_ALLOWED=NO -only-testing:TSBTests/SettingsBehaviorTests -only-testing:TSBTests/SessionCoordinatorTests test`.
+- Result: 134 tests passed, zero failures: 22 settings/AppDelegate behavior tests and 112 coordinator tests, including the cancellation-insensitive late-completion race.
+- `git diff --check` is clean. No store semantics, Keychain behavior, coordinator logic, network code, dependencies, or UI styling changed in this round.
