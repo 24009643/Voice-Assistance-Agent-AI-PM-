@@ -1,12 +1,13 @@
 # EXE-WP-V02: Island and organization acceptance
 
 - Plan: `docs/superpowers/plans/2026-08-20-tsb-v0.2-implementation-plan.md`
+- Lifecycle correction: `docs/superpowers/plans/2026-08-25-tsb-v0.2-lifecycle-correction.md`
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: exact post-review gate passed at `290/290`; release **BLOCKED / manual incomplete**
+- Status: exact lifecycle-correction post-review gate passed at `318/318`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; implementation commit: `109e93594299d8808d441ab2bf467263dd378cc5`; review-record and exact post-review gate commit: `a69f54b392163fd0df4e3f356096205813345523`.
+- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; recording-runtime implementation/review commits: `109e93594299d8808d441ab2bf467263dd378cc5` / `a69f54b392163fd0df4e3f356096205813345523`; lifecycle-correction implementation/review-gate commits: `12139cb0609da2f87ad6e89050bbddb4e9b8064e` / `2cde5265ebde9bb856a0d7b52d2a704c9676c56f`.
 - Date: 2026-08-25
 
 ## 2026-08-25 adversarial remediation continuation (historical `d78f65f` evidence)
@@ -32,6 +33,15 @@
 - Exact post-review gate HEAD `a69f54b392163fd0df4e3f356096205813345523` wrote `/tmp/tsb-v02-recording-runtime-postreview.xcresult`: 290 passed, 0 failed, 0 skipped. SenseVoice passed 7/7 and Paraformer passed 11/11; `git diff --check` passed.
 - Current changed-file and added-line count-only scans were zero for provider-token, Bearer, AWS key, GitHub token, PEM private key, private absolute path, and `.env` patterns.
 - This fresh post-review gate supersedes the earlier review-sequencing dispute without changing production or test code. It does not pass target-Mac live preview, microphone recording/persistence, current resident-controls VoiceOver, M09, M10, merge, or release.
+
+## 2026-08-25 lifecycle-correction post-review exact-HEAD automated gate
+
+- The reviewed implementation ends at `12139cb0609da2f87ad6e89050bbddb4e9b8064e`. It separates active-capture deletion from Stop preservation, shutdown, callback handoff and Debug cleanup; owns every running/queued controller intent task; and keeps metadata-only privacy receipts through failure, cancellation and reopen.
+- The tracked independent whole-range review was committed as `2cde5265ebde9bb856a0d7b52d2a704c9676c56f` before this gate. The final reviewer reported Critical 0, Important 0 and Minor 0 and separately concluded code ready to merge `yes`, release complete `no`.
+- Exact gate HEAD `2cde5265ebde9bb856a0d7b52d2a704c9676c56f` wrote `/tmp/tsb-v02-lifecycle-correction.xcresult`: 318 passed, 0 failed, 0 skipped. A separate unsigned Debug build succeeded at `/tmp/tsb-v02-lifecycle-correction-build`.
+- Local probes passed: SenseVoice 7/7 and Paraformer 11/11. `git diff --check` passed and the tracked worktree remained clean.
+- Count-only scans covered 12 changed files plus added lines. Provider-token, Bearer, AWS key, GitHub token, PEM private key, private absolute path and `.env` counts were zero in both scopes.
+- The automation accessed no real microphone, Provider, user Keychain, System Settings or user session data. It does not pass target-Mac preview, real-microphone persistence, current resident-controls VoiceOver, M09, M10, reachable-history owner disposition, merge, push or release.
 
 ## Original Task 8 files changed
 
@@ -213,8 +223,8 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` The `d78f65f` record is historical evidence that broader M01 through M08 passed for that earlier surface; historical broader M07 remains `partial-manual`. At exact post-review `a69f54b`, VoiceOver of the current resident controls is `pending-manual`; target-Mac live preview and real microphone recording/persistence are still pending. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run, pending target-Mac validation of the installed Paraformer bundle plus fresh authorization and exclusive artifacts; it is not blocked on a claim that Paraformer is absent. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact post-review `a69f54b` automated `290/290` evidence does not promote Golden Set, stability, reachable-history, merge or release authorization.
+`BLOCKED — manual acceptance is incomplete.` The `d78f65f` record is historical evidence that broader M01 through M08 passed for that earlier surface; historical broader M07 remains `partial-manual`. At exact post-review `2cde526`, VoiceOver of the current resident controls is `pending-manual`; target-Mac live preview and real microphone recording/persistence are still pending. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run, pending target-Mac validation of the installed Paraformer bundle plus fresh authorization and exclusive artifacts; it is not blocked on a claim that Paraformer is absent. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact post-review `2cde526` automated `318/318`, standalone Debug build and clean lifecycle review do not promote Golden Set, stability, reachable-history, merge or release authorization.
 
 ## Rollback
 
-Revert `d78f65f` to roll back the remediation source and tests. No user-data migration was introduced; documentation is committed separately.
+The lifecycle correction is the commit range `5b6e7de..12139cb`; revert that range in reverse order to remove this correction without a user-data migration. The older `d78f65f` remediation has its own historical rollback boundary.
