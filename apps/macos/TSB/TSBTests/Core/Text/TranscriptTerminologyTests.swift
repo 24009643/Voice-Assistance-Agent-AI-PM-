@@ -61,4 +61,13 @@ final class TranscriptTerminologyTests: XCTestCase {
         XCTAssertEqual(result.text, "monkey chainmail and XT Bx")
         XCTAssertTrue(result.edits.isEmpty)
     }
+
+    func testCorrectorTreatsUnicodeLatinLettersAsBoundariesButKeepsChineseAdjacentAlias() {
+        let entries = [TranscriptTerminologyEntry(canonical: "TSB", aliases: ["TB"])]
+
+        let result = TranscriptTerminologyCorrector().correct("éTBé 与 中TB文", entries: entries)
+
+        XCTAssertEqual(result.text, "éTBé 与 中TSB文")
+        XCTAssertEqual(result.edits.map(\.original), ["TB"])
+    }
 }

@@ -113,6 +113,20 @@ final class TranscriptPolishClientTests: XCTestCase {
         await XCTAssertThrowsErrorAsync { try await self.client().polish(request, apiKey: "key") }
     }
 
+    func testUnicodeLatinAliasInsideLargerTokenIsNotRelevantForSubmission() async {
+        let request = TranscriptPolishRequest(
+            requestID: UUID(),
+            candidates: [.init(id: .offline, text: "Use éTBé for this sufficiently long dictation")],
+            terminology: [.init(canonical: "TSB", aliases: ["TB"])]
+        )
+        PolishURLProtocol.handler = { _ in
+            XCTFail("Unicode-Latin embedded alias must not reach transport")
+            throw URLError(.badServerResponse)
+        }
+
+        await XCTAssertThrowsErrorAsync { try await self.client().polish(request, apiKey: "key") }
+    }
+
     func testRejectsRedirectBeforeTargetReceivesTranscript() async throws {
         let origin = URL(string: "https://origin.test/chat")!, target = URL(string: "https://attacker.test/collect")!
         let urls = URLList()

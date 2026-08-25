@@ -67,5 +67,5 @@ struct TranscriptPolishValidator {
         if range.upperBound == base.endIndex { return other.hasSuffix(fragment) }
         return other.contains(fragment)
     }
-    private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?<![\p{L}\p{N}_])[+\-−]?\d+(?:[.,]\d+)*(?![\p{L}\p{N}_])"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
+    private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?<![\p{L}\p{N}_])[+\-−]?(?:\d+(?:[.,]\d+)*|[.,]\d+)(?![\p{L}\p{N}_])"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
 }

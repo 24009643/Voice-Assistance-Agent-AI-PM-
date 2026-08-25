@@ -44,7 +44,7 @@ The request constructor sends only `schema_version`, `request_id`, candidate `ca
 | Figma/SwiftUI visual and accessibility acceptance | Not performed in Task 6 | pending-manual |
 | Mixed-language Golden Set and M10 | Not performed in Task 6; existing matrix blockers remain | blocked |
 
-Task 6 does not make a release, merge, push, or manual-acceptance claim. The incomplete full suite and the normal signed-build artifact remain release blockers.
+At the original Task 6 boundary, the full suite was incomplete and the normal signed-build artifact remained blocked. Later final re-review evidence below supersedes only the unsigned full-suite result; it does not make a release, merge, push, signed-build, or manual-acceptance claim.
 
 ## Transcript-polish final-fix evidence (post-`1358a47`)
 
@@ -56,6 +56,18 @@ Task 6 does not make a release, merge, push, or manual-acceptance claim. The inc
 | V02-P08 | Final-fix hygiene and bounded privacy scan | `git diff --check` clean; no final `project.yml`/generated-project resource-experiment diff. Added production lines from `1358a47`: 0 provider-token signatures, Bearer values, PEM private keys, private `/Users/` paths, `.env` references, logging calls, or clipboard calls | Static scan clean within the stated patterns | passed-automated |
 
 These final-fix results do not change the manual boundary. Normal signed test/build remains unproven and blocked on the copied `onnxruntime.framework` artifact; real Provider, microphone, target-Mac timing, clipboard/disk, Figma/SwiftUI, Golden Set, M10, merge, and release gates remain pending or blocked.
+
+## Transcript-polish final re-review evidence (post-`43eeee0`)
+
+| ID | Requirement | Evidence | Current result | Status |
+|---|---|---|---|---|
+| V02-P09 | Leading-decimal and Unicode-Latin boundaries | RED→GREEN validator, terminology, client, and coordinator regressions cover `.5`/signed leading decimals and `éTBé`; Chinese-adjacent `中TB文` remains eligible | Focused regressions passed | passed-automated |
+| V02-P10 | Settings static architecture | `apps/macos/TSB/scripts/settings-static-gate.sh` passed; Xcode enumeration found 0 `SettingsSourceTests` and 23 retained `SettingsBehaviorTests`; retained suite passed 23/23 | Source reads removed from app-hosted XCTest without losing behavior coverage | passed-automated |
+| V02-P11 | Final re-review affected aggregate | `/tmp/tsb-final-rereview-focused.xcresult` | **223/223 passed, 0 failed, 0 skipped** | passed-automated |
+| V02-P12 | Final re-review full unsigned suite | Fresh `CODE_SIGNING_ALLOWED=NO` run under a 300-second bound; `/tmp/tsb-final-rereview-full.xcresult` | **380/380 passed, 0 failed, 0 skipped** | passed-automated (unsigned only) |
+| V02-P13 | Final re-review Debug build and hygiene | Fresh unsigned build at `/tmp/tsb-final-rereview-build`; clean diff check; no resource/build-phase change; bounded additions scan found 0 credential signatures, private paths, logging, or clipboard calls | Unsigned Debug build and stated static checks passed | passed-automated (unsigned only) |
+
+V02-P12 supersedes the earlier blocked unsigned full-suite observations in V02-P02 and V02-P07. Normal signed test/build remains blocked on the copied `onnxruntime.framework` artifact and was not touched. Manual Provider, microphone, target-Mac timing, clipboard/disk, Figma/SwiftUI, Golden Set, M10, merge, and release gates remain pending or blocked.
 
 ## Exact-HEAD lifecycle-correction gate boundary
 

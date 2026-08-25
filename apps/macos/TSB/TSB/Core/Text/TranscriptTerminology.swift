@@ -58,6 +58,8 @@ enum TranscriptTerminologyParser {
 }
 
 enum TranscriptTerminologyBoundary {
+    private static let latinLetterExpression = try! NSRegularExpression(pattern: #"^\p{Latin}$"#)
+
     static func contains(_ value: String, in text: String) -> Bool {
         guard !value.isEmpty,
               let expression = try? NSRegularExpression(pattern: NSRegularExpression.escapedPattern(for: value)) else {
@@ -78,7 +80,9 @@ enum TranscriptTerminologyBoundary {
     }
 
     private static func isLatinAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
-        (48...57).contains(scalar.value) || (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
+        if (48...57).contains(scalar.value) { return true }
+        let value = String(scalar)
+        return latinLetterExpression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
     }
 }
 

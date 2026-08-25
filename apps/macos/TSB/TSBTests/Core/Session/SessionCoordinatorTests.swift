@@ -638,6 +638,20 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.polishInputs.single?.request.terminology, [])
     }
 
+    func testUnicodeLatinTokenDoesNotSubmitEmbeddedTerminologyAlias() async {
+        var settings = polishSettings()
+        settings.transcriptTerminology = [.init(canonical: "TSB", aliases: ["TB"])]
+        let harness = CoordinatorHarness(
+            transcript: "Use éTBé for this sufficiently long dictation",
+            organizationSettings: settings,
+            suspendsPolish: true
+        )
+
+        await harness.runUntilPolishStarts()
+
+        XCTAssertEqual(harness.polishInputs.single?.request.terminology, [])
+    }
+
     func testOrganizationReceivesExactDeliveredTextAndNeverRecopies() async throws {
         let harness = CoordinatorHarness(
             transcript: "organization local",

@@ -75,6 +75,28 @@ final class TranscriptPolishValidatorTests: XCTestCase {
         }
     }
 
+    func testRejectsLeadingDecimalSeparatorAndSignChangesInLongText() throws {
+        for (originalNumber, correctedNumber, changed) in [
+            (".5", ",5", "."),
+            ("+.5", "-.5", "+"),
+            ("-.5", "-,5", "."),
+            ("−.5", "−,5", "."),
+        ] {
+            let suffix = " 是本次记录中的固定数值并且其余说明内容完全保持不变"
+            let original = originalNumber + suffix
+            let corrected = correctedNumber + suffix
+            let range = (original as NSString).range(of: changed)
+            let replacement = (corrected as NSString).substring(with: range)
+
+            XCTAssertThrowsError(try TranscriptPolishValidator().validate(
+                response(for: makeRequest(offline: original), base: .offline, corrected: corrected, edits: [
+                    edit(.formatting, range.location, range.length, changed, replacement, "bad leading decimal formatting")
+                ]),
+                for: makeRequest(offline: original)
+            ), "must preserve \(originalNumber)")
+        }
+    }
+
     func testRejectsZeroLengthInsertionBeyondChangeLimitAndUnanchoredCandidateEvidence() throws {
         let request = makeRequest(offline: String(repeating: "a", count: 20), streaming: "xxxxEARTHyyyy")
         XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: String(repeating: "a", count: 20) + "abcdef", edits: [edit(.formatting, 20, 0, "", "abcdef", "insert")]), for: request))
@@ -112,6 +134,18 @@ final class TranscriptPolishValidatorTests: XCTestCase {
         ), for: request)
 
         guard case .reviewRequired = outcome else { return XCTFail("embedded alias must not auto-accept") }
+    }
+
+    func testTerminologyAliasInsideUnicodeLatinTokenIsNotAutoAccepted() throws {
+        let request = makeRequest(offline: "Use éTBé for this sufficiently long dictation")
+        let outcome = try TranscriptPolishValidator().validate(response(
+            for: request,
+            base: .offline,
+            corrected: "Use éTSBé for this sufficiently long dictation",
+            edits: [edit(.terminology, 5, 2, "TB", "TSB", "Unicode-Latin embedded alias")]
+        ), for: request)
+
+        guard case .reviewRequired = outcome else { return XCTFail("Unicode-Latin embedded alias must not auto-accept") }
     }
 
     func testRejectsInnerResponseOver48KiB() throws {
