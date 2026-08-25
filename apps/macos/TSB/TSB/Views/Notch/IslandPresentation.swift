@@ -31,6 +31,7 @@ enum IslandChamber: String, CaseIterable, Hashable, Sendable {
 
 enum IslandAction: Hashable, Sendable {
     case stopRecording
+    case cancelRecording
     case setLocalOnly(Bool)
     case cancelOrganization(UUID)
     case retryOrganization(UUID)
@@ -44,6 +45,7 @@ enum IslandAction: Hashable, Sendable {
 
 enum IslandIntent: Equatable, Sendable {
     case stopRecording(sessionID: SessionID)
+    case cancelRecording(sessionID: SessionID)
     case setLocalOnly(sessionID: SessionID, enabled: Bool)
     case cancelOrganization(sessionID: SessionID, requestID: UUID)
     case retryOrganization(sessionID: SessionID, requestID: UUID)
@@ -84,6 +86,8 @@ struct IslandPresentation: Equatable, Sendable {
     let systemImage: String?
     let accessibilityLabel: String
     let draft: String
+    let elapsedText: String
+    let recordingHelpText: String
     let audioLevel: Float
     let originalText: String
     let numberedPoints: [NumberedPoint]
@@ -138,6 +142,8 @@ struct IslandPresentation: Equatable, Sendable {
             && snapshot.livePreviewAvailability == .unavailable
             ? "停止后仍会生成全文"
             : snapshot.previewText
+        let elapsedText = formattedElapsedTime(snapshot.elapsedMilliseconds)
+        let recordingHelpText = mode == .recording ? "⌥Space 停止 · Esc 取消 · 最长 10 分钟" : ""
         return Self(
             mode: mode,
             size: CGSize(
@@ -150,6 +156,8 @@ struct IslandPresentation: Equatable, Sendable {
             systemImage: status.systemImage,
             accessibilityLabel: status.accessibilityLabel,
             draft: draft,
+            elapsedText: elapsedText,
+            recordingHelpText: recordingHelpText,
             audioLevel: snapshot.audioLevel,
             originalText: snapshot.originalText,
             numberedPoints: output?.numberedPoints ?? [],
@@ -172,6 +180,9 @@ struct IslandPresentation: Equatable, Sendable {
         case .stopRecording:
             guard let targetSessionID else { return nil }
             return .stopRecording(sessionID: targetSessionID)
+        case .cancelRecording:
+            guard let targetSessionID else { return nil }
+            return .cancelRecording(sessionID: targetSessionID)
         case let .setLocalOnly(enabled):
             guard let targetSessionID else { return nil }
             return .setLocalOnly(sessionID: targetSessionID, enabled: enabled)
@@ -275,6 +286,11 @@ struct IslandPresentation: Equatable, Sendable {
         }
     }
 
+    private static func formattedElapsedTime(_ milliseconds: Int) -> String {
+        let seconds = min(600, max(0, milliseconds / 1_000))
+        return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
     private static func controls(
         for snapshot: AppSnapshot,
         mode: IslandMode,
@@ -290,6 +306,7 @@ struct IslandPresentation: Equatable, Sendable {
             let localOnlyEnabled = snapshot.organizationPhase == .localOnly
             return [
                 control(.stopRecording, "停止", "停止录音"),
+                control(.cancelRecording, "取消", "取消录音并丢弃本次内容"),
                 control(
                     .setLocalOnly(!localOnlyEnabled),
                     localOnlyEnabled ? "恢复整理" : "仅本地",

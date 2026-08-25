@@ -38,6 +38,24 @@ final class IslandPresentationTests: XCTestCase {
         )
     }
 
+    func testRecordingShowsElapsedShortcutHelpAndExactCancelIntent() {
+        let sessionID = SessionID(rawValue: UUID())
+        let presentation = IslandPresentation.make(for: snapshot(
+            sessionID: sessionID,
+            status: .recording,
+            elapsedMilliseconds: 12_345
+        ))
+
+        XCTAssertEqual(presentation.elapsedText, "00:12")
+        XCTAssertEqual(presentation.recordingHelpText, "⌥Space 停止 · Esc 取消 · 最长 10 分钟")
+        XCTAssertTrue(presentation.controls.map(\.action).contains(.stopRecording))
+        XCTAssertTrue(presentation.controls.map(\.action).contains(.cancelRecording))
+        XCTAssertEqual(
+            presentation.intent(for: .cancelRecording),
+            .cancelRecording(sessionID: sessionID)
+        )
+    }
+
     func testUnavailableLivePreviewIsVisibleWithoutPretendingItIsTranscriptText() {
         let value = snapshot(
             status: .recording,
@@ -388,6 +406,7 @@ final class IslandPresentationTests: XCTestCase {
     private func snapshot(
         sessionID: SessionID? = nil,
         status: SessionStatus,
+        elapsedMilliseconds: Int = 0,
         previewText: String = "",
         originalText: String = "",
         message: String? = nil,
@@ -400,7 +419,7 @@ final class IslandPresentationTests: XCTestCase {
         AppSnapshot(
             sessionID: sessionID,
             status: status,
-            elapsedMilliseconds: 0,
+            elapsedMilliseconds: elapsedMilliseconds,
             previewText: previewText,
             originalText: originalText,
             message: message,

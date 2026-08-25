@@ -569,6 +569,35 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copyCount, 0)
     }
 
+    func testSessionBoundCancelCannotCancelANewerRecording() async throws {
+        let harness = CoordinatorHarness(transcript: "reviewed")
+
+        await harness.coordinator.handle(.toggleRecording)
+        let staleSessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.cancelRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        let currentSessionID = try XCTUnwrap(harness.startedSessionIDs.last)
+
+        await harness.coordinator.cancelRecording(sessionID: staleSessionID)
+
+        XCTAssertNotEqual(staleSessionID, currentSessionID)
+        XCTAssertEqual(harness.coordinator.snapshot.sessionID, currentSessionID)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.cancelledSessionIDs, [staleSessionID])
+    }
+
+    func testRecordingElapsedTimeUsesInjectedClockOnAudioLevelPublish() async {
+        let clock = TestClock(now: Date(timeIntervalSince1970: 100))
+        let harness = CoordinatorHarness(transcript: "clock", now: { clock.now })
+
+        await harness.coordinator.handle(.toggleRecording)
+        clock.now = Date(timeIntervalSince1970: 112.345)
+        harness.publishAudioLevel(0.5)
+        await Task.yield()
+
+        XCTAssertEqual(harness.coordinator.snapshot.elapsedMilliseconds, 12_345)
+    }
+
     func testUnavailablePreviewStillDeliversSenseVoiceFinal() async throws {
         let harness = CoordinatorHarness(transcript: "SenseVoice only", streamingText: "")
 
@@ -1435,6 +1464,15 @@ final class SessionCoordinatorTests: XCTestCase {
 }
 
 @MainActor
+private final class TestClock {
+    var now: Date
+
+    init(now: Date) {
+        self.now = now
+    }
+}
+
+@MainActor
 private final class CoordinatorHarness {
     enum Event: Equatable {
         case recordingStarted
@@ -1474,6 +1512,7 @@ private final class CoordinatorHarness {
     private let suspendsHistorySuggestions: Bool
     private let livePreviewPipeline: LivePreviewPipeline?
     private let livePreviewAvailability: LivePreviewAvailability
+    private let now: @MainActor () -> Date
     private var historySuggestionsError: Error?
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
@@ -1529,7 +1568,8 @@ private final class CoordinatorHarness {
         historySuggestionsError: Error? = nil,
         suspendsHistorySuggestions: Bool = false,
         livePreviewPipeline: LivePreviewPipeline? = nil,
-        livePreviewAvailability: LivePreviewAvailability = .available
+        livePreviewAvailability: LivePreviewAvailability = .available,
+        now: @escaping @MainActor () -> Date = Date.init
     ) {
         self.transcript = transcript
         self.cleanedText = cleanedText
@@ -1552,6 +1592,7 @@ private final class CoordinatorHarness {
         self.suspendsHistorySuggestions = suspendsHistorySuggestions
         self.livePreviewPipeline = livePreviewPipeline
         self.livePreviewAvailability = livePreviewAvailability
+        self.now = now
     }
 
     private func makeCoordinator() -> SessionCoordinator {
@@ -1694,6 +1735,7 @@ private final class CoordinatorHarness {
                 }
             ),
             livePreviewAvailability: livePreviewAvailability,
+            now: now,
             onSnapshot: { [weak self] snapshot in
                 self?.timeline.append("snapshot:\(snapshot.status.rawValue)")
             }

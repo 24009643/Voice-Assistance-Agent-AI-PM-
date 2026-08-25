@@ -79,6 +79,7 @@ final class SessionCoordinator {
 
     private let dependencies: Dependencies
     private let livePreviewAvailability: LivePreviewAvailability
+    private let now: @MainActor () -> Date
     private let onSnapshot: (AppSnapshot) -> Void
     private var sessions: [SessionID: Session] = [:]
     private var mainSessionID: SessionID?
@@ -97,10 +98,12 @@ final class SessionCoordinator {
     init(
         dependencies: Dependencies,
         livePreviewAvailability: LivePreviewAvailability = .available,
+        now: @escaping @MainActor () -> Date = Date.init,
         onSnapshot: @escaping (AppSnapshot) -> Void
     ) {
         self.dependencies = dependencies
         self.livePreviewAvailability = livePreviewAvailability
+        self.now = now
         self.onSnapshot = onSnapshot
     }
 
@@ -160,6 +163,12 @@ final class SessionCoordinator {
         session.stopRequested = true
         sessions[sessionID] = session
         dependencies.stopRecording()
+    }
+
+    func cancelRecording(sessionID: SessionID) async {
+        guard recordingSessionID == sessionID else { return }
+        let previewCancellation = beginSessionCancellation(sessionID)
+        await previewCancellation?.value
     }
 
 #if DEBUG
@@ -223,7 +232,7 @@ final class SessionCoordinator {
         let session = Session(
             id: SessionID(rawValue: UUID()),
             ordinal: SessionOrdinal(rawValue: nextOrdinal),
-            createdAt: Date()
+            createdAt: now()
         )
         nextOrdinal += 1
         sessions[session.id] = session
@@ -1046,10 +1055,13 @@ final class SessionCoordinator {
                     suggestedRecords: $0.suggestedRecords
                 )
             }
+        let elapsedMilliseconds = main.status == .recording
+            ? max(0, Int(now().timeIntervalSince(main.createdAt) * 1_000))
+            : main.durationMilliseconds
         snapshot = AppSnapshot(
             sessionID: main.id,
             status: main.status,
-            elapsedMilliseconds: main.durationMilliseconds,
+            elapsedMilliseconds: elapsedMilliseconds,
             previewText: main.previewText,
             originalText: main.transcript?.originalText ?? "",
             message: main.message,

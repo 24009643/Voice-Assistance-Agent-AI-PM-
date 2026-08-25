@@ -71,7 +71,7 @@ final class AppController: ObservableObject {
             .retry(sessionID: sessionID, requestID: requestID)
         case let .generateLinks(sessionID, selectedRecordIDs):
             .enrichLinks(sessionID: sessionID, selectedRecordIDs: selectedRecordIDs)
-        case .stopRecording, .copy, .openSettings:
+        case .stopRecording, .cancelRecording, .copy, .openSettings:
             nil
         }
     }
@@ -347,6 +347,10 @@ final class AppController: ObservableObject {
         case let .stopRecording(sessionID):
             enqueue { [weak self] in
                 self?.coordinator.stopRecording(sessionID: sessionID)
+            }
+        case let .cancelRecording(sessionID):
+            enqueue { [weak self] in
+                await self?.coordinator.cancelRecording(sessionID: sessionID)
             }
         case let .copy(text):
             enqueue { [weak self] in

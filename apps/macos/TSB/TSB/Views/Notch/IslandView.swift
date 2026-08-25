@@ -66,23 +66,31 @@ struct IslandView: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(presentation.statusText)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    Text(presentation.statusText)
+                        .font(.caption.weight(.semibold))
+                    Text(presentation.elapsedText)
+                        .monospacedDigit()
+                }
+                .foregroundStyle(.white)
                 Text(presentation.draft.isEmpty ? "说点什么…" : presentation.draft)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
                     .lineLimit(1)
-                    .accessibilityLabel(presentation.accessibilityLabel)
+                Text(presentation.recordingHelpText)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.56))
+                    .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
             actionButton(.setLocalOnly(!isLocalOnly))
+            actionButton(.cancelRecording)
             actionButton(.stopRecording, prominent: true)
         }
         .padding(.horizontal, 14)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(presentation.accessibilityLabel)
+        .accessibilityLabel("\(presentation.accessibilityLabel)，已录制 \(presentation.elapsedText)，\(presentation.recordingHelpText)")
     }
 
     private var statusContent: some View {
