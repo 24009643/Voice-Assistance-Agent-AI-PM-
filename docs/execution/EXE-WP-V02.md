@@ -4,12 +4,21 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: exact-HEAD automated gate passed at `264/264`; source is `review-clean`; release **BLOCKED / manual incomplete**
+- Status: exact source commit automated gate passed at `274/274`; M07/M08 passed-manual; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `11f1d3d50d453d69b63b2f74ba4ed5620f3457c1`.
+- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `d78f65f0fb49714fc451a6bc0b59732634c0bd97`.
 - Date: 2026-08-25
 
-## Files changed
+## 2026-08-25 adversarial remediation continuation
+
+- Production fixes cover shutdown cancellation and incomplete-audio cleanup, exact retry selection, bounded Provider responses/items/strings, durable-local-final timing, privacy receipts, VoiceOver actions, blank SenseVoice fallback, background history reads and per-session Paraformer state.
+- Exact source commit `d78f65f` passed 274/274 tests, 0 failed, 0 skipped; the fresh unsigned Debug build, SenseVoice 7/7 and Paraformer 11/11 probes, project regeneration, diff checks and current/additions safety scans passed.
+- M07 passed on the target Mac. VoiceOver exposed distinct result/chamber/speculative/collapse/reopen semantics; Reduce Motion reopen/expand/collapse passed; both system settings were restored off.
+- M08 passed with exactly one authorized DeepSeek-compatible request through the production client, strict decoder and validator. The existing Keychain item was reused without displaying, copying, saving, rotating or deleting the secret; only one non-sensitive segment and no history summaries were sent.
+- M09 remains blocked at 22 paired record/audio bundles without qualified semantic annotations. M10 remains blocked because a validated Paraformer bundle is absent and a fresh 100-cycle run requires explicit authorization.
+- The remediation is self-reviewed and automated-green. Independent re-review of `11f1d3d..d78f65f`, owner disposition of reachable-history diagnostics, M09 and M10 remain release gates.
+
+## Original Task 8 files changed
 
 - Added test-only adversarial Swift string fixtures.
 - Updated production parser/validator/client tests to consume every fixture.
@@ -68,7 +77,7 @@ xcodebuild -project apps/macos/TSB/TSB.xcodeproj -scheme TSB \
   -resultBundlePath /tmp/tsb-v02-task8-20260824.xcresult test
 ```
 
-Historical baseline result: exit 0; 226 passed, 0 failed; `TEST SUCCEEDED`. The current exact-HEAD automated gate is recorded above as `264/264` passed.
+Historical baseline result: exit 0; 226 passed, 0 failed; `TEST SUCCEEDED`. The current source automated gate is recorded above as `274/274` passed.
 
 ```bash
 swift test --package-path probes/sensevoice
@@ -94,8 +103,8 @@ Result before and after target-Mac acceptance: `git diff --check` passed and the
 
 ## Final exact-HEAD evidence and gate adjudication
 
-- Exact source/validation commit `11f1d3d` passed a fresh full suite: `264/264`, 0 failed, 0 skipped; its unsigned Debug build passed; two XcodeGen generations matched; main/fix diff checks, cleanup, and current/additions six-category safety scans passed. This is `passed-automated` only.
-- The final whole-branch range `584a7b1..11f1d3d` is source `review-clean` with Critical/Important/Minor `0/0/0`; it does not authorize merge or release.
+- Exact source/validation commit `d78f65f` passed a fresh full suite: `274/274`, 0 failed, 0 skipped; its unsigned Debug build passed; two XcodeGen generations matched; diff checks, cleanup, probes, and current/additions safety scans passed. This is `passed-automated` only.
+- The prior independently reviewed range ended at `11f1d3d`. The remediation range `11f1d3d..d78f65f` is self-reviewed and automated-green; independent re-review remains pending and no merge or release is authorized.
 - Final-review source findings are closed: endpoint-bound Keychain/dispatch/URL/Delete handling (`91f6c6d`, `6ae5855`), slot-claim local-only policy in both queued switch directions (`3b5e8dc`, `ce9cde1`, `97538f0`), and validator/dead-state/test-only-counter cleanup (`d080329`, `11f1d3d`).
 - Current tracked source/additions have zero formal sensitive findings. Reachable-history diagnostics are historical count-only release blockers: 147 commits considered, local-account-path diagnostic in 10 commits and broad provider-like diagnostic in 9; they are not current-tree leaks or completed sanitation/rotation.
 
@@ -104,7 +113,7 @@ Result before and after target-Mac acceptance: `git diff --check` passed and the
 - Historical runner cleanup and Paraformer-preflight prevention remain `implemented`, `review-clean`, and `passed-automated`. Historical commit `98341b3` independently passed focused `27/27`, full suite `249/249`, a fresh Debug build, diff/project consistency, sensitive scan and cleanup. This is not the current exact-HEAD validation and does not imply target-device or manual proof.
 - Desktop-hosted source reads were obstructed by TCC (`kTCCServiceSystemPolicyAllFiles`, `authValue=0`). Validation used an exact-HEAD `/tmp` source snapshot with the existing dependency lock; no Full Disk Access was requested or granted. This is an evidence-environment fact, not a product permission requirement.
 - V02-M02 is `passed-manual (adjudicated)`: three intentionally successful product cycles each had one persisted record, one automatic local copy, immediate clipboard equality and zero organization recopy. Failure attempts are excluded from the passing-cycle count.
-- V02-M08 is `blocked`: immediately before the authorized runtime work, the real Settings UI showed loopback `127.0.0.1:63060`, model `local-acceptance`, API Key `未保存`, cloud consent `未授权`, and selected-history off/disabled. The authorized DeepSeek request was therefore not started; Provider request count was `0`. No Keychain secret was read, entered, saved or deleted; a user must personally save a key before a later product-path attempt.
+- V02-M08 is `passed-manual`: exactly one authorized Provider request crossed the production `OrganizationClient`, strict DTO decoder and validator with one non-sensitive segment and no selected history. The existing login-Keychain item was reused without displaying, copying, saving, rotating or deleting its secret.
 - Historical Critical runner incident remains recorded: `3 vs 1` Provider requests, `5 vs 3` records and `5 vs 3` automatic local copies. The runner code is now review-clean/passed-automated; target-device closure is not claimed. Two extra records remain without deletion authorization, and the stopped no-key localhost profile requires action-time confirmation before permanent deletion.
 - Task 7 Settings Model-field integrity is `passed-manual` for this focused subgate: after user-operated Password AutoFill, non-sensitive Base URL and Model sentinels were unchanged; API Key remained secure/masked and `未保存`; Cancel restored persisted local fields and blank/`未保存` key state. Fix commit `a8fb572` is `implemented`, `review-clean`, and `passed-automated`; independent re-review found Critical 0, Important 0, Minor 0. No Save/Delete/Revoke, Provider, or other prohibited side effect occurred. This does not clear V02-M08 or release completion.
 - Historical M10 single authorized formal run started once and stopped on cycle 1 with `preview_missing`: requested/completed `100/1`, passed rows `0`, loopback/external requests `0`, records `0`, automatic clipboard deliveries `0`, and non-loopback observations `0`; no retry occurred. The consumed run is `failed/ineligible`, while M10 remains `blocked`.
@@ -119,7 +128,7 @@ Result before and after target-Mac acceptance: `git diff --check` passed and the
 - Unknown candidate/segment IDs, category mixing and malformed JSON are automatically rejected. Empty output needs an allowed reason. Timeout/cancellation must stop a started real client request and cannot accept a released late response.
 - Meaning reversal and invented facts remain manual Golden Set judgments; the strict schema cannot infer semantic truth from IDs/hash/categories.
 
-No live provider, DeepSeek call, real Keychain secret, microphone, user session bundle or transcript body was accessed during this automated run. Target-Mac evidence below is a separate manual run.
+The historical automated run in this section accessed no live provider, Keychain secret, microphone, user session bundle or transcript body. The later authorized one-request M08 observation is separately recorded above and below.
 
 ## Manual target-Mac worksheet — controller must complete
 
@@ -143,9 +152,9 @@ The three inputs were locally generated acceptance speech played through the tar
 | Malformed response | `EB3A5FA9-B420-400E-A2F9-671D17E5E761`; one request; local record stayed `copied`, organization `failed`, error code present, clipboard equal; island exposed Retry/Copy/Collapse | pass |
 | Three chambers / collapse / reopen | `F2844719-3AB6-471F-952D-3D80A9D9F710` showed all three chambers; `chevron.up` collapsed to `重新打开最近整理结果`, reopening restored the result, and all three copy buttons copied their matching chamber while the prior clipboard was restored after each check | pass |
 | Keyboard cancellation / auto-collapse | After the reviewed fix, the user physically operated Option-Space then Escape and reported `也已经自动收齐了`; this confirms the recording island automatically collapsed. No timing, transcript, accessibility, animation, Provider or other manual claim is made | passed-manual |
-| VoiceOver | Status, actions and “推测” label readout | pending-manual |
-| Reduce Motion | Island and waveform behavior | pending-manual |
-| Controlled DeepSeek-compatible call | Historical direct smoke only; it used synthetic text and did not exercise the production parser/validator DTO. It is not a substitute for the blocked M08 one-request production boundary | historical / non-substitutive |
+| VoiceOver | Result container, distinct chamber-copy actions, `推测，可能有关联，尚未确认`, collapse and reopen were exposed through the actual island accessibility tree; a parent-label override found during the first pass was fixed and rechecked | passed-manual |
+| Reduce Motion | With Reduce Motion enabled, actual island reopen/expand/collapse retained the expected controls and semantics; the setting was restored off | passed-manual |
+| Controlled DeepSeek-compatible call | Exactly one authorized request used the existing Keychain item, one non-sensitive segment, no history summaries, and the production client → strict decoder → validator path; request passed and no credential was displayed or persisted anew | passed-manual |
 
 ### Target-Mac island observations
 
@@ -164,7 +173,7 @@ The three inputs were locally generated acceptance speech played through the tar
 
 | Field | Required threshold | Result |
 |---|---:|---|
-| Real mixed-language record count | >= 30 | Paired bundle inventory = 17; GS-qualified/annotated count not established |
+| Real mixed-language record count | >= 30 | Metadata-only paired bundle inventory = 22; GS-qualified/annotated count not established |
 | Atomic-idea denominator | recorded exactly | PENDING |
 | Atomic ideas covered | recorded exactly | PENDING |
 | Coverage | >= 95% | PENDING |
@@ -189,8 +198,8 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` Adjudicated M02 and the focused Task 7 Model-field integrity subgate passed. M07 is `partial-manual`: physical Option-Space/Escape cancellation and automatic collapse passed, while VoiceOver and Reduce Motion remain pending. M08 remains `blocked` because the authorized preflight sent 0 Provider requests without a saved usable key; endpoint-bound credentials may require user re-entry. M09 remains `blocked` without a qualified manually annotated 30-record Golden Set. M10 remains `blocked` after the historical single run failed/ineligible at `100/1`; fresh validated Paraformer, authorization, and artifacts are required. The historical Critical runner incident remains open. Exact `11f1d3d` automated `264/264` evidence and source review-clean status do not promote Provider, accessibility, Golden Set, stability, reachable-history, or release gates.
+`BLOCKED — manual acceptance is incomplete.` M01 through M08 now pass. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run and while Paraformer is absent; a fresh run requires a validated bundle, explicit authorization and exclusive artifacts. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact `d78f65f` automated `274/274` evidence does not promote Golden Set, stability, reachable-history, merge or release authorization.
 
 ## Rollback
 
-Revert the Task 8 commit. It changes only tests and documentation; no production behavior or user data migration is involved.
+Revert `d78f65f` to roll back the remediation source and tests. No user-data migration was introduced; documentation is committed separately.
