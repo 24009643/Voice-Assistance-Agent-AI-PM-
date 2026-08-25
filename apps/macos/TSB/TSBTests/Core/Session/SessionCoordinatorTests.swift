@@ -455,6 +455,110 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.providerStarts, 0)
     }
 
+    func testSelectedHistorySuccessAfterOwningTaskCancellationCannotWriteOrEnqueue() async throws {
+        let (harness, sessionID, selectedID) = try await makeBlockedSelectedHistoryHarness()
+        let task = Task { @MainActor in
+            await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        }
+        await harness.waitUntilHistorySuggestionsStarts()
+        let identity = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        let snapshot = harness.coordinator.snapshot
+
+        task.cancel()
+        harness.completeHistorySuggestions()
+        await task.value
+
+        XCTAssertEqual(harness.coordinator.snapshot, snapshot)
+        XCTAssertEqual(harness.coordinator.developmentWorkIdentity(sessionID: sessionID), identity)
+        XCTAssertTrue(harness.organizationUpdates.isEmpty)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+        harness.coordinator.shutdown()
+    }
+
+    func testSelectedHistoryErrorAfterOwningTaskCancellationCannotPublishFailureOrEnqueue() async throws {
+        let (harness, sessionID, selectedID) = try await makeBlockedSelectedHistoryHarness()
+        let task = Task { @MainActor in
+            await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        }
+        await harness.waitUntilHistorySuggestionsStarts()
+        let identity = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        let snapshot = harness.coordinator.snapshot
+
+        task.cancel()
+        harness.failHistorySuggestions(TestError.disk)
+        await task.value
+
+        XCTAssertEqual(harness.coordinator.snapshot, snapshot)
+        XCTAssertEqual(harness.coordinator.developmentWorkIdentity(sessionID: sessionID), identity)
+        XCTAssertTrue(harness.organizationUpdates.isEmpty)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+        harness.coordinator.shutdown()
+    }
+
+    func testSelectedHistorySuccessForStaleRequestCannotOverwriteOrEnqueue() async throws {
+        let (harness, sessionID, selectedID) = try await makeBlockedSelectedHistoryHarness()
+        let taskA = Task { @MainActor in
+            await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        }
+        await harness.waitUntilHistorySuggestionsStarts()
+        let requestA = try XCTUnwrap(
+            harness.coordinator.developmentWorkIdentity(sessionID: sessionID)?.organizationRequestID
+        )
+        let taskB = Task { @MainActor in
+            await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: requestA))
+        }
+        await harness.waitUntilHistorySuggestionsStarts(count: 2)
+        let identityB = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        let snapshot = harness.coordinator.snapshot
+
+        harness.completeHistorySuggestions(at: 0)
+        await taskA.value
+
+        XCTAssertEqual(harness.coordinator.snapshot, snapshot)
+        XCTAssertEqual(harness.coordinator.developmentWorkIdentity(sessionID: sessionID), identityB)
+        XCTAssertTrue(harness.organizationUpdates.isEmpty)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+
+        taskB.cancel()
+        harness.coordinator.shutdown()
+        harness.completeHistorySuggestions(at: 1)
+        await taskB.value
+    }
+
+    func testSelectedHistoryErrorForStaleRequestCannotPublishFailureOrEnqueue() async throws {
+        let (harness, sessionID, selectedID) = try await makeBlockedSelectedHistoryHarness()
+        let taskA = Task { @MainActor in
+            await harness.coordinator.handle(.enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID]))
+        }
+        await harness.waitUntilHistorySuggestionsStarts()
+        let requestA = try XCTUnwrap(
+            harness.coordinator.developmentWorkIdentity(sessionID: sessionID)?.organizationRequestID
+        )
+        let taskB = Task { @MainActor in
+            await harness.coordinator.handle(.retry(sessionID: sessionID, requestID: requestA))
+        }
+        await harness.waitUntilHistorySuggestionsStarts(count: 2)
+        let identityB = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+        let snapshot = harness.coordinator.snapshot
+
+        harness.failHistorySuggestions(TestError.disk, at: 0)
+        await taskA.value
+
+        XCTAssertEqual(harness.coordinator.snapshot, snapshot)
+        XCTAssertEqual(harness.coordinator.developmentWorkIdentity(sessionID: sessionID), identityB)
+        XCTAssertTrue(harness.organizationUpdates.isEmpty)
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertEqual(harness.providerStarts, 0)
+
+        taskB.cancel()
+        harness.coordinator.shutdown()
+        harness.completeHistorySuggestions(at: 1)
+        await taskB.value
+    }
+
     func testMenuStopRemainsSessionBoundWhenPermissionIsDenied() async throws {
         let harness = CoordinatorHarness(transcript: "final")
         await harness.coordinator.handle(.toggleRecording)
@@ -1716,6 +1820,22 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(harness.coordinator.snapshot.audioLevel, 0)
     }
+
+    private func makeBlockedSelectedHistoryHarness() async throws -> (CoordinatorHarness, SessionID, SessionID) {
+        let selectedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(
+            transcript: "delivered text",
+            historySuggestions: HistorySuggestions(
+                suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: "related")],
+                localRecordByCandidateID: ["h1": selectedID]
+            )
+        )
+        await harness.runOneSession()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        harness.setOrganizationSettings(remoteOrganizationSettings(allowsHistory: true))
+        harness.setSuspendsHistorySuggestions(true)
+        return (harness, sessionID, selectedID)
+    }
 }
 
 @MainActor
@@ -2103,22 +2223,22 @@ private final class CoordinatorHarness {
         suspendsHistorySuggestions = suspended
     }
 
-    func waitUntilHistorySuggestionsStarts() async {
+    func waitUntilHistorySuggestionsStarts(count: Int = 1) async {
         for _ in 0..<100 {
-            if !historySuggestionsContinuations.isEmpty { return }
+            if historySuggestionsContinuations.count >= count { return }
             await Task.yield()
         }
         XCTFail("Timed out waiting for history suggestions")
     }
 
-    func completeHistorySuggestions() {
-        historySuggestionsContinuations[0]?.resume(returning: historySuggestions)
-        historySuggestionsContinuations[0] = nil
+    func completeHistorySuggestions(at index: Int = 0) {
+        historySuggestionsContinuations[index]?.resume(returning: historySuggestions)
+        historySuggestionsContinuations[index] = nil
     }
 
-    func failHistorySuggestions(_ error: Error) {
-        historySuggestionsContinuations[0]?.resume(throwing: error)
-        historySuggestionsContinuations[0] = nil
+    func failHistorySuggestions(_ error: Error, at index: Int = 0) {
+        historySuggestionsContinuations[index]?.resume(throwing: error)
+        historySuggestionsContinuations[index] = nil
     }
 
     func failRecording(at index: Int? = nil) async {
