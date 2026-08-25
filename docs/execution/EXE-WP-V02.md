@@ -4,27 +4,34 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: exact source commit automated gate passed at `290/290`; release **BLOCKED / manual incomplete**
+- Status: exact post-review gate passed at `290/290`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `109e93594299d8808d441ab2bf467263dd378cc5`.
+- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; implementation commit: `109e93594299d8808d441ab2bf467263dd378cc5`; review-record and exact post-review gate commit: `a69f54b392163fd0df4e3f356096205813345523`.
 - Date: 2026-08-25
 
 ## 2026-08-25 adversarial remediation continuation (historical `d78f65f` evidence)
 
 - Production fixes cover shutdown cancellation and incomplete-audio cleanup, exact retry selection, bounded Provider responses/items/strings, durable-local-final timing, privacy receipts, VoiceOver actions, blank SenseVoice fallback, background history reads and per-session Paraformer state.
 - Exact source commit `d78f65f` passed 274/274 tests, 0 failed, 0 skipped; the fresh unsigned Debug build, SenseVoice 7/7 and Paraformer 11/11 probes, project regeneration, diff checks and current/additions safety scans passed.
-- At historical `d78f65f`, M07 passed on the target Mac. VoiceOver exposed distinct result/chamber/speculative/collapse/reopen semantics; Reduce Motion reopen/expand/collapse passed; both system settings were restored off.
+- At historical `d78f65f`, broader M07 is `partial-manual`: VoiceOver exposed distinct result/chamber/speculative/collapse/reopen semantics; Reduce Motion reopen/expand/collapse passed; both system settings were restored off.
 - At historical `d78f65f`, M08 passed with exactly one authorized DeepSeek-compatible request through the production client, strict decoder and validator. The existing Keychain item was reused without displaying, copying, saving, rotating or deleting the secret; only one non-sensitive segment and no history summaries were sent.
 - At historical `d78f65f`, M09 was blocked at 22 paired record/audio bundles without qualified semantic annotations. M10 was recorded as blocked because that environment lacked a validated Paraformer bundle and a fresh 100-cycle run required explicit authorization.
 - The remediation is self-reviewed and automated-green. Independent re-review of `11f1d3d..d78f65f`, owner disposition of reachable-history diagnostics, M09 and M10 remain release gates.
 
-## 2026-08-25 recording-runtime exact-HEAD automated gate
+## 2026-08-25 recording-runtime pre-review automated gate
 
 - Exact implementation commit: `109e93594299d8808d441ab2bf467263dd378cc5`. The Task 5 independent review fixes (six Important and two deferred Minor findings) received a clean scoped re-review.
 - One fresh full macOS suite wrote `/tmp/tsb-v02-recording-runtime-full.xcresult`: 290 passed, 0 failed, 0 skipped. `git diff --check` passed before and after the gate.
 - Local probe suites passed: SenseVoice 7/7 and Paraformer 11/11. The Task 5 brief did not run a separate standalone Debug-app build or any manual/device workflow.
 - Current changed-file and added-line count-only scans were all zero for provider-token, Bearer, AWS key, GitHub token, PEM private key, private absolute path, and `.env` patterns.
 - This automated gate does not pass target-Mac live preview, microphone recording/persistence, VoiceOver for the current resident controls, M09, M10, merge, or release. No real microphone, Provider, user Keychain, System Settings, recording, network, or process termination action was invoked by this automation.
+
+## 2026-08-25 recording-runtime post-review exact-HEAD automated gate
+
+- The tracked independent-review record was committed as `a69f54b392163fd0df4e3f356096205813345523` before this fresh gate. It preserves the independent read-only reviewer verdict for remediation `fc82293..109e935`; it is not implementer self-review.
+- Exact post-review gate HEAD `a69f54b392163fd0df4e3f356096205813345523` wrote `/tmp/tsb-v02-recording-runtime-postreview.xcresult`: 290 passed, 0 failed, 0 skipped. SenseVoice passed 7/7 and Paraformer passed 11/11; `git diff --check` passed.
+- Current changed-file and added-line count-only scans were zero for provider-token, Bearer, AWS key, GitHub token, PEM private key, private absolute path, and `.env` patterns.
+- This fresh post-review gate supersedes the earlier review-sequencing dispute without changing production or test code. It does not pass target-Mac live preview, microphone recording/persistence, current resident-controls VoiceOver, M09, M10, merge, or release.
 
 ## Original Task 8 files changed
 
@@ -206,7 +213,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` The `d78f65f` record is historical evidence that M01 through M08 passed for that earlier surface. At exact `109e935`, VoiceOver of the current resident controls is `partial-manual`; target-Mac live preview and real microphone recording/persistence are still pending. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run, pending target-Mac validation of the installed Paraformer bundle plus fresh authorization and exclusive artifacts; it is not blocked on a claim that Paraformer is absent. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact `109e935` automated `290/290` evidence does not promote Golden Set, stability, reachable-history, merge or release authorization.
+`BLOCKED — manual acceptance is incomplete.` The `d78f65f` record is historical evidence that broader M01 through M08 passed for that earlier surface; historical broader M07 remains `partial-manual`. At exact post-review `a69f54b`, VoiceOver of the current resident controls is `pending-manual`; target-Mac live preview and real microphone recording/persistence are still pending. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run, pending target-Mac validation of the installed Paraformer bundle plus fresh authorization and exclusive artifacts; it is not blocked on a claim that Paraformer is absent. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact post-review `a69f54b` automated `290/290` evidence does not promote Golden Set, stability, reachable-history, merge or release authorization.
 
 ## Rollback
 
