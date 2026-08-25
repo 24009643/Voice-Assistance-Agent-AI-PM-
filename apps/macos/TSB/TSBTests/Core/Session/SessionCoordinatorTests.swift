@@ -491,7 +491,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copiedTexts, ["Paraformer fallback"])
     }
 
-    func testControllerStopCancelsEveryIncompleteSession() async throws {
+    func testControllerStopDeletesOnlyActiveUnstoppedRecordingAndCancelsProcessingTask() async throws {
         let harness = CoordinatorHarness(transcript: "late", suspendsTranscription: true)
 
         await harness.coordinator.handle(.toggleRecording)
@@ -499,15 +499,17 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.finishRecording()
         await harness.waitUntilTranscriptionStarts()
         await harness.coordinator.handle(.toggleRecording)
-        let incompleteSessionIDs = Set(harness.startedSessionIDs)
+        let activeRecordingID = try XCTUnwrap(harness.startedSessionIDs.last)
         let controller = AppController(state: AppState(), coordinator: harness.coordinator)
 
         controller.stop()
 
-        XCTAssertEqual(Set(harness.cancelledSessionIDs), incompleteSessionIDs)
-        XCTAssertEqual(harness.cancelCount, 2)
+        XCTAssertEqual(harness.cancelledSessionIDs, [activeRecordingID])
+        XCTAssertEqual(harness.cancelCount, 1)
         harness.completeTranscription()
         await Task.yield()
+        XCTAssertTrue(harness.savedRecords.isEmpty)
+        XCTAssertEqual(harness.copyCount, 0)
     }
 
     func testShutdownCancelsDeliveredBlockedHistoryBeforeOrganizationCanStart() async {
@@ -557,6 +559,74 @@ final class SessionCoordinatorTests: XCTestCase {
             XCTAssertEqual(harness.organizationInputs.count, 0)
             XCTAssertEqual(harness.providerStarts, 0)
             XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+        }
+    }
+
+    func testStopThenShutdownPreservesPendingAudioDirectory() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(transcript: "pending finalization", sessionsDirectory: root)
+
+            await harness.coordinator.handle(.toggleRecording)
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("pending audio".utf8).write(to: audioURL)
+
+            await harness.coordinator.handle(.toggleRecording)
+            harness.coordinator.shutdown()
+
+            XCTAssertEqual(harness.stopCount, 1)
+            XCTAssertEqual(try Data(contentsOf: audioURL), Data("pending audio".utf8))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: sessionDirectory.path))
+        }
+    }
+
+    func testExplicitCancelDeletesIncompleteRealSessionDirectory() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(transcript: "cancelled", sessionsDirectory: root)
+
+            await harness.coordinator.handle(.toggleRecording)
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("discard me".utf8).write(to: audioURL)
+
+            await harness.coordinator.handle(.cancelRecording)
+
+            XCTAssertFalse(FileManager.default.fileExists(atPath: sessionDirectory.path))
+            XCTAssertEqual(harness.cancelledSessionIDs, [sessionID])
+        }
+    }
+
+    func testDevelopmentCleanupCancelsDeliveredHistoryWithoutDeletingRecord() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "durable debug cleanup",
+                organizationSettings: remoteOrganizationSettings(),
+                suspendsHistorySuggestions: true,
+                sessionsDirectory: root
+            )
+
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.coordinator.handle(.toggleRecording)
+            await harness.finishRecording()
+            await harness.waitForDelivery()
+            await harness.waitUntilHistorySuggestionsStarts()
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let identity = try XCTUnwrap(harness.coordinator.developmentWorkIdentity(sessionID: sessionID))
+
+            XCTAssertTrue(harness.coordinator.cancelDevelopmentWork(identity))
+            harness.completeHistorySuggestions()
+            for _ in 0..<100 where !harness.coordinator.isDevelopmentWorkDrained(identity) {
+                await Task.yield()
+            }
+
+            XCTAssertTrue(harness.coordinator.isDevelopmentWorkDrained(identity))
+            XCTAssertEqual(try harness.store?.load(id: sessionID).id, sessionID)
+            XCTAssertTrue(harness.organizationInputs.isEmpty)
+            XCTAssertEqual(harness.providerStarts, 0)
         }
     }
 

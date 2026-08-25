@@ -147,7 +147,7 @@ final class SessionCoordinator {
             task.cancel()
         }
         for sessionID in sessions.values.compactMap({
-            $0.status == .recording || $0.status == .transcribing || $0.status == .saving ? $0.id : nil
+            $0.status == .recording && !$0.stopRequested ? $0.id : nil
         }) {
             dependencies.cancelRecording(sessionID)
             _ = trackPreviewCancellation(sessionID)
@@ -209,8 +209,10 @@ final class SessionCoordinator {
             return identity.organizationRequestID == nil
         }
         guard session.organizationRequestID == identity.organizationRequestID else { return false }
-        if recordingSessionID == identity.sessionID || processingTasks[identity.sessionID] != nil {
+        if recordingSessionID == identity.sessionID || session.isProcessing {
             beginSessionCancellation(identity.sessionID)
+        } else {
+            processingTasks[identity.sessionID]?.cancel()
         }
         if let requestID = identity.organizationRequestID {
             cancelOrganization(for: identity.sessionID, expectedRequestID: requestID)
@@ -491,6 +493,7 @@ final class SessionCoordinator {
             )
             if didCopy {
                 await refreshHistorySuggestions(for: sessionID)
+                guard !Task.isCancelled else { return }
                 await enqueueOrganization(for: sessionID, selectedRecordIDs: [])
             }
         } catch {
