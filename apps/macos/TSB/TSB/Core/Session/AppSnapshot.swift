@@ -10,6 +10,18 @@ enum OrganizationPhase: Equatable, Sendable {
     case failed(String)
 }
 
+enum OrganizationReceiptDispatch: Equatable, Sendable {
+    case sent
+    case localNoDispatch
+    case notSent
+}
+
+struct OrganizationPrivacyReceipt: Equatable, Sendable {
+    let dispatch: OrganizationReceiptDispatch
+    let characterCount: Int
+    let selectedRecordCount: Int
+}
+
 enum OrganizationIntent: Equatable, Sendable {
     case setLocalOnly(sessionID: SessionID, enabled: Bool)
     case cancel(sessionID: SessionID, requestID: UUID)
@@ -30,6 +42,7 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
     let message: String
     let organizationPhase: OrganizationPhase
     let organizationRequestID: UUID?
+    let organizationReceipt: OrganizationPrivacyReceipt?
     let suggestedRecords: [SuggestedRecordSnapshot]
 
     init(
@@ -40,6 +53,7 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
         message: String,
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
+        organizationReceipt: OrganizationPrivacyReceipt? = nil,
         suggestedRecords: [SuggestedRecordSnapshot] = []
     ) {
         self.id = id
@@ -49,6 +63,7 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
         self.message = message
         self.organizationPhase = organizationPhase
         self.organizationRequestID = organizationRequestID
+        self.organizationReceipt = organizationReceipt
         self.suggestedRecords = suggestedRecords
     }
 }
@@ -69,6 +84,7 @@ struct AppSnapshot: Equatable, Sendable {
     let livePreviewAvailability: LivePreviewAvailability
     let organizationPhase: OrganizationPhase
     let organizationRequestID: UUID?
+    let organizationReceipt: OrganizationPrivacyReceipt?
     let suggestedRecords: [SuggestedRecordSnapshot]
     let secondaryProcessing: [SecondaryProcessingSnapshot]
     let canStartRecording: Bool
@@ -84,6 +100,7 @@ struct AppSnapshot: Equatable, Sendable {
         livePreviewAvailability: LivePreviewAvailability = .available,
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
+        organizationReceipt: OrganizationPrivacyReceipt? = nil,
         suggestedRecords: [SuggestedRecordSnapshot] = [],
         secondaryProcessing: [SecondaryProcessingSnapshot] = [],
         canStartRecording: Bool = true
@@ -98,6 +115,7 @@ struct AppSnapshot: Equatable, Sendable {
         self.livePreviewAvailability = livePreviewAvailability
         self.organizationPhase = organizationPhase
         self.organizationRequestID = organizationRequestID
+        self.organizationReceipt = organizationReceipt
         self.suggestedRecords = suggestedRecords
         self.secondaryProcessing = secondaryProcessing
         self.canStartRecording = canStartRecording

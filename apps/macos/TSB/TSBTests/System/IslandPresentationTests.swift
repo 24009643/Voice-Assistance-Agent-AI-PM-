@@ -399,30 +399,36 @@ final class IslandPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.controls.map(\.action).contains(.generateLinks))
     }
 
-    func testOrganizedResultShowsLocalPrivacyReceiptWithoutText() {
+    func testPrivacyReceiptShowsOnlyMetadataForSentFailure() {
         let presentation = IslandPresentation.make(
-            for: snapshot(status: .delivered, organizationPhase: .organized(organizedRecord())),
+            for: snapshot(
+                status: .delivered,
+                organizationPhase: .failed("401"),
+                organizationReceipt: OrganizationPrivacyReceipt(dispatch: .sent, characterCount: 128, selectedRecordCount: 1)
+            ),
             screenWidth: 1_440
         )
 
         XCTAssertEqual(
             presentation.privacyReceiptText,
-            "已发送 128 个字符 · 1 条历史摘要（00000000-0000-0000-0000-000000000201）"
+            "已发送 128 个字符 · 1 条历史摘要"
         )
     }
 
-    func testLoopbackOrganizationShowsLocalPrivacyReceipt() {
-        let presentation = IslandPresentation.make(
-            for: snapshot(
+    func testPrivacyReceiptDistinguishesTimeoutCancelAndNoDispatch() {
+        let cases: [(OrganizationReceiptDispatch, String)] = [
+            (.sent, "已发送"), // timeout or cancellation after dispatch
+            (.localNoDispatch, "仅本地处理，未发送"),
+            (.notSent, "未发送"),
+        ]
+        for (dispatch, prefix) in cases {
+            let presentation = IslandPresentation.make(for: snapshot(
                 status: .delivered,
-                organizationPhase: .organized(organizedRecord(providerKind: .local))
-            )
-        )
-
-        XCTAssertEqual(
-            presentation.privacyReceiptText,
-            "本地处理 128 个字符 · 1 条历史摘要（00000000-0000-0000-0000-000000000201）"
-        )
+                organizationPhase: .failed("Organization failed."),
+                organizationReceipt: OrganizationPrivacyReceipt(dispatch: dispatch, characterCount: 128, selectedRecordCount: 1)
+            ))
+            XCTAssertEqual(presentation.privacyReceiptText, "\(prefix) 128 个字符 · 1 条历史摘要")
+        }
     }
 
     private func snapshot(
@@ -436,6 +442,7 @@ final class IslandPresentationTests: XCTestCase {
         livePreviewAvailability: LivePreviewAvailability = .available,
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
+        organizationReceipt: OrganizationPrivacyReceipt? = nil,
         suggestedRecords: [SuggestedRecordSnapshot] = []
     ) -> AppSnapshot {
         AppSnapshot(
@@ -449,6 +456,7 @@ final class IslandPresentationTests: XCTestCase {
             livePreviewAvailability: livePreviewAvailability,
             organizationPhase: organizationPhase,
             organizationRequestID: organizationRequestID,
+            organizationReceipt: organizationReceipt,
             suggestedRecords: suggestedRecords
         )
     }

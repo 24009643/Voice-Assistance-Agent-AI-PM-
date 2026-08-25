@@ -32,7 +32,8 @@ final class AppController: ObservableObject {
     private var notchOverlay: NotchOverlayPanel?
     private let manualCopy: (String) -> Bool
     private var screenParameterObserver: ScreenParameterObserver?
-    private var intentTask: Task<Void, Never>?
+    private var recordingIntentTask: Task<Void, Never>?
+    private var organizationIntentTask: Task<Void, Never>?
     private var microphoneRequestLatch = MicrophoneRequestLatch()
 
     private lazy var hotkey = HotkeyService(
@@ -268,6 +269,7 @@ final class AppController: ObservableObject {
     init(
         state: AppState,
         coordinator: SessionCoordinator,
+        modelError: String? = nil,
         microphoneAuthorizationStatus: @escaping () -> AVAuthorizationStatus = {
             AVCaptureDevice.authorizationStatus(for: .audio)
         },
@@ -280,7 +282,7 @@ final class AppController: ObservableObject {
         self.escapeMonitor = EscapeKeyMonitor(
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
         )
-        self.modelError = nil
+        self.modelError = modelError
         self.bypassesMicrophonePermissionForDevelopment = true
         self.microphoneAuthorizationStatus = microphoneAuthorizationStatus
         self.requestMicrophonePermission = requestMicrophonePermission
@@ -290,7 +292,11 @@ final class AppController: ObservableObject {
     }
 
     func enqueueBarrierForDevelopment(_ action: @escaping @MainActor () async -> Void) {
-        enqueue(action)
+        enqueueRecording(action)
+    }
+
+    func dispatchOrganizationForDevelopment(_ intent: OrganizationIntent) {
+        dispatch(intent)
     }
 
     func startRecordingForDevelopment() -> SessionCoordinator.DevelopmentWorkIdentity? {
@@ -331,8 +337,10 @@ final class AppController: ObservableObject {
     }
 
     func stop() {
-        intentTask?.cancel()
-        intentTask = nil
+        recordingIntentTask?.cancel()
+        recordingIntentTask = nil
+        organizationIntentTask?.cancel()
+        organizationIntentTask = nil
         coordinator.shutdown()
         hotkey.stop()
         escapeMonitor.stop()
@@ -344,7 +352,7 @@ final class AppController: ObservableObject {
             receive(.toggleRecording)
             return
         }
-        enqueue { [weak self] in
+        enqueueRecording { [weak self] in
             self?.coordinator.handleToggleRecording()
         }
     }
@@ -358,7 +366,7 @@ final class AppController: ObservableObject {
     }
 
     func stopRecordingFromUI(sessionID: SessionID) {
-        enqueue { [weak self] in
+        enqueueRecording { [weak self] in
             self?.coordinator.stopRecording(sessionID: sessionID)
         }
     }
@@ -368,7 +376,7 @@ final class AppController: ObservableObject {
     }
 
     func cancelRecordingFromUI(sessionID: SessionID) {
-        enqueue { [weak self] in
+        enqueueRecording { [weak self] in
             await self?.coordinator.cancelRecording(sessionID: sessionID)
         }
     }
@@ -397,6 +405,10 @@ final class AppController: ObservableObject {
     }
 
     private func startRecordingIfPossible() {
+        guard modelError == nil else {
+            publishModelRequirement()
+            return
+        }
         guard state.snapshot.status != .recording, state.snapshot.canStartRecording else { return }
         switch MicrophonePermission.decision(for: microphoneAuthorizationStatus()) {
         case .proceed:
@@ -417,6 +429,16 @@ final class AppController: ObservableObject {
         }
     }
 
+    private func publishModelRequirement() {
+        state.snapshot = AppSnapshot(
+            status: .failed,
+            elapsedMilliseconds: 0,
+            previewText: "",
+            message: modelError
+        )
+        notchOverlay?.update(state.snapshot)
+    }
+
     private func publishMicrophoneRequirement() {
         state.snapshot = AppSnapshot(
             status: .failed,
@@ -434,15 +456,15 @@ final class AppController: ObservableObject {
         }
         switch intent {
         case let .stopRecording(sessionID):
-            enqueue { [weak self] in
+            enqueueRecording { [weak self] in
                 self?.coordinator.stopRecording(sessionID: sessionID)
             }
         case let .cancelRecording(sessionID):
-            enqueue { [weak self] in
+            enqueueRecording { [weak self] in
                 await self?.coordinator.cancelRecording(sessionID: sessionID)
             }
         case let .copy(text):
-            enqueue { [weak self] in
+            enqueueRecording { [weak self] in
                 _ = self?.manualCopy(text)
             }
         case .openSettings:
@@ -464,7 +486,7 @@ final class AppController: ObservableObject {
     }
 
     private func dispatchRecordingStart() {
-        enqueue { [weak self] in
+        enqueueRecording { [weak self] in
             guard let self else { return }
             let error = Self.startRecordingAfterEscapePreflight(
                 startEscape: { self.escapeMonitor.start() },
@@ -483,22 +505,31 @@ final class AppController: ObservableObject {
     }
 
     private func dispatch(_ intent: UserIntent) {
-        enqueue { [weak self] in
+        enqueueRecording { [weak self] in
             guard let self else { return }
             await coordinator.handle(intent)
         }
     }
 
     private func dispatch(_ intent: OrganizationIntent) {
-        enqueue { [weak self] in
+        enqueueOrganizationIntent { [weak self] in
             guard let self else { return }
             await coordinator.handle(intent)
         }
     }
 
-    private func enqueue(_ action: @escaping @MainActor () async -> Void) {
-        let previous = intentTask
-        intentTask = Task { @MainActor in
+    private func enqueueRecording(_ action: @escaping @MainActor () async -> Void) {
+        let previous = recordingIntentTask
+        recordingIntentTask = Task { @MainActor in
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await action()
+        }
+    }
+
+    private func enqueueOrganizationIntent(_ action: @escaping @MainActor () async -> Void) {
+        let previous = organizationIntentTask
+        organizationIntentTask = Task { @MainActor in
             await previous?.value
             guard !Task.isCancelled else { return }
             await action()

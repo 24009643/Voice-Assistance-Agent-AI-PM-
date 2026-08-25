@@ -54,7 +54,9 @@ struct MenuBarLabel: View {
             Label("TSB Recording", systemImage: "waveform")
         case .transcribing, .saving:
             Label("TSB Processing", systemImage: "ellipsis.circle")
-        case .idle, .delivered, .failed, .cancelled:
+        case .failed:
+            Label("TSB Unavailable", systemImage: "exclamationmark.triangle.fill")
+        case .idle, .delivered, .cancelled:
             Label("TSB Ready", systemImage: "circle.fill")
         }
     }

@@ -54,6 +54,7 @@ final class SessionCoordinator {
         var transcript: TranscriptRecord?
         var localOnly = false
         var organizationPhase: OrganizationPhase = .notRequested
+        var organizationReceipt: OrganizationPrivacyReceipt?
         var suggestedRecords: [SuggestedRecordSnapshot] = []
         var organizationRequestID: UUID?
         var lastOrganizationSelectedRecordIDs: Set<SessionID> = []
@@ -92,6 +93,7 @@ final class SessionCoordinator {
     private var activeOrganization: (job: OrganizationJob, task: Task<Void, Never>)?
     private var latestTerminalSessionID: SessionID?
     private var nextOrdinal: UInt64 = 1
+    private var isShuttingDown = false
 
     private(set) var snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil) {
         didSet { onSnapshot(snapshot) }
@@ -110,6 +112,7 @@ final class SessionCoordinator {
     }
 
     func handle(_ intent: UserIntent) async {
+        guard !isShuttingDown else { return }
         switch intent {
         case .toggleRecording:
             handleToggleRecording()
@@ -119,6 +122,7 @@ final class SessionCoordinator {
     }
 
     func handle(_ intent: OrganizationIntent) async {
+        guard !isShuttingDown else { return }
         switch intent {
         case let .setLocalOnly(sessionID, enabled):
             setLocalOnly(enabled, for: sessionID)
@@ -133,14 +137,16 @@ final class SessionCoordinator {
     }
 
     func shutdown() {
+        guard !isShuttingDown else { return }
+        isShuttingDown = true
         activeOrganization?.task.cancel()
         activeOrganization = nil
         organizationQueue.removeAll()
 
-        let incompleteSessionIDs = sessions.values.compactMap {
-            $0.status == .recording || $0.isProcessing ? $0.id : nil
-        }
-        for sessionID in incompleteSessionIDs {
+        let activeSessionIDs = Set(processingTasks.keys).union(
+            sessions.values.compactMap { $0.status == .recording || $0.isProcessing ? $0.id : nil }
+        )
+        for sessionID in activeSessionIDs {
             processingTasks[sessionID]?.cancel()
             dependencies.cancelRecording(sessionID)
             _ = trackPreviewCancellation(sessionID)
@@ -148,9 +154,13 @@ final class SessionCoordinator {
         }
         recordingSessionID = nil
         processingTasks.removeAll()
+        mainSessionID = nil
+        latestTerminalSessionID = nil
+        snapshot = AppSnapshot(status: .idle, elapsedMilliseconds: 0, previewText: "", message: nil)
     }
 
     func handleToggleRecording() {
+        guard !isShuttingDown else { return }
         if let recordingSessionID {
             stopRecording(sessionID: recordingSessionID)
         } else {
@@ -218,7 +228,7 @@ final class SessionCoordinator {
 
     @discardableResult
     func startRecording() -> SessionID? {
-        guard recordingSessionID == nil else { return nil }
+        guard !isShuttingDown, recordingSessionID == nil else { return nil }
         guard processingSessionCount < 3 else {
             publishSnapshot()
             return nil
@@ -558,7 +568,9 @@ final class SessionCoordinator {
         for sessionID: SessionID,
         selectedRecordIDs requestedRecordIDs: Set<SessionID>
     ) async {
-        guard var session = sessions[sessionID], let transcript = session.transcript else { return }
+        guard !isShuttingDown,
+              var session = sessions[sessionID],
+              let transcript = session.transcript else { return }
         let requestID = UUID()
         session.organizationRequestID = requestID
         session.lastOrganizationSelectedRecordIDs = requestedRecordIDs
@@ -597,6 +609,12 @@ final class SessionCoordinator {
                 failOrganizationPreparation(sessionID, message: "Could not load history suggestions.")
                 return
             }
+            guard !Task.isCancelled,
+                  !isShuttingDown,
+                  let current = sessions[sessionID],
+                  current.organizationRequestID == requestID,
+                  current.transcript?.id == transcript.id else { return }
+            session = current
             suggestions = available
             session.suggestedRecords = suggestedRecords(from: available)
             selectedCandidateIDs = Set(available.localRecordByCandidateID.compactMap {
@@ -625,6 +643,11 @@ final class SessionCoordinator {
             model: useDeterministic ? "local-points" : endpoint?.model ?? "",
             providerKind: providerKind
         )
+        session.organizationReceipt = OrganizationPrivacyReceipt(
+            dispatch: .notSent,
+            characterCount: job.segments.reduce(0) { $0 + $1.text.count },
+            selectedRecordCount: job.selectedRecordIDs.count
+        )
         let pending = organizationRecord(for: job, state: .pending)
         do {
             try dependencies.updateOrganization(sessionID, pending)
@@ -645,7 +668,7 @@ final class SessionCoordinator {
     }
 
     private func startNextOrganizationIfNeeded() {
-        guard activeOrganization == nil, !organizationQueue.isEmpty else { return }
+        guard !isShuttingDown, activeOrganization == nil, !organizationQueue.isEmpty else { return }
         let job = organizationQueue.removeFirst()
         guard sessions[job.sessionID]?.organizationRequestID == job.requestID else {
             startNextOrganizationIfNeeded()
@@ -659,6 +682,7 @@ final class SessionCoordinator {
     }
 
     private func runOrganization(_ job: OrganizationJob) async {
+        guard !isShuttingDown else { return }
         var dispatchJob = job
         do {
             let output: OrganizationOutput
@@ -679,10 +703,11 @@ final class SessionCoordinator {
                 dispatchJob.provider = "deterministic"
                 dispatchJob.model = "local-points"
                 dispatchJob.providerKind = .local
-                try prepareRemoteDispatch(dispatchJob)
+                try prepareRemoteDispatch(dispatchJob, dispatch: .localNoDispatch)
                 output = try DeterministicOrganizer().organize(segments: dispatchJob.segments)
             }
             guard !Task.isCancelled,
+                  !isShuttingDown,
                   var session = sessions[dispatchJob.sessionID],
                   session.organizationRequestID == dispatchJob.requestID else {
                 completeOrganizationSlot(job)
@@ -717,6 +742,7 @@ final class SessionCoordinator {
             )
         } catch {
             guard !Task.isCancelled,
+                  !isShuttingDown,
                   sessions[dispatchJob.sessionID]?.organizationRequestID == dispatchJob.requestID else {
                 completeOrganizationSlot(job)
                 return
@@ -796,8 +822,12 @@ final class SessionCoordinator {
         )
     }
 
-    private func prepareRemoteDispatch(_ job: OrganizationJob) throws {
-        guard var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else {
+    private func prepareRemoteDispatch(
+        _ job: OrganizationJob,
+        dispatch: OrganizationReceiptDispatch = .sent
+    ) throws {
+        guard !isShuttingDown,
+              var session = sessions[job.sessionID], session.organizationRequestID == job.requestID else {
             throw CancellationError()
         }
         do {
@@ -806,6 +836,11 @@ final class SessionCoordinator {
             throw OrganizationRuntimeError.dispatchStateWriteFailed
         }
         session.organizationPhase = .organizing
+        session.organizationReceipt = OrganizationPrivacyReceipt(
+            dispatch: dispatch,
+            characterCount: job.segments.reduce(0) { $0 + $1.text.count },
+            selectedRecordCount: job.selectedRecordIDs.count
+        )
         session.secondaryRemovalScheduled = false
         sessions[job.sessionID] = session
         if let active = activeOrganization,
@@ -878,8 +913,12 @@ final class SessionCoordinator {
     }
 
     private func refreshHistorySuggestions(for sessionID: SessionID) async {
-        guard var session = sessions[sessionID],
-              let suggestions = try? await dependencies.historySuggestions(sessionID) else { return }
+        guard !isShuttingDown,
+              sessions[sessionID] != nil,
+              let suggestions = try? await dependencies.historySuggestions(sessionID),
+              !Task.isCancelled,
+              !isShuttingDown,
+              var session = sessions[sessionID] else { return }
         session.suggestedRecords = suggestedRecords(from: suggestions)
         sessions[sessionID] = session
     }
@@ -1052,7 +1091,7 @@ final class SessionCoordinator {
     }
 
     private func ownsProcessing(_ sessionID: SessionID) -> Bool {
-        !Task.isCancelled && sessions[sessionID]?.isProcessing == true
+        !Task.isCancelled && !isShuttingDown && sessions[sessionID]?.isProcessing == true
     }
 
     private func publishSnapshot() {
@@ -1070,6 +1109,7 @@ final class SessionCoordinator {
                     message: $0.message,
                     organizationPhase: $0.organizationPhase,
                     organizationRequestID: $0.organizationRequestID,
+                    organizationReceipt: $0.organizationReceipt,
                     suggestedRecords: $0.suggestedRecords
                 )
             }
@@ -1087,6 +1127,7 @@ final class SessionCoordinator {
             livePreviewAvailability: main.livePreviewAvailability,
             organizationPhase: main.organizationPhase,
             organizationRequestID: main.organizationRequestID,
+            organizationReceipt: main.organizationReceipt,
             suggestedRecords: main.suggestedRecords,
             secondaryProcessing: Array(secondary),
             canStartRecording: processingSessionCount < 3

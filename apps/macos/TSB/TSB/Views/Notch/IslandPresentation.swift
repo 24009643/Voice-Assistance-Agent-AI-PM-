@@ -240,15 +240,13 @@ struct IslandPresentation: Equatable, Sendable {
     }
 
     private static func privacyReceipt(for snapshot: AppSnapshot) -> String {
-        guard case let .organized(record) = snapshot.organizationPhase,
-              let characterCount = record.sentCharacterCount else { return "" }
-        let historyCount = record.selectedRecordIDs.count
-        let action = record.providerKind == .local ? "本地处理" : "已发送"
-        let historyIDs = record.selectedRecordIDs.map(\.rawValue.uuidString).joined(separator: "、")
-        let historyReceipt = historyIDs.isEmpty
-            ? "\(historyCount) 条历史摘要"
-            : "\(historyCount) 条历史摘要（\(historyIDs)）"
-        return "\(action) \(characterCount) 个字符 · \(historyReceipt)"
+        guard let receipt = snapshot.organizationReceipt else { return "" }
+        let action = switch receipt.dispatch {
+        case .sent: "已发送"
+        case .localNoDispatch: "仅本地处理，未发送"
+        case .notSent: "未发送"
+        }
+        return "\(action) \(receipt.characterCount) 个字符 · \(receipt.selectedRecordCount) 条历史摘要"
     }
 
     private static func status(

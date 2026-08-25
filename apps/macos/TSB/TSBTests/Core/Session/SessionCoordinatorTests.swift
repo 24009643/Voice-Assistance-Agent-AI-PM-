@@ -349,6 +349,29 @@ final class SessionCoordinatorTests: XCTestCase {
         await Task.yield()
     }
 
+    func testShutdownCancelsDeliveredBlockedHistoryBeforeOrganizationCanStart() async {
+        let harness = CoordinatorHarness(
+            transcript: "delivered text",
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsHistorySuggestions: true
+        )
+        let controller = AppController(state: AppState(), coordinator: harness.coordinator)
+
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.coordinator.handle(.toggleRecording)
+        await harness.finishRecording()
+        await harness.waitForDelivery()
+        await harness.waitUntilHistorySuggestionsStarts()
+
+        controller.stop()
+        harness.completeHistorySuggestions()
+        for _ in 0..<100 { await Task.yield() }
+
+        XCTAssertTrue(harness.organizationInputs.isEmpty)
+        XCTAssertNil(harness.coordinator.snapshot.sessionID)
+        XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+    }
+
     func testMenuStopRemainsSessionBoundWhenPermissionIsDenied() async throws {
         let harness = CoordinatorHarness(transcript: "final")
         await harness.coordinator.handle(.toggleRecording)
@@ -373,6 +396,27 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(microphoneRequestCount, 0)
         XCTAssertEqual(state.snapshot.status, .recording)
         XCTAssertEqual(state.snapshot.message, "Recording")
+    }
+
+    func testMenuStartWithMissingSenseVoiceDoesNotRequestPermissionOrStartRecording() async {
+        let harness = CoordinatorHarness(transcript: "final")
+        let state = AppState()
+        var microphoneRequestCount = 0
+        let controller = AppController(
+            state: state,
+            coordinator: harness.coordinator,
+            modelError: "SenseVoice model is unavailable.",
+            microphoneAuthorizationStatus: { .notDetermined },
+            requestMicrophonePermission: { _ in microphoneRequestCount += 1 }
+        )
+
+        controller.startRecordingFromUI()
+        await Task.yield()
+
+        XCTAssertEqual(microphoneRequestCount, 0)
+        XCTAssertTrue(harness.startedSessionIDs.isEmpty)
+        XCTAssertEqual(state.snapshot.status, .failed)
+        XCTAssertEqual(state.snapshot.message, "SenseVoice model is unavailable.")
     }
 
     func testStaleMenuActionsForSessionADoNotStartOrAffectSessionB() async throws {
@@ -441,6 +485,41 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(harness.startedSessionIDs.count, 2)
         XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        harness.completeHistorySuggestions()
+    }
+
+    func testControllerRecordingLaneStartsWhileOrganizationHistoryLoadIsBlocked() async throws {
+        let selectedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(
+            transcript: "first result",
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true),
+            historySuggestions: HistorySuggestions(
+                suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: "related")],
+                localRecordByCandidateID: ["h1": selectedID]
+            )
+        )
+        let state = AppState()
+        let controller = AppController(
+            state: state,
+            coordinator: harness.coordinator,
+            microphoneAuthorizationStatus: { .authorized }
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        harness.setSuspendsHistorySuggestions(true)
+        controller.dispatchOrganizationForDevelopment(
+            .enrichLinks(sessionID: sessionID, selectedRecordIDs: [selectedID])
+        )
+        await harness.waitUntilHistorySuggestionsStarts()
+
+        controller.startRecordingFromUI()
+        for _ in 0..<100 where harness.startedSessionIDs.count < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(harness.startedSessionIDs.count, 2)
         harness.completeHistorySuggestions()
     }
 
@@ -1625,7 +1704,7 @@ private final class CoordinatorHarness {
     private let organizationWriteFailures: Set<Int>
     private let persistedRecords: [TranscriptRecord]
     private let historySuggestions: HistorySuggestions
-    private let suspendsHistorySuggestions: Bool
+    private var suspendsHistorySuggestions: Bool
     private let livePreviewPipeline: LivePreviewPipeline?
     private let livePreviewAvailability: LivePreviewAvailability
     private let now: @MainActor () -> Date
@@ -1915,6 +1994,10 @@ private final class CoordinatorHarness {
 
     func setHistorySuggestionsError(_ error: Error?) {
         historySuggestionsError = error
+    }
+
+    func setSuspendsHistorySuggestions(_ suspended: Bool) {
+        suspendsHistorySuggestions = suspended
     }
 
     func waitUntilHistorySuggestionsStarts() async {
