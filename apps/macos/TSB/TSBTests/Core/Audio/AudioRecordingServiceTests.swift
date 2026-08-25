@@ -23,19 +23,34 @@ final class AudioRecordingServiceTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("AudioRecordingServiceTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let selected = directory.appendingPathComponent(fixedSessionID.rawValue.uuidString, isDirectory: true)
         let sibling = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
-        try Data([1]).write(to: selected.appendingPathComponent("audio.wav"))
         try Data([2]).write(to: sibling.appendingPathComponent("audio.wav"))
-        let service = AudioRecordingService(sessionsDirectory: directory)
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+        try service.start(sessionID: fixedSessionID, onFinished: { _ in })
+        let selected = directory.appendingPathComponent(fixedSessionID.rawValue.uuidString, isDirectory: true)
 
-        service.cancel(sessionID: fixedSessionID)
-        service.cancel(sessionID: fixedSessionID)
+        XCTAssertTrue(service.cancel(sessionID: fixedSessionID))
+        XCTAssertFalse(service.cancel(sessionID: fixedSessionID))
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: selected.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path))
+    }
+
+    func testCancelAfterRecorderStopPreservesFinishedWAV() throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = CaptureHarness()
+        let service = AudioRecordingService(sessionsDirectory: directory, makeCapture: harness.makeCapture)
+
+        try service.start(sessionID: fixedSessionID, onFinished: { _ in })
+        let audioURL = try XCTUnwrap(service.activeURL)
+        service.stop()
+        XCTAssertFalse(service.cancel(sessionID: fixedSessionID))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertEqual(harness.endCounts, [1])
     }
 
     func testConverterWritesAndChunksTheSame16kMonoFramesIncludingResidualTail() throws {

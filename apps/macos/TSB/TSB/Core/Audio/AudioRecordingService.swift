@@ -427,11 +427,12 @@ final class AudioRecordingService {
         finish(token: activeToken, reason: .stop, successfully: true)
     }
 
-    func cancel(sessionID: SessionID) {
-        if activeSessionID == sessionID, capture != nil {
-            finish(token: activeToken, reason: .cancel, successfully: false)
-        }
+    @discardableResult
+    func cancel(sessionID: SessionID) -> Bool {
+        guard activeSessionID == sessionID, capture != nil else { return false }
+        finish(token: activeToken, reason: .cancel, successfully: false)
         try? FileManager.default.removeItem(at: sessionDirectoryURL(for: sessionID))
+        return true
     }
 
     private func finish(

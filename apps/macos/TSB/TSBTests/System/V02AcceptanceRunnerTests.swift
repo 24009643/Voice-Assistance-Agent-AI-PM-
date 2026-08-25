@@ -623,6 +623,7 @@ private final class RunnerFailureHarness {
     let store: TranscriptStore
     private var onFinished: ((RecordedAudio) -> Void)?
     private var onPreview: ((SessionID, String) -> Void)?
+    private var recorderSessionID: SessionID?
     private let suspendsOrganization: Bool
     private let suspendsPreviewCancellation: Bool
     private let finishesOnStop: Bool
@@ -638,24 +639,31 @@ private final class RunnerFailureHarness {
 
     private(set) lazy var coordinator = SessionCoordinator(
         dependencies: .init(
-            startRecording: { [weak self] _, onPreview, _, _, onFinished, _ in
+            startRecording: { [weak self] sessionID, onPreview, _, _, onFinished, _ in
                 guard let self else { return }
                 startCount += 1
+                if throwsOnRecordingStart { throw RunnerFailureHarnessError.recordingStart }
+                recorderSessionID = sessionID
                 self.onPreview = onPreview
                 self.onFinished = onFinished
-                if throwsOnRecordingStart { throw RunnerFailureHarnessError.recordingStart }
             },
             stopRecording: { [weak self] in
                 guard let self else { return }
                 stopCount += 1
                 if finishesOnStop {
+                    recorderSessionID = nil
                     onFinished?(RecordedAudio(
                         url: FileManager.default.temporaryDirectory.appendingPathComponent("V02AcceptanceRunnerTests-late.wav"),
                         durationMilliseconds: 1
                     ))
                 }
             },
-            cancelRecording: { [weak self] _ in self?.cancelCount += 1 },
+            cancelRecording: { [weak self] sessionID in
+                guard let self, recorderSessionID == sessionID else { return false }
+                recorderSessionID = nil
+                cancelCount += 1
+                return true
+            },
             finishPreview: { _ in "late local text" },
             cancelPreview: { [weak self] _ in
                 guard let self else { return }
@@ -728,6 +736,7 @@ private final class RunnerFailureHarness {
     }
 
     func deliverLateFinishedAudio() async {
+        recorderSessionID = nil
         onFinished?(RecordedAudio(
             url: FileManager.default.temporaryDirectory.appendingPathComponent("V02AcceptanceRunnerTests-late.wav"),
             durationMilliseconds: 1

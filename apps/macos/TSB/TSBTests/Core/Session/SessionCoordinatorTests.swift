@@ -669,6 +669,82 @@ final class SessionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testCancelDuringFinishedCallbackHandoffPreservesAudioAndFinalizes() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(
+                transcript: "handoff final",
+                suspendsTranscription: true,
+                sessionsDirectory: root
+            )
+
+            await harness.coordinator.handle(.toggleRecording)
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("handoff audio".utf8).write(to: audioURL)
+
+            harness.handoffFinishedRecordingWithoutYield()
+            await harness.coordinator.handle(.cancelRecording)
+            await harness.waitUntilTranscriptionStarts()
+            guard harness.events.filter({ $0 == .transcribed }).count == 1 else { return }
+            harness.completeTranscription()
+            await harness.waitForDelivery()
+
+            XCTAssertEqual(try Data(contentsOf: audioURL), Data("handoff audio".utf8))
+            XCTAssertEqual(harness.cancelCount, 0)
+            XCTAssertTrue(harness.cancelledSessionIDs.isEmpty)
+            XCTAssertEqual(harness.savedRecords.single?.outcome, .success)
+            XCTAssertEqual(harness.copyCount, 1)
+        }
+    }
+
+    func testShutdownDuringFinishedCallbackHandoffPreservesAudio() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(transcript: "shutdown handoff", sessionsDirectory: root)
+
+            await harness.coordinator.handle(.toggleRecording)
+            let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+            let sessionDirectory = root.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("shutdown handoff audio".utf8).write(to: audioURL)
+
+            harness.handoffFinishedRecordingWithoutYield()
+            harness.coordinator.shutdown()
+            for _ in 0..<100 { await Task.yield() }
+
+            XCTAssertEqual(try Data(contentsOf: audioURL), Data("shutdown handoff audio".utf8))
+            XCTAssertEqual(harness.cancelCount, 0)
+            XCTAssertTrue(harness.cancelledSessionIDs.isEmpty)
+            XCTAssertEqual(harness.coordinator.snapshot.status, .idle)
+        }
+    }
+
+    func testDevelopmentCleanupDuringFinishedCallbackHandoffDrainsWithoutDeletingAudio() async throws {
+        try await withTemporarySessionsRoot { root in
+            let harness = CoordinatorHarness(transcript: "development handoff", sessionsDirectory: root)
+
+            let identity = try XCTUnwrap(harness.coordinator.startRecordingForDevelopment())
+            let sessionDirectory = root.appendingPathComponent(identity.sessionID.rawValue.uuidString, isDirectory: true)
+            let audioURL = sessionDirectory.appendingPathComponent("audio.wav")
+            try FileManager.default.createDirectory(at: sessionDirectory, withIntermediateDirectories: true)
+            try Data("development handoff audio".utf8).write(to: audioURL)
+
+            harness.handoffFinishedRecordingWithoutYield()
+            XCTAssertTrue(harness.coordinator.cancelDevelopmentWork(identity))
+            for _ in 0..<100 where !harness.coordinator.isDevelopmentWorkDrained(identity) {
+                await Task.yield()
+            }
+
+            XCTAssertTrue(harness.coordinator.isDevelopmentWorkDrained(identity))
+            XCTAssertEqual(try Data(contentsOf: audioURL), Data("development handoff audio".utf8))
+            XCTAssertEqual(harness.cancelCount, 0)
+            XCTAssertTrue(harness.cancelledSessionIDs.isEmpty)
+            XCTAssertEqual(harness.coordinator.snapshot.status, .cancelled)
+        }
+    }
+
     func testFourSequentialStopPendingDevelopmentCleanupsLeaveNoRecordingState() async throws {
         try await withTemporarySessionsRoot { root in
             let harness = CoordinatorHarness(transcript: "stopped cleanup", sessionsDirectory: root)
@@ -2360,6 +2436,7 @@ private final class CoordinatorHarness {
     private var onPreview: [(@MainActor (SessionID, String) -> Void)] = []
     private var onPreviewUnavailable: [(@MainActor (SessionID) -> Void)] = []
     private var onLevel: [(@Sendable (Float) -> Void)] = []
+    private var recorderSessionID: SessionID?
     private var pcmFeeds: [LivePreviewPipeline.Feed] = []
     private var transcriptionContinuations: [CheckedContinuation<TranscriptionResult, Error>?] = []
     private var previewCancellationContinuations: [CheckedContinuation<Void, Never>?] = []
@@ -2445,7 +2522,6 @@ private final class CoordinatorHarness {
     }
 
     private func makeCoordinator() -> SessionCoordinator {
-        let recorder = sessionsDirectory.map { AudioRecordingService(sessionsDirectory: $0) }
         store = sessionsDirectory.map(TranscriptStore.init(directory:))
         return SessionCoordinator(
             dependencies: .init(
@@ -2457,6 +2533,7 @@ private final class CoordinatorHarness {
                        let error = self?.startRecordingErrors[attempt] {
                         throw error
                     }
+                    self?.recorderSessionID = sessionID
                     self?.onPreview.append(onPreview)
                     self?.onPreviewUnavailable.append(onPreviewUnavailable)
                     self?.onLevel.append(onLevel)
@@ -2472,12 +2549,20 @@ private final class CoordinatorHarness {
                 },
                 stopRecording: { [weak self] in
                     self?.stopCount += 1
+                    self?.recorderSessionID = nil
                 },
                 cancelRecording: { [weak self] sessionID in
-                    recorder?.cancel(sessionID: sessionID)
-                    self?.cancelCount += 1
-                    self?.cancelledSessionIDs.append(sessionID)
-                    self?.audioWasDeleted = true
+                    guard let self, recorderSessionID == sessionID else { return false }
+                    recorderSessionID = nil
+                    if let sessionsDirectory {
+                        try? FileManager.default.removeItem(
+                            at: sessionsDirectory.appendingPathComponent(sessionID.rawValue.uuidString, isDirectory: true)
+                        )
+                    }
+                    cancelCount += 1
+                    cancelledSessionIDs.append(sessionID)
+                    audioWasDeleted = true
+                    return true
                 },
                 finishPreview: { [weak self] sessionID in
                     self?.finishedPreviewSessionIDs.append(sessionID)
@@ -2621,10 +2706,18 @@ private final class CoordinatorHarness {
     }
 
     func finishRecording(at index: Int? = nil) async {
+        recorderSessionID = nil
         events.append(.recordingFinished)
         let callback = index.map { onFinished[$0] } ?? onFinished.last
         callback?(RecordedAudio(url: audioURL, durationMilliseconds: 1_000))
         await Task.yield()
+    }
+
+    func handoffFinishedRecordingWithoutYield(at index: Int? = nil) {
+        recorderSessionID = nil
+        events.append(.recordingFinished)
+        let callback = index.map { onFinished[$0] } ?? onFinished.last
+        callback?(RecordedAudio(url: audioURL, durationMilliseconds: 1_000))
     }
 
     func publishPreview(_ text: String, at index: Int? = nil) {
@@ -2682,6 +2775,7 @@ private final class CoordinatorHarness {
     }
 
     func failRecording(at index: Int? = nil) async {
+        recorderSessionID = nil
         let callback = index.map { onFailed[$0] } ?? onFailed.last
         callback?(RecordedAudio(url: audioURL, durationMilliseconds: 500))
         await Task.yield()

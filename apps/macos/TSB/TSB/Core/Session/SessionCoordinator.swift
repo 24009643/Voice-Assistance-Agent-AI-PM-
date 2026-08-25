@@ -12,7 +12,7 @@ final class SessionCoordinator {
             @escaping @Sendable (RecordedAudio) -> Void
         ) throws -> Void
         let stopRecording: @MainActor () -> Void
-        let cancelRecording: @MainActor (SessionID) -> Void
+        let cancelRecording: @MainActor (SessionID) -> Bool
         let finishPreview: @MainActor (SessionID) async -> String
         let cancelPreview: @MainActor (SessionID) async -> Void
         let transcribe: @MainActor (URL) async throws -> TranscriptionResult
@@ -148,7 +148,7 @@ final class SessionCoordinator {
         }
         for session in sessions.values {
             if session.status == .recording && !session.stopRequested {
-                dependencies.cancelRecording(session.id)
+                _ = dependencies.cancelRecording(session.id)
             }
             _ = trackPreviewCancellation(session.id)
         }
@@ -209,11 +209,11 @@ final class SessionCoordinator {
             return identity.organizationRequestID == nil
         }
         guard session.organizationRequestID == identity.organizationRequestID else { return false }
-        if recordingSessionID == identity.sessionID,
-           session.status == .recording,
-           !session.stopRequested {
-            beginSessionCancellation(identity.sessionID)
-        } else {
+        let destructivelyCancelled = recordingSessionID == identity.sessionID
+            && session.status == .recording
+            && !session.stopRequested
+            && beginSessionCancellation(identity.sessionID) != nil
+        if !destructivelyCancelled {
             processingTasks[identity.sessionID]?.cancel()
             if session.status == .recording || session.isProcessing {
                 if recordingSessionID == identity.sessionID {
@@ -540,10 +540,10 @@ final class SessionCoordinator {
         guard var session = sessions[sessionID],
               recordingSessionID == sessionID,
               session.status == .recording,
-              !session.stopRequested else { return nil }
+              !session.stopRequested,
+              dependencies.cancelRecording(sessionID) else { return nil }
 
         processingTasks[sessionID]?.cancel()
-        dependencies.cancelRecording(sessionID)
         if recordingSessionID == sessionID { recordingSessionID = nil }
 
         let previewCancellation = trackPreviewCancellation(sessionID)
