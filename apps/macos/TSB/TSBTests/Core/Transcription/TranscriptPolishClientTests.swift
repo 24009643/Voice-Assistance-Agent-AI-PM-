@@ -1,0 +1,65 @@
+import XCTest
+@testable import TSB
+
+final class TranscriptPolishClientTests: XCTestCase {
+    override func tearDown() { PolishURLProtocol.handler = nil; super.tearDown() }
+
+    func testRequestContainsOnlyTextCandidatesAndTerminologyInExactOrder() async throws {
+        let request = fixtureRequest()
+        PolishURLProtocol.handler = { request in
+            let body = try XCTUnwrap(request.httpBody ?? readBody(request.httpBodyStream))
+            XCTAssertLessThanOrEqual(body.count, TranscriptPolishClient.maximumOuterBytes)
+            let outer = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(Array(outer.keys).sorted(), ["messages", "model", "response_format"])
+            let messages = try XCTUnwrap(outer["messages"] as? [[String: String]])
+            XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
+            let inner = try XCTUnwrap(messages.last?["content"])
+            XCTAssertLessThanOrEqual(Data(inner.utf8).count, TranscriptPolishClient.maximumInnerBytes)
+            XCTAssertFalse(inner.contains("audio")); XCTAssertFalse(inner.contains("session")); XCTAssertFalse(inner.contains("history"))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(inner.utf8)) as? [String: Any])
+            XCTAssertEqual(Array(payload.keys).sorted(), ["candidates", "request_id", "schema_version", "terminology"])
+            XCTAssertEqual((payload["candidates"] as? [[String: String]])?.map { $0["candidate_id"] }, ["offline", "streaming"])
+            return .response(self.makeOuterResponse(content: self.makeInnerResponse(for: self.fixtureRequest())))
+        }
+        let result = try await client().polish(request, apiKey: "synthetic-key")
+        guard case .accepted = result else { return XCTFail("expected accepted") }
+    }
+
+    func testRejectsInsecureEndpointOuterUnknownKeysAndMoreThanOneChoice() async throws {
+        await XCTAssertThrowsErrorAsync { try await self.client(url: "http://example.test/chat").polish(self.fixtureRequest(), apiKey: "key") }
+        for response in [Data("{\"choices\":[],\"leak\":true}".utf8), Data("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"{}\"}},{\"message\":{\"role\":\"assistant\",\"content\":\"{}\"}}]}".utf8)] {
+            PolishURLProtocol.handler = { _ in .response(response) }
+            await XCTAssertThrowsErrorAsync { try await self.client().polish(self.fixtureRequest(), apiKey: "key") }
+        }
+    }
+
+    func testRejectsOuterAndInnerOverflowAndCancellation() async throws {
+        PolishURLProtocol.handler = { _ in .response(Data(repeating: 0x20, count: TranscriptPolishClient.maximumOuterBytes + 1)) }
+        await XCTAssertThrowsErrorAsync { try await self.client().polish(self.fixtureRequest(), apiKey: "secret") }
+        let oversized = TranscriptPolishRequest(requestID: UUID(), candidates: [.init(id: .offline, text: String(repeating: "x", count: 8_001))], terminology: [])
+        await XCTAssertThrowsErrorAsync { try await self.client().polish(oversized, apiKey: "secret") }
+        let client = client()
+        let request = fixtureRequest()
+        let task = Task { try await client.polish(request, apiKey: "secret") }
+        task.cancel()
+        do { _ = try await task.value; XCTFail("expected cancellation") } catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    private func fixtureRequest() -> TranscriptPolishRequest { TranscriptPolishRequest(requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000042")!, candidates: [.init(id: .offline, text: "Use TB for this dictation"), .init(id: .streaming, text: "Use TSB for this dictation")], terminology: [.init(canonical: "TSB", aliases: ["TB"])]) }
+    private func client(url: String = "https://example.test/chat") -> TranscriptPolishClient { let c = URLSessionConfiguration.ephemeral; c.protocolClasses = [PolishURLProtocol.self]; return TranscriptPolishClient(endpoint: .init(baseURL: URL(string: url)!, model: "test-model"), session: URLSession(configuration: c)) }
+    private func makeInnerResponse(for request: TranscriptPolishRequest) -> String { String(decoding: try! JSONSerialization.data(withJSONObject: ["schema_version": "tsb.transcript_polish.response.v1", "request_id": request.requestID.uuidString.lowercased(), "candidate_hashes": request.candidates.map { ["candidate_id": $0.id.rawValue, "text_sha256": $0.textSHA256] }, "base_candidate_id": "offline", "corrected_text": "Use TSB for this dictation", "edits": [["kind": "terminology", "start_utf16": 4, "length_utf16": 2, "original": "TB", "replacement": "TSB", "reason": "approved"]]], options: [.sortedKeys]), as: UTF8.self) }
+    private func makeOuterResponse(content: String) -> Data { try! JSONSerialization.data(withJSONObject: ["choices": [["message": ["role": "assistant", "content": content]]]]) }
+}
+
+private func readBody(_ stream: InputStream?) -> Data? { guard let stream else { return nil }; stream.open(); defer { stream.close() }; var result = Data(); let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096); defer { buffer.deallocate() }; while stream.hasBytesAvailable { let count = stream.read(buffer, maxLength: 4096); guard count >= 0 else { return nil }; result.append(buffer, count: count) }; return result }
+
+private final class PolishURLProtocol: URLProtocol, @unchecked Sendable {
+    nonisolated(unsafe) static var handler: ((URLRequest) throws -> Result)?
+    enum Result { case response(Data) }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { do { guard let handler = Self.handler else { throw URLError(.badServerResponse) }; switch try handler(request) { case let .response(data): client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed); client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self) } } catch { client?.urlProtocol(self, didFailWithError: error) } }
+    override func stopLoading() {}
+}
+
+private func XCTAssertThrowsErrorAsync<T>(_ expression: @escaping () async throws -> T, file: StaticString = #filePath, line: UInt = #line) async { do { _ = try await expression(); XCTFail("Expected error", file: file, line: line) } catch {} }

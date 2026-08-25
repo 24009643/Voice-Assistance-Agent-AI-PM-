@@ -1,0 +1,57 @@
+import Foundation
+
+enum TranscriptPolishValidationError: Error, Equatable { case invalidShape, limitExceeded, mismatch, invalidEdit }
+
+struct TranscriptPolishValidator {
+    static let schemaVersion = "tsb.transcript_polish.response.v1"
+
+    func validate(_ data: Data, for request: TranscriptPolishRequest) throws -> TranscriptPolishOutcome {
+        guard data.count <= TranscriptPolishClient.maximumInnerBytes else { throw TranscriptPolishValidationError.limitExceeded }
+        let object = try exact(data, keys: ["schema_version", "request_id", "candidate_hashes", "base_candidate_id", "corrected_text", "edits"])
+        guard object["schema_version"] as? String == Self.schemaVersion,
+              object["request_id"] as? String == request.requestID.uuidString.lowercased(),
+              let baseRaw = object["base_candidate_id"] as? String, let base = TranscriptCandidate.ID(rawValue: baseRaw),
+              let baseText = request.candidates.first(where: { $0.id == base })?.text,
+              let corrected = object["corrected_text"] as? String, !corrected.isEmpty, corrected.unicodeScalars.count <= 8_000 else { throw TranscriptPolishValidationError.mismatch }
+        guard hashes(object["candidate_hashes"], match: request.candidates), let rawEdits = object["edits"] as? [Any], rawEdits.count <= 128 else { throw TranscriptPolishValidationError.invalidShape }
+        let edits = try rawEdits.map(decodeEdit)
+        guard edits.allSatisfy({ $0.original.unicodeScalars.count <= 256 && $0.replacement.unicodeScalars.count <= 256 && $0.reason.unicodeScalars.count <= 120 }),
+              edits.reduce(0, { $0 + $1.lengthUTF16 }) <= max(1, Int(ceil(Double(baseText.utf16.count) * 0.2))),
+              immutableTokens(in: baseText) == immutableTokens(in: corrected),
+              applying(edits, to: baseText) == corrected else { throw TranscriptPolishValidationError.invalidEdit }
+        let automatic = edits.allSatisfy { isAutomatic($0, base: baseText, request: request) }
+        return automatic ? .accepted(baseCandidateID: base, text: corrected, edits: edits) : .reviewRequired(baseCandidateID: base, text: corrected, edits: edits)
+    }
+
+    private func exact(_ data: Data, keys: Set<String>) throws -> [String: Any] {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any], Set(object.keys) == keys else { throw TranscriptPolishValidationError.invalidShape }; return object
+    }
+    private func hashes(_ any: Any?, match candidates: [TranscriptCandidate]) -> Bool {
+        guard let list = any as? [[String: Any]], list.count == candidates.count else { return false }
+        return zip(list, candidates).allSatisfy { item, candidate in Set(item.keys) == ["candidate_id", "text_sha256"] && item["candidate_id"] as? String == candidate.id.rawValue && item["text_sha256"] as? String == candidate.textSHA256 }
+    }
+    private func decodeEdit(_ any: Any) throws -> TranscriptPolishEdit {
+        guard let object = any as? [String: Any], Set(object.keys) == ["kind", "start_utf16", "length_utf16", "original", "replacement", "reason"], let kindRaw = object["kind"] as? String, let kind = TranscriptPolishEditKind(rawValue: kindRaw), let start = object["start_utf16"] as? Int, let length = object["length_utf16"] as? Int, let original = object["original"] as? String, let replacement = object["replacement"] as? String, let reason = object["reason"] as? String, start >= 0, length >= 0 else { throw TranscriptPolishValidationError.invalidShape }
+        return .init(kind: kind, startUTF16: start, lengthUTF16: length, original: original, replacement: replacement, reason: reason)
+    }
+    private func applying(_ edits: [TranscriptPolishEdit], to text: String) -> String? {
+        var prior = 0; var result = text
+        for edit in edits { guard edit.startUTF16 >= prior, edit.startUTF16 + edit.lengthUTF16 <= text.utf16.count, let range = Range(NSRange(location: edit.startUTF16, length: edit.lengthUTF16), in: text), text[range] == edit.original else { return nil }; prior = edit.startUTF16 + edit.lengthUTF16 }
+        for edit in edits.reversed() { guard let range = Range(NSRange(location: edit.startUTF16, length: edit.lengthUTF16), in: result) else { return nil }; result.replaceSubrange(range, with: edit.replacement) }
+        return result
+    }
+    private func isAutomatic(_ edit: TranscriptPolishEdit, base: String, request: TranscriptPolishRequest) -> Bool {
+        switch edit.kind {
+        case .formatting: return edit.original.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) || CharacterSet.letters.contains($0) } && edit.replacement.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) || CharacterSet.letters.contains($0) } && edit.original.lowercased() == edit.replacement.lowercased() || (edit.original.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) } && edit.replacement.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) })
+        case .terminology: return request.terminology.contains { $0.canonical == edit.replacement && $0.aliases.contains(edit.original) }
+        case .candidateSupported: return candidateSupported(edit, base: base, request: request)
+        }
+    }
+    private func candidateSupported(_ edit: TranscriptPolishEdit, base: String, request: TranscriptPolishRequest) -> Bool {
+        let other = request.candidates.first { $0.text != base }?.text ?? ""
+        guard other.contains(edit.replacement), let range = Range(NSRange(location: edit.startUTF16, length: edit.lengthUTF16), in: base) else { return false }
+        let left = String(base[..<range.lowerBound]).suffix(4), right = String(base[range.upperBound...]).prefix(4)
+        return (left.count < 4 || other.contains(left)) && (right.count < 4 || other.contains(right))
+    }
+    private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|\\d+"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
+}
