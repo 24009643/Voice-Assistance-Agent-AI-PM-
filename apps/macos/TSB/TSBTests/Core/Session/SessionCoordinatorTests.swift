@@ -7,6 +7,138 @@ import XCTest
 
 @MainActor
 final class SessionCoordinatorTests: XCTestCase {
+    func test401KeepsVisibleSentReceiptMetadata() async throws {
+        let source = "401 receipt source"
+        let summary = "selected private summary"
+        let selectedID = SessionID(rawValue: UUID())
+        let harness = CoordinatorHarness(
+            transcript: source,
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true),
+            organizationErrors: [nil, OrganizationClientError.httpStatus(401)],
+            historySuggestions: HistorySuggestions(
+                suggestedSummaries: [HistorySummaryDTO(candidateID: "h1", summary: summary)],
+                localRecordByCandidateID: ["h1": selectedID]
+            )
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        await harness.coordinator.handle(.enrichLinks(
+            sessionID: sessionID,
+            selectedRecordIDs: [selectedID]
+        ))
+        await harness.waitUntilOrganizationStarts(count: 2)
+        await harness.waitUntilOrganizationUpdateCount(6)
+
+        assertReceipt(
+            try XCTUnwrap(harness.coordinator.snapshot.organizationReceipt),
+            dispatch: .sent,
+            characterCount: source.count,
+            selectedRecordCount: 1,
+            forbiddenContent: [source, summary, selectedID.rawValue.uuidString]
+        )
+    }
+
+    func testTimeoutKeepsVisibleSentReceiptMetadata() async throws {
+        let source = "timeout receipt source"
+        let harness = CoordinatorHarness(
+            transcript: source,
+            organizationSettings: remoteOrganizationSettings(),
+            organizationErrors: [URLError(.timedOut)]
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationFinishes()
+
+        assertReceipt(
+            try XCTUnwrap(harness.coordinator.snapshot.organizationReceipt),
+            dispatch: .sent,
+            characterCount: source.count,
+            selectedRecordCount: 0,
+            forbiddenContent: [source]
+        )
+    }
+
+    func testCancelAfterDispatchKeepsVisibleSentReceiptMetadata() async throws {
+        let source = "cancel receipt source"
+        let harness = CoordinatorHarness(
+            transcript: source,
+            organizationSettings: remoteOrganizationSettings(),
+            suspendsOrganization: true
+        )
+
+        await harness.runOneSession()
+        await harness.waitUntilOrganizationStarts()
+        let sessionID = try XCTUnwrap(harness.startedSessionIDs.single)
+        let requestID = try XCTUnwrap(harness.organizationInputs.single?.requestID)
+        await harness.coordinator.handle(.cancel(sessionID: sessionID, requestID: requestID))
+
+        assertReceipt(
+            try XCTUnwrap(harness.coordinator.snapshot.organizationReceipt),
+            dispatch: .sent,
+            characterCount: source.count,
+            selectedRecordCount: 0,
+            forbiddenContent: [source]
+        )
+        harness.completeOrganization()
+    }
+
+    func testLocalAndNoDispatchReceiptsReportNoSend() async throws {
+        let localSource = "local receipt source"
+        let local = CoordinatorHarness(
+            transcript: localSource,
+            organizationSettings: remoteOrganizationSettings()
+        )
+        await local.coordinator.handle(.toggleRecording)
+        let sessionID = try XCTUnwrap(local.startedSessionIDs.single)
+        await local.coordinator.handle(.setLocalOnly(sessionID: sessionID, enabled: true))
+        await local.coordinator.handle(.toggleRecording)
+        await local.finishRecording()
+        await local.waitUntilOrganizationFinishes()
+
+        assertReceipt(
+            try XCTUnwrap(local.coordinator.snapshot.organizationReceipt),
+            dispatch: .localNoDispatch,
+            characterCount: localSource.count,
+            selectedRecordCount: 0,
+            forbiddenContent: [localSource]
+        )
+
+        let blockedSource = "authorization receipt source"
+        let blocked = CoordinatorHarness(transcript: blockedSource)
+        await blocked.runOneSession()
+
+        assertReceipt(
+            try XCTUnwrap(blocked.coordinator.snapshot.organizationReceipt),
+            dispatch: .notSent,
+            characterCount: blockedSource.count,
+            selectedRecordCount: 0,
+            forbiddenContent: [blockedSource]
+        )
+
+        let preflightSource = "preflight receipt source"
+        let preflight = CoordinatorHarness(
+            transcript: preflightSource,
+            organizationSettings: remoteOrganizationSettings(allowsHistory: true),
+            historySuggestionsError: TestError.disk
+        )
+        await preflight.runOneSession()
+        await preflight.waitUntilOrganizationFinishes()
+        await preflight.coordinator.handle(.enrichLinks(
+            sessionID: try XCTUnwrap(preflight.startedSessionIDs.single),
+            selectedRecordIDs: [SessionID(rawValue: UUID())]
+        ))
+
+        assertReceipt(
+            try XCTUnwrap(preflight.coordinator.snapshot.organizationReceipt),
+            dispatch: .notSent,
+            characterCount: preflightSource.count,
+            selectedRecordCount: 0,
+            forbiddenContent: [preflightSource]
+        )
+    }
+
     func testSuccessfulStopSavesARetainedSuccessRecordAndCopiesExactlyOnce() async throws {
         let harness = CoordinatorHarness(transcript: "原始文本")
 
@@ -36,8 +168,37 @@ final class SessionCoordinatorTests: XCTestCase {
             originalText: "原始文本",
             message: "已复制 · 按 ⌘V 粘贴",
             organizationPhase: .authorizationRequired,
-            organizationRequestID: authorizationAttemptID
+            organizationRequestID: authorizationAttemptID,
+            organizationReceipt: OrganizationPrivacyReceipt(
+                dispatch: .notSent,
+                characterCount: "原始文本".count,
+                selectedRecordCount: 0
+            )
         ))
+    }
+
+    private func assertReceipt(
+        _ receipt: OrganizationPrivacyReceipt,
+        dispatch: OrganizationReceiptDispatch,
+        characterCount: Int,
+        selectedRecordCount: Int,
+        forbiddenContent: [String],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(receipt.dispatch, dispatch, file: file, line: line)
+        XCTAssertEqual(receipt.characterCount, characterCount, file: file, line: line)
+        XCTAssertEqual(receipt.selectedRecordCount, selectedRecordCount, file: file, line: line)
+        XCTAssertEqual(
+            Set(Mirror(reflecting: receipt).children.compactMap(\.label)),
+            ["dispatch", "characterCount", "selectedRecordCount"],
+            file: file,
+            line: line
+        )
+        let reflected = String(reflecting: receipt)
+        for content in forbiddenContent {
+            XCTAssertFalse(reflected.contains(content), file: file, line: line)
+        }
     }
 
     func testRepeatedStopAndRepeatedFinishedCallbackDoNotDeliverTwice() async throws {

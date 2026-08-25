@@ -579,6 +579,13 @@ final class SessionCoordinator {
         sessions[sessionID] = session
         let settings = dependencies.currentOrganizationSettings()
         let useDeterministic = session.localOnly && settings.endpoint?.isLoopback != true
+        let segments = (try? DeterministicOrganizer().segments(from: transcript.localCleanedText)) ?? []
+        session.organizationReceipt = OrganizationPrivacyReceipt(
+            dispatch: .notSent,
+            characterCount: segments.reduce(0) { $0 + $1.text.count },
+            selectedRecordCount: 0
+        )
+        sessions[sessionID] = session
         guard useDeterministic || settings.endpoint?.isLoopback == true || settings.isRemoteDispatchEligible else {
             session.organizationPhase = .authorizationRequired
             session.resultRetainedForDisplay = true
@@ -634,7 +641,7 @@ final class SessionCoordinator {
             }.sorted { $0.rawValue.uuidString < $1.rawValue.uuidString }
         }
 
-        guard let segments = try? DeterministicOrganizer().segments(from: transcript.localCleanedText), !segments.isEmpty else {
+        guard !segments.isEmpty else {
             failOrganizationPreparation(sessionID, message: "Nothing to organize.")
             return
         }

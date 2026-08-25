@@ -399,10 +399,12 @@ final class IslandPresentationTests: XCTestCase {
         XCTAssertFalse(presentation.controls.map(\.action).contains(.generateLinks))
     }
 
+    @MainActor
     func testPrivacyReceiptShowsOnlyMetadataForSentFailure() {
         let presentation = IslandPresentation.make(
             for: snapshot(
                 status: .delivered,
+                previewText: "local transcript remains available",
                 organizationPhase: .failed("401"),
                 organizationReceipt: OrganizationPrivacyReceipt(dispatch: .sent, characterCount: 128, selectedRecordCount: 1)
             ),
@@ -413,8 +415,30 @@ final class IslandPresentationTests: XCTestCase {
             presentation.privacyReceiptText,
             "已发送 128 个字符 · 1 条历史摘要"
         )
+        XCTAssertEqual(presentation.statusText, "401")
+        XCTAssertTrue(
+            IslandView.statusDetailText(for: presentation).hasPrefix("已发送 128 个字符")
+        )
     }
 
+    @MainActor
+    func testCancelledOrganizationStatusDetailIncludesSentReceipt() {
+        let presentation = IslandPresentation.make(for: snapshot(
+            status: .delivered,
+            previewText: "cancelled local transcript",
+            organizationPhase: .failed("Organization cancelled."),
+            organizationReceipt: OrganizationPrivacyReceipt(
+                dispatch: .sent,
+                characterCount: 128,
+                selectedRecordCount: 1
+            )
+        ))
+
+        XCTAssertEqual(presentation.statusText, "Organization cancelled.")
+        XCTAssertTrue(IslandView.statusDetailText(for: presentation).hasPrefix("已发送 128 个字符"))
+    }
+
+    @MainActor
     func testPrivacyReceiptDistinguishesTimeoutCancelAndNoDispatch() {
         let cases: [(OrganizationReceiptDispatch, String)] = [
             (.sent, "已发送"), // timeout or cancellation after dispatch
@@ -428,6 +452,7 @@ final class IslandPresentationTests: XCTestCase {
                 organizationReceipt: OrganizationPrivacyReceipt(dispatch: dispatch, characterCount: 128, selectedRecordCount: 1)
             ))
             XCTAssertEqual(presentation.privacyReceiptText, "\(prefix) 128 个字符 · 1 条历史摘要")
+            XCTAssertTrue(IslandView.statusDetailText(for: presentation).hasPrefix(prefix))
         }
     }
 

@@ -120,7 +120,11 @@ struct IslandView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(presentation.accessibilityLabel)
+            .accessibilityLabel(
+                presentation.privacyReceiptText.isEmpty
+                    ? presentation.accessibilityLabel
+                    : "\(presentation.accessibilityLabel)，整理隐私回执，\(presentation.privacyReceiptText)"
+            )
 
             ForEach(compactActions, id: \.self) { action in
                 actionButton(action, prominent: isPrimary(action))
@@ -386,6 +390,8 @@ struct IslandView: View {
     }
 
     static func statusDetailText(for presentation: IslandPresentation) -> String {
-        presentation.draft
+        [presentation.privacyReceiptText, presentation.draft]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
     }
 }

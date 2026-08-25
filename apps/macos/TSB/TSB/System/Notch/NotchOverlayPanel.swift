@@ -122,6 +122,10 @@ final class NotchOverlayPanel {
         currentPresentation?.size
     }
 
+    var presentedPrivacyReceiptText: String? {
+        currentPresentation?.privacyReceiptText
+    }
+
     var isIgnoringMouseEvents: Bool {
         window?.ignoresMouseEvents ?? true
     }
@@ -152,6 +156,7 @@ final class NotchOverlayPanel {
                 message: secondary.message,
                 organizationPhase: secondary.organizationPhase,
                 organizationRequestID: secondary.organizationRequestID,
+                organizationReceipt: secondary.organizationReceipt,
                 suggestedRecords: secondary.suggestedRecords
             )
             latestResultSnapshot = secondarySnapshot

@@ -130,6 +130,11 @@ final class OverlayGenerationTests: XCTestCase {
     func testCompletedSecondaryResultIsRetainedWithItsOwnSessionID() throws {
         let screen = try XCTUnwrap(NSScreen.screens.first)
         let secondaryID = SessionID(rawValue: UUID())
+        let receipt = OrganizationPrivacyReceipt(
+            dispatch: .sent,
+            characterCount: 128,
+            selectedRecordCount: 1
+        )
         let panel = NotchOverlayPanel(screen: screen, onIntent: { _ in })
 
         panel.update(AppSnapshot(
@@ -143,12 +148,21 @@ final class OverlayGenerationTests: XCTestCase {
                     status: .delivered,
                     previewText: "older result",
                     message: "已复制 · 按 ⌘V 粘贴",
-                    organizationPhase: .organized(organizedRecord())
+                    organizationPhase: .organized(organizedRecord()),
+                    organizationReceipt: receipt
                 ),
             ]
         ))
 
         XCTAssertEqual(panel.latestResultSessionID, secondaryID)
+        panel.update(AppSnapshot(
+            status: .idle,
+            elapsedMilliseconds: 0,
+            previewText: "",
+            message: nil
+        ))
+        panel.perform(.reopenLatest)
+        XCTAssertEqual(panel.presentedPrivacyReceiptText, "已发送 128 个字符 · 1 条历史摘要")
     }
 
     @MainActor
