@@ -174,7 +174,8 @@ final class TranscriptStoreTests: XCTestCase {
 
         try store.updateDelivery(id: record.id, status: .copied, receipt: receipt)
 
-        let rewritten = try store.load(id: record.id)
+        let restartedStore = TranscriptStore(directory: directory)
+        let rewritten = try restartedStore.load(id: record.id)
         XCTAssertEqual(rewritten.deliveryStatus, .copied)
         XCTAssertEqual(rewritten.deliveryReceipt, receipt)
     }

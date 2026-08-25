@@ -503,6 +503,37 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         }
     }
 
+    func testMissingInvalidAndInconsistentDeliveryEvidenceCannotPassAcceptance() throws {
+        let missingSource = makeCycle(number: 1, deliverySource: nil, polishState: .notRequested)
+        XCTAssertFalse(missingSource.hasValidDeliveryEvidence)
+
+        let missingState = makeCycle(number: 2, deliverySource: .local, polishState: nil)
+        XCTAssertFalse(missingState.hasValidDeliveryEvidence)
+
+        let invalid = makeCycle(number: 3, deliverySource: .polished, polishState: .timedOut)
+        XCTAssertFalse(invalid.hasValidDeliveryEvidence)
+
+        let valid = makeCycle(number: 4, deliverySource: .local, polishState: .notRequested)
+        XCTAssertTrue(valid.hasValidDeliveryEvidence)
+
+        let encodedMissingSource = try JSONSerialization.jsonObject(with: JSONEncoder().encode(missingSource)) as? [String: Any]
+        XCTAssertTrue(encodedMissingSource?["delivery_source"] is NSNull)
+        XCTAssertEqual(encodedMissingSource?["polish_state"] as? String, TranscriptPolishState.notRequested.rawValue)
+
+        let encodedMissingState = try JSONSerialization.jsonObject(with: JSONEncoder().encode(missingState)) as? [String: Any]
+        XCTAssertEqual(encodedMissingState?["delivery_source"] as? String, TranscriptDeliverySource.local.rawValue)
+        XCTAssertTrue(encodedMissingState?["polish_state"] is NSNull)
+
+        let encodedValid = try JSONSerialization.jsonObject(with: JSONEncoder().encode(valid)) as? [String: Any]
+        XCTAssertEqual(encodedValid?["delivery_source"] as? String, TranscriptDeliverySource.local.rawValue)
+        XCTAssertEqual(encodedValid?["polish_state"] as? String, TranscriptPolishState.notRequested.rawValue)
+
+        let rows = (1...100).map { number in
+            makeCycle(number: number, deliverySource: number == 1 ? nil : .local, polishState: .notRequested)
+        }
+        XCTAssertFalse(V02AcceptanceMetrics.summarize(cycles: rows, requestedCycles: 100).m10Passed)
+    }
+
     func testEvidenceEncodingContainsOnlyTheExplicitMetadataAllowlist() throws {
         let encoder = JSONEncoder()
         let cycleKeys = try encodedKeys(encoder.encode(makeCycle(number: 1)))
@@ -512,12 +543,12 @@ final class V02AcceptanceRunnerTests: XCTestCase {
             "delivery_source",
             "delivery_status",
             "first_preview_milliseconds",
-            "immediate_equals_local",
+            "immediate_equals_delivered",
             "organization_did_not_recopy",
             "organization_terminal_category",
             "polish_elapsed_ms",
             "polish_state",
-            "post_organization_equals_local",
+            "post_organization_equals_delivered",
             "record_delta",
             "result_category",
             "row_type",
@@ -593,6 +624,8 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         firstPreviewMilliseconds: Int = 800,
         stopToLocalFinalMilliseconds: Int = 1_500,
         stopToCopyMilliseconds: Int = 2_000,
+        deliverySource: TranscriptDeliverySource? = .local,
+        polishState: TranscriptPolishState? = .notRequested,
         recordDelta: Int? = 1,
         copyChangeCountDelta: Int? = 1,
         organizationDidNotRecopy: Bool = true,
@@ -606,13 +639,13 @@ final class V02AcceptanceRunnerTests: XCTestCase {
             polishElapsedMilliseconds: 0,
             stopToCopyMilliseconds: stopToCopyMilliseconds,
             deliveryStatus: "copied",
-            deliverySource: "local",
-            polishState: TranscriptPolishState.notRequested.rawValue,
+            deliverySource: deliverySource,
+            polishState: polishState,
             recordDelta: recordDelta,
             copyChangeCountDelta: copyChangeCountDelta,
             organizationTerminalCategory: "organized_local",
-            immediateEqualsLocal: true,
-            postOrganizationEqualsLocal: true,
+            immediateEqualsDelivered: true,
+            postOrganizationEqualsDelivered: true,
             organizationDidNotRecopy: organizationDidNotRecopy,
             resultCategory: resultCategory
         )

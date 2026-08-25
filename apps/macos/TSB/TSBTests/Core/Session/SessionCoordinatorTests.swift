@@ -153,7 +153,9 @@ final class SessionCoordinatorTests: XCTestCase {
                 dispatch: .notSent,
                 characterCount: "原始文本".count,
                 selectedRecordCount: 0
-            )
+            ),
+            polishState: .notRequested,
+            deliverySource: .local
         ))
     }
 
@@ -654,7 +656,8 @@ final class SessionCoordinatorTests: XCTestCase {
             elapsedMilliseconds: 1_000,
             previewText: "原始文本",
             originalText: "原始文本",
-            message: "已复制，但未能记录复制状态"
+            message: "已复制，但未能记录复制状态",
+            polishState: .notRequested
         ))
     }
 

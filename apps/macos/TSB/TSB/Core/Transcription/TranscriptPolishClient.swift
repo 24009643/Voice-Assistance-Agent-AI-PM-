@@ -9,7 +9,11 @@ struct TranscriptPolishClient: Sendable {
     static let maximumInnerBytes = 49_152
     private let endpoint: TranscriptPolishEndpoint; private let session: URLSession; private let onRedirectRejected: @Sendable () -> Void
     init(endpoint: TranscriptPolishEndpoint, session: URLSession = .shared, onRedirectRejected: @escaping @Sendable () -> Void = {}) { self.endpoint = endpoint; self.session = session; self.onRedirectRejected = onRedirectRejected }
-    func polish(_ request: TranscriptPolishRequest, apiKey: String) async throws -> TranscriptPolishOutcome {
+    func polish(
+        _ request: TranscriptPolishRequest,
+        apiKey: String,
+        onRequestPrepared: @escaping @MainActor @Sendable () -> Void = {}
+    ) async throws -> TranscriptPolishOutcome {
         try Task.checkCancellation(); try validate(request)
         let host = endpoint.baseURL.host?.lowercased(); let loopback = ["localhost", "127.0.0.1", "::1"].contains(host)
         guard endpoint.baseURL.scheme?.lowercased() == "https" || (endpoint.baseURL.scheme?.lowercased() == "http" && loopback) else { throw TranscriptPolishClientError.insecureEndpoint }
@@ -18,6 +22,8 @@ struct TranscriptPolishClient: Sendable {
         let body = try JSONSerialization.data(withJSONObject: ["model": endpoint.model, "messages": [["role": "system", "content": Self.systemContract], ["role": "user", "content": String(decoding: inner, as: UTF8.self)]], "response_format": ["type": "json_object"]], options: [.sortedKeys])
         guard body.count <= Self.maximumOuterBytes else { throw TranscriptPolishClientError.invalidRequest }
         var urlRequest = URLRequest(url: endpoint.baseURL); urlRequest.httpMethod = "POST"; urlRequest.httpBody = body; urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type"); if !apiKey.isEmpty { urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
+        try Task.checkCancellation()
+        await onRequestPrepared()
         let (bytes, response) = try await session.bytes(for: urlRequest, delegate: TranscriptPolishRejectRedirectDelegate(onRejected: onRedirectRejected)); try Task.checkCancellation()
         guard response.expectedContentLength <= Int64(Self.maximumOuterBytes) else { throw TranscriptPolishClientError.responseTooLarge }
         var data = Data(); data.reserveCapacity(min(max(Int(response.expectedContentLength), 0), Self.maximumOuterBytes))

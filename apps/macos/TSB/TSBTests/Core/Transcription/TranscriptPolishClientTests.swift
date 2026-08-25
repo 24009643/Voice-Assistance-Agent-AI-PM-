@@ -47,6 +47,31 @@ final class TranscriptPolishClientTests: XCTestCase {
         do { _ = try await task.value; XCTFail("expected cancellation") } catch { XCTAssertTrue(error is CancellationError) }
     }
 
+    func testRequestPreparedDispatchesOnceImmediatelyBeforeTransportAndNeverForInvalidRequest() async throws {
+        let events = EventLog()
+        PolishURLProtocol.handler = { _ in
+            events.append("transport")
+            return .response(self.makeOuterResponse(content: self.makeInnerResponse(for: self.fixtureRequest())))
+        }
+
+        _ = try await client().polish(fixtureRequest(), apiKey: "synthetic-key", onRequestPrepared: {
+            events.append("dispatch")
+        })
+        XCTAssertEqual(events.values, ["dispatch", "transport"])
+
+        let invalid = TranscriptPolishRequest(
+            requestID: UUID(),
+            candidates: [.init(id: .offline, text: String(repeating: "x", count: 8_001))],
+            terminology: []
+        )
+        await XCTAssertThrowsErrorAsync {
+            try await self.client().polish(invalid, apiKey: "synthetic-key", onRequestPrepared: {
+                events.append("invalid-dispatch")
+            })
+        }
+        XCTAssertEqual(events.values, ["dispatch", "transport"])
+    }
+
     func testAllowsLoopbackAndRejectsEmptyOrIrrelevantTerminology() async throws {
         PolishURLProtocol.handler = { _ in .response(self.makeOuterResponse(content: self.makeInnerResponse(for: self.fixtureRequest()))) }
         _ = try await client(url: "http://127.0.0.1:11434/chat").polish(fixtureRequest(), apiKey: "")
@@ -91,3 +116,4 @@ private final class PolishURLProtocol: URLProtocol, @unchecked Sendable {
 
 private func XCTAssertThrowsErrorAsync<T>(_ expression: @escaping () async throws -> T, file: StaticString = #filePath, line: UInt = #line) async { do { _ = try await expression(); XCTFail("Expected error", file: file, line: line) } catch {} }
 private final class URLList: @unchecked Sendable { private let lock = NSLock(); private var urls: [URL] = []; func append(_ url: URL) { lock.lock(); urls.append(url); lock.unlock() }; var values: [URL] { lock.lock(); defer { lock.unlock() }; return urls } }
+private final class EventLog: @unchecked Sendable { private let lock = NSLock(); private var events: [String] = []; func append(_ event: String) { lock.lock(); events.append(event); lock.unlock() }; var values: [String] { lock.lock(); defer { lock.unlock() }; return events } }

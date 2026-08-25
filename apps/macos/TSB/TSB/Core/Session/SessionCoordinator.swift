@@ -28,7 +28,7 @@ final class SessionCoordinator {
         var polish: @MainActor (
             TranscriptPolishRequest,
             Bool,
-            @MainActor (OrganizationEndpointSettings, ProviderKind) -> Void
+            @escaping @MainActor (OrganizationEndpointSettings, ProviderKind) -> Void
         ) async throws -> TranscriptPolishOutcome = { _, _, _ in
             throw TranscriptPolishDispatchError.notEligible
         }
@@ -1541,7 +1541,7 @@ final class SessionCoordinator {
             organizationPhase: main.organizationPhase,
             organizationRequestID: main.organizationRequestID,
             organizationReceipt: main.organizationReceipt,
-            polishState: main.transcript?.polish?.state,
+            polishState: main.transcript.map { $0.polish?.state ?? .notRequested },
             deliverySource: main.transcript?.deliveryReceipt?.source,
             suggestedRecords: main.suggestedRecords,
             secondaryProcessing: Array(secondary),

@@ -205,6 +205,9 @@ final class AppController: ObservableObject {
                 updateDeliveryStatus: { sessionID, status in
                     try store.updateDeliveryStatus(id: sessionID, to: status)
                 },
+                updateDelivery: { sessionID, status, receipt in
+                    try store.updateDelivery(id: sessionID, status: status, receipt: receipt)
+                },
                 copy: { text in
                     clipboard.copy(text)
                 },
@@ -227,11 +230,12 @@ final class AppController: ObservableObject {
                         loadSettings: organizationSettingsStore.load,
                         loadAPIKey: { try organizationSecretStore.load(for: $0) }
                     )
-                    willDispatch(dispatch.endpoint, dispatch.endpoint.isLoopback ? .local : .remote)
                     return try await TranscriptPolishClient(endpoint: TranscriptPolishEndpoint(
                         baseURL: dispatch.endpoint.baseURL,
                         model: dispatch.endpoint.model
-                    )).polish(request, apiKey: dispatch.apiKey)
+                    )).polish(request, apiKey: dispatch.apiKey, onRequestPrepared: {
+                        willDispatch(dispatch.endpoint, dispatch.endpoint.isLoopback ? .local : .remote)
+                    })
                 },
                 historySuggestions: { sessionID in
                     try await Task.detached(priority: .userInitiated) {

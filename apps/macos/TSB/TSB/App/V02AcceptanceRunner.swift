@@ -39,13 +39,13 @@ struct V02AcceptanceCycleEvidence: Encodable {
     let polishElapsedMilliseconds: Int?
     let stopToCopyMilliseconds: Int?
     let deliveryStatus: String
-    let deliverySource: String
-    let polishState: String
+    let deliverySource: TranscriptDeliverySource?
+    let polishState: TranscriptPolishState?
     let recordDelta: Int?
     let copyChangeCountDelta: Int?
     let organizationTerminalCategory: String
-    let immediateEqualsLocal: Bool
-    let postOrganizationEqualsLocal: Bool
+    let immediateEqualsDelivered: Bool
+    let postOrganizationEqualsDelivered: Bool
     let organizationDidNotRecopy: Bool
     let resultCategory: String
 
@@ -63,8 +63,8 @@ struct V02AcceptanceCycleEvidence: Encodable {
         case recordDelta = "record_delta"
         case copyChangeCountDelta = "copy_change_count_delta"
         case organizationTerminalCategory = "organization_terminal_category"
-        case immediateEqualsLocal = "immediate_equals_local"
-        case postOrganizationEqualsLocal = "post_organization_equals_local"
+        case immediateEqualsDelivered = "immediate_equals_delivered"
+        case postOrganizationEqualsDelivered = "post_organization_equals_delivered"
         case organizationDidNotRecopy = "organization_did_not_recopy"
         case resultCategory = "result_category"
     }
@@ -84,10 +84,30 @@ struct V02AcceptanceCycleEvidence: Encodable {
         try container.encode(recordDelta, forKey: .recordDelta)
         try container.encode(copyChangeCountDelta, forKey: .copyChangeCountDelta)
         try container.encode(organizationTerminalCategory, forKey: .organizationTerminalCategory)
-        try container.encode(immediateEqualsLocal, forKey: .immediateEqualsLocal)
-        try container.encode(postOrganizationEqualsLocal, forKey: .postOrganizationEqualsLocal)
+        try container.encode(immediateEqualsDelivered, forKey: .immediateEqualsDelivered)
+        try container.encode(postOrganizationEqualsDelivered, forKey: .postOrganizationEqualsDelivered)
         try container.encode(organizationDidNotRecopy, forKey: .organizationDidNotRecopy)
         try container.encode(resultCategory, forKey: .resultCategory)
+    }
+
+    var hasValidDeliveryEvidence: Bool {
+        Self.hasConsistentDeliveryEvidence(source: deliverySource, polishState: polishState)
+    }
+
+    static func hasConsistentDeliveryEvidence(
+        source: TranscriptDeliverySource?,
+        polishState: TranscriptPolishState?
+    ) -> Bool {
+        guard let source, let polishState else { return false }
+        return switch (source, polishState) {
+        case (.polished, .accepted):
+            true
+        case (.local, .notRequested), (.local, .reviewRequired), (.local, .timedOut),
+             (.local, .rejected), (.local, .failed), (.local, .cancelled):
+            true
+        default:
+            false
+        }
     }
 }
 
@@ -180,6 +200,7 @@ enum V02AcceptanceMetrics {
             && duplicateCopies == 0
             && organizationRecopies == 0
             && uniqueSessionIDs == 100
+            && cycles.allSatisfy(\.hasValidDeliveryEvidence)
             && cycles.allSatisfy { $0.resultCategory == "passed" }
         return V02AcceptanceSummaryEvidence(
             requestedCycles: requestedCycles,
@@ -217,17 +238,17 @@ final class V02AcceptanceRunner {
         var deliveredPasteboardChangeCount: Int?
         var terminalPasteboardChangeCount: Int?
         var deliveryStatus = "missing"
-        var deliverySource = "missing"
-        var polishState = TranscriptPolishState.notRequested.rawValue
+        var deliverySource: TranscriptDeliverySource?
+        var polishState: TranscriptPolishState?
         var polishElapsedMilliseconds: Int?
         var recordDelta: Int?
         var copyChangeCountDelta: Int?
         var terminalCategory = "missing"
-        var immediateEqualsLocal = false
-        var postOrganizationEqualsLocal = false
+        var immediateEqualsDelivered = false
+        var postOrganizationEqualsDelivered = false
         var organizationDidNotRecopy = false
         var failureCategory: String?
-        var deliveredLocalText: String?
+        var deliveredText: String?
     }
 
     private let configuration: V02AcceptanceConfiguration
@@ -384,13 +405,13 @@ final class V02AcceptanceRunner {
             capture?.failureCategory = "lost_record"
         } else if capture?.copyChangeCountDelta != 1 {
             capture?.failureCategory = "copy_delta_invalid"
-        } else if capture?.immediateEqualsLocal != true {
+        } else if capture?.immediateEqualsDelivered != true {
             capture?.failureCategory = "clipboard_not_local"
         } else if capture?.terminalCategory.hasPrefix("organized_") != true {
             capture?.failureCategory = "organization_not_successful"
         } else if capture?.organizationDidNotRecopy != true {
             capture?.failureCategory = "organization_recopy"
-        } else if capture?.postOrganizationEqualsLocal != true {
+        } else if capture?.postOrganizationEqualsDelivered != true {
             capture?.failureCategory = "clipboard_changed"
         }
         return evidence()
@@ -426,10 +447,10 @@ final class V02AcceptanceRunner {
            let category = Self.terminalCategory(for: snapshot.organizationPhase) {
             capture?.terminalCategory = category
             let changeCount = pasteboard.changeCount
-            let deliveredLocalText = capture?.deliveredLocalText
+            let deliveredText = capture?.deliveredText
             let deliveredChangeCount = capture?.deliveredPasteboardChangeCount
             capture?.terminalPasteboardChangeCount = changeCount
-            capture?.postOrganizationEqualsLocal = pasteboard.string(forType: .string) == deliveredLocalText
+            capture?.postOrganizationEqualsDelivered = pasteboard.string(forType: .string) == deliveredText
             capture?.organizationDidNotRecopy = changeCount == deliveredChangeCount
         }
         if capture?.stopInstant != nil,
@@ -442,18 +463,33 @@ final class V02AcceptanceRunner {
     private func captureDelivered(_ snapshot: AppSnapshot, at instant: ContinuousClock.Instant) {
         guard let sessionID = capture?.sessionID else { return }
         capture?.deliveredInstant = instant
-        capture?.deliveredLocalText = snapshot.previewText
+        capture?.deliveredText = snapshot.previewText
         let changeCount = pasteboard.changeCount
         let initialChangeCount = capture?.initialPasteboardChangeCount ?? changeCount
         capture?.deliveredPasteboardChangeCount = changeCount
         capture?.copyChangeCountDelta = changeCount - initialChangeCount
-        capture?.immediateEqualsLocal = pasteboard.string(forType: .string) == snapshot.previewText
+        capture?.immediateEqualsDelivered = pasteboard.string(forType: .string) == snapshot.previewText
         do {
             let record = try store.load(id: sessionID)
             let initialRecordCount = capture?.initialRecordCount ?? 0
             capture?.deliveryStatus = record.deliveryStatus.rawValue
-            capture?.deliverySource = snapshot.deliverySource?.rawValue ?? "missing"
-            capture?.polishState = snapshot.polishState?.rawValue ?? TranscriptPolishState.notRequested.rawValue
+            guard let deliverySource = snapshot.deliverySource else {
+                capture?.failureCategory = "delivery_source_missing"
+                return
+            }
+            guard let polishState = snapshot.polishState else {
+                capture?.failureCategory = "polish_state_missing"
+                return
+            }
+            guard V02AcceptanceCycleEvidence.hasConsistentDeliveryEvidence(
+                source: deliverySource,
+                polishState: polishState
+            ) else {
+                capture?.failureCategory = "delivery_polish_inconsistent"
+                return
+            }
+            capture?.deliverySource = deliverySource
+            capture?.polishState = polishState
             capture?.polishElapsedMilliseconds = record.polish?.elapsedMilliseconds
             capture?.recordDelta = try store.list().count - initialRecordCount
         } catch {
@@ -471,13 +507,13 @@ final class V02AcceptanceRunner {
                 polishElapsedMilliseconds: nil,
                 stopToCopyMilliseconds: nil,
                 deliveryStatus: "missing",
-                deliverySource: "missing",
-                polishState: TranscriptPolishState.notRequested.rawValue,
+                deliverySource: nil,
+                polishState: nil,
                 recordDelta: nil,
                 copyChangeCountDelta: nil,
                 organizationTerminalCategory: "missing",
-                immediateEqualsLocal: false,
-                postOrganizationEqualsLocal: false,
+                immediateEqualsDelivered: false,
+                postOrganizationEqualsDelivered: false,
                 organizationDidNotRecopy: false,
                 resultCategory: "runner_state_missing"
             )
@@ -495,8 +531,8 @@ final class V02AcceptanceRunner {
             recordDelta: capture.recordDelta,
             copyChangeCountDelta: capture.copyChangeCountDelta,
             organizationTerminalCategory: capture.terminalCategory,
-            immediateEqualsLocal: capture.immediateEqualsLocal,
-            postOrganizationEqualsLocal: capture.postOrganizationEqualsLocal,
+            immediateEqualsDelivered: capture.immediateEqualsDelivered,
+            postOrganizationEqualsDelivered: capture.postOrganizationEqualsDelivered,
             organizationDidNotRecopy: capture.organizationDidNotRecopy,
             resultCategory: capture.failureCategory ?? "passed"
         )

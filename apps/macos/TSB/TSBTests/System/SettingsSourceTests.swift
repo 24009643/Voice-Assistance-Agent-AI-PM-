@@ -67,7 +67,7 @@ final class SettingsSourceTests: XCTestCase {
         XCTAssertFalse(settingsSource.contains(".textContentType(.password)"))
     }
 
-    func testAppControllerWiresBoundedPolishWithCurrentTerminologyAndEndpointBoundSecret() throws {
+    func testAppControllerKeepsPolishWiringAndReceiptPersistenceInTheCompositionRoot() throws {
         let controllerSource = try source("TSB/App/AppController.swift")
 
         for required in [
@@ -76,11 +76,11 @@ final class SettingsSourceTests: XCTestCase {
             "polish: { request, localOnly, willDispatch in",
             "Self.makePolishDispatchSnapshot(",
             "loadAPIKey: { try organizationSecretStore.load(for: $0) }",
-            "willDispatch(dispatch.endpoint, dispatch.endpoint.isLoopback ? .local : .remote)",
             "TranscriptPolishClient(endpoint:",
-            ").polish(request, apiKey: dispatch.apiKey)"
+            "onRequestPrepared:",
+            "store.updateDelivery(id: sessionID, status: status, receipt: receipt)"
         ] {
-            XCTAssertTrue(controllerSource.contains(required), "Missing polish runtime wiring: \(required)")
+            XCTAssertTrue(controllerSource.contains(required), "Missing composition-root wiring: \(required)")
         }
     }
 
@@ -636,15 +636,17 @@ final class SettingsBehaviorTests: XCTestCase {
             model: "local-model"
         )
         let loopback = OrganizationSettings(endpoint: endpoint, polishEnabled: true)
+        var loopbackSecretLoadCount = 0
 
         let dispatch = try AppController.makePolishDispatchSnapshot(
             loadSettings: { loopback },
             loadAPIKey: { _ in
-                XCTFail("Loopback polish must not load Keychain")
+                loopbackSecretLoadCount += 1
                 return nil
             }
         )
         XCTAssertEqual(dispatch.apiKey, "")
+        XCTAssertEqual(loopbackSecretLoadCount, 0)
 
         var secretLoadCount = 0
         let remote = try remoteSettings()
@@ -659,6 +661,32 @@ final class SettingsBehaviorTests: XCTestCase {
             XCTAssertEqual(error as? TranscriptPolishDispatchError, .notEligible)
         }
         XCTAssertEqual(secretLoadCount, 0)
+    }
+
+    func testPolishDispatchLoadsTheEndpointBoundRemoteSecretExactlyOnce() throws {
+        let endpoint = try OrganizationEndpointSettings(
+            baseURL: URL(string: "https://api.example.test/v1/chat/completions")!,
+            model: "remote-model"
+        )
+        let remote = OrganizationSettings(
+            endpoint: endpoint,
+            cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        )
+        var secretLoadCount = 0
+
+        let dispatch = try AppController.makePolishDispatchSnapshot(
+            loadSettings: { remote },
+            loadAPIKey: { loadedEndpoint in
+                secretLoadCount += 1
+                XCTAssertEqual(loadedEndpoint, endpoint)
+                return "endpoint-bound-key"
+            }
+        )
+
+        XCTAssertEqual(dispatch.apiKey, "endpoint-bound-key")
+        XCTAssertEqual(secretLoadCount, 1)
     }
 
     func testRemoteHTTPIsRejectedWithoutChangingPersistence() throws {
