@@ -9,13 +9,13 @@
 - Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `109e93594299d8808d441ab2bf467263dd378cc5`.
 - Date: 2026-08-25
 
-## 2026-08-25 adversarial remediation continuation
+## 2026-08-25 adversarial remediation continuation (historical `d78f65f` evidence)
 
 - Production fixes cover shutdown cancellation and incomplete-audio cleanup, exact retry selection, bounded Provider responses/items/strings, durable-local-final timing, privacy receipts, VoiceOver actions, blank SenseVoice fallback, background history reads and per-session Paraformer state.
 - Exact source commit `d78f65f` passed 274/274 tests, 0 failed, 0 skipped; the fresh unsigned Debug build, SenseVoice 7/7 and Paraformer 11/11 probes, project regeneration, diff checks and current/additions safety scans passed.
-- M07 passed on the target Mac. VoiceOver exposed distinct result/chamber/speculative/collapse/reopen semantics; Reduce Motion reopen/expand/collapse passed; both system settings were restored off.
-- M08 passed with exactly one authorized DeepSeek-compatible request through the production client, strict decoder and validator. The existing Keychain item was reused without displaying, copying, saving, rotating or deleting the secret; only one non-sensitive segment and no history summaries were sent.
-- M09 remains blocked at 22 paired record/audio bundles without qualified semantic annotations. M10 remains blocked because a validated Paraformer bundle is absent and a fresh 100-cycle run requires explicit authorization.
+- At historical `d78f65f`, M07 passed on the target Mac. VoiceOver exposed distinct result/chamber/speculative/collapse/reopen semantics; Reduce Motion reopen/expand/collapse passed; both system settings were restored off.
+- At historical `d78f65f`, M08 passed with exactly one authorized DeepSeek-compatible request through the production client, strict decoder and validator. The existing Keychain item was reused without displaying, copying, saving, rotating or deleting the secret; only one non-sensitive segment and no history summaries were sent.
+- At historical `d78f65f`, M09 was blocked at 22 paired record/audio bundles without qualified semantic annotations. M10 was recorded as blocked because that environment lacked a validated Paraformer bundle and a fresh 100-cycle run required explicit authorization.
 - The remediation is self-reviewed and automated-green. Independent re-review of `11f1d3d..d78f65f`, owner disposition of reachable-history diagnostics, M09 and M10 remain release gates.
 
 ## 2026-08-25 recording-runtime exact-HEAD automated gate
@@ -206,7 +206,7 @@ All listed automated commands still exited 0 with the stated results.
 
 ## Acceptance decision and open risks
 
-`BLOCKED — manual acceptance is incomplete.` M01 through M08 now pass. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run and while Paraformer is absent; a fresh run requires a validated bundle, explicit authorization and exclusive artifacts. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact `d78f65f` automated `274/274` evidence does not promote Golden Set, stability, reachable-history, merge or release authorization.
+`BLOCKED — manual acceptance is incomplete.` The `d78f65f` record is historical evidence that M01 through M08 passed for that earlier surface. At exact `109e935`, VoiceOver of the current resident controls is `partial-manual`; target-Mac live preview and real microphone recording/persistence are still pending. M09 remains blocked at 22/30 paired records without qualified semantic annotations. M10 remains blocked after the historical failed/ineligible `100/1` run, pending target-Mac validation of the installed Paraformer bundle plus fresh authorization and exclusive artifacts; it is not blocked on a claim that Paraformer is absent. Independent re-review of `11f1d3d..d78f65f` and owner disposition of reachable-history diagnostics also remain release gates. Exact `109e935` automated `290/290` evidence does not promote Golden Set, stability, reachable-history, merge or release authorization.
 
 ## Rollback
 
