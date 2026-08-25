@@ -72,17 +72,19 @@ enum TranscriptTerminologyBoundary {
 
     static func matches(_ value: String, at range: NSRange, in text: String) -> Bool {
         guard let stringRange = Range(range, in: text), text[stringRange] == value else { return false }
-        if value.unicodeScalars.first.map(isLatinAlphanumeric) == true,
-           text[..<stringRange.lowerBound].unicodeScalars.last.map(isLatinAlphanumeric) == true { return false }
-        if value.unicodeScalars.last.map(isLatinAlphanumeric) == true,
-           text[stringRange.upperBound...].unicodeScalars.first.map(isLatinAlphanumeric) == true { return false }
+        if value.first.map(isLatinAlphanumeric) == true,
+           text[..<stringRange.lowerBound].last.map(isLatinAlphanumeric) == true { return false }
+        if value.last.map(isLatinAlphanumeric) == true,
+           text[stringRange.upperBound...].first.map(isLatinAlphanumeric) == true { return false }
         return true
     }
 
-    private static func isLatinAlphanumeric(_ scalar: Unicode.Scalar) -> Bool {
-        if (48...57).contains(scalar.value) { return true }
-        let value = String(scalar)
-        return latinLetterExpression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
+    private static func isLatinAlphanumeric(_ character: Character) -> Bool {
+        character.unicodeScalars.contains { scalar in
+            if (48...57).contains(scalar.value) { return true }
+            let value = String(scalar)
+            return latinLetterExpression.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil
+        }
     }
 }
 

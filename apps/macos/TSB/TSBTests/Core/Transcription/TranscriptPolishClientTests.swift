@@ -127,6 +127,25 @@ final class TranscriptPolishClientTests: XCTestCase {
         await XCTAssertThrowsErrorAsync { try await self.client().polish(request, apiKey: "key") }
     }
 
+    func testDecomposedLatinGraphemeMakesEmbeddedAliasIrrelevantForSubmission() async {
+        PolishURLProtocol.handler = { _ in
+            XCTFail("decomposed-Latin embedded alias must not reach transport")
+            throw URLError(.badServerResponse)
+        }
+        for text in [
+            "Use e\u{301}TBé for this sufficiently long dictation",
+            "Use e\u{301}TB for this sufficiently long dictation",
+        ] {
+            let request = TranscriptPolishRequest(
+                requestID: UUID(),
+                candidates: [.init(id: .offline, text: text)],
+                terminology: [.init(canonical: "TSB", aliases: ["TB"])]
+            )
+
+            await XCTAssertThrowsErrorAsync { try await self.client().polish(request, apiKey: "key") }
+        }
+    }
+
     func testRejectsRedirectBeforeTargetReceivesTranscript() async throws {
         let origin = URL(string: "https://origin.test/chat")!, target = URL(string: "https://attacker.test/collect")!
         let urls = URLList()

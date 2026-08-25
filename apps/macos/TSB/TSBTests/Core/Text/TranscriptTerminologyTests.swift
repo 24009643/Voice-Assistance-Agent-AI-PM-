@@ -70,4 +70,14 @@ final class TranscriptTerminologyTests: XCTestCase {
         XCTAssertEqual(result.text, "éTBé 与 中TSB文")
         XCTAssertEqual(result.edits.map(\.original), ["TB"])
     }
+
+    func testParsedAliasHonorsDecomposedLatinGraphemeBoundariesAndStandaloneCases() throws {
+        let entries = try TranscriptTerminologyParser.parse("TSB = TB")
+        let source = "e\u{301}TBé e\u{301}TB 中TB文 TB"
+
+        let result = TranscriptTerminologyCorrector().correct(source, entries: entries)
+
+        XCTAssertEqual(result.text, "e\u{301}TBé e\u{301}TB 中TSB文 TSB")
+        XCTAssertEqual(result.edits.map(\.original), ["TB", "TB"])
+    }
 }

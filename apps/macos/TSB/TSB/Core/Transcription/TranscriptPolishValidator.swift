@@ -17,7 +17,7 @@ struct TranscriptPolishValidator {
         let edits = try rawEdits.map(decodeEdit)
         guard edits.allSatisfy({ $0.original.unicodeScalars.count <= 256 && $0.replacement.unicodeScalars.count <= 256 && $0.reason.unicodeScalars.count <= 120 }), let changed = changedUnits(edits),
               changed <= max(1, Int(ceil(Double(baseText.utf16.count) * 0.2))),
-              immutableTokens(in: baseText) == immutableTokens(in: corrected),
+              immutableTextTokens(in: baseText) == immutableTextTokens(in: corrected),
               applying(edits, to: baseText) == corrected else { throw TranscriptPolishValidationError.invalidEdit }
         let automatic = edits.allSatisfy { isAutomatic($0, base: baseText, request: request) }
         return automatic ? .accepted(baseCandidateID: base, text: corrected, edits: edits) : .reviewRequired(baseCandidateID: base, text: corrected, edits: edits)
@@ -42,6 +42,7 @@ struct TranscriptPolishValidator {
         return result
     }
     private func isAutomatic(_ edit: TranscriptPolishEdit, base: String, request: TranscriptPolishRequest) -> Bool {
+        guard !touchesOrAbutsDecimalDigit(edit, in: base) else { return false }
         switch edit.kind {
         case .formatting: let allowed: (Unicode.Scalar) -> Bool = { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) || ($0.value < 128 && CharacterSet.letters.contains($0)) }; return (edit.original.unicodeScalars.allSatisfy(allowed) && edit.replacement.unicodeScalars.allSatisfy(allowed) && edit.original.lowercased() == edit.replacement.lowercased()) || (edit.original.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) } && edit.replacement.unicodeScalars.allSatisfy { CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters).contains($0) })
         case .terminology: return request.terminology.contains {
@@ -57,6 +58,14 @@ struct TranscriptPolishValidator {
         }
     }
     private func changedUnits(_ edits: [TranscriptPolishEdit]) -> Int? { var total = 0; for edit in edits { let result = total.addingReportingOverflow(max(edit.lengthUTF16, edit.replacement.utf16.count)); guard !result.overflow else { return nil }; total = result.partialValue }; return total }
+    private func touchesOrAbutsDecimalDigit(_ edit: TranscriptPolishEdit, in base: String) -> Bool {
+        let digits = CharacterSet.decimalDigits
+        guard let range = Range(NSRange(location: edit.startUTF16, length: edit.lengthUTF16), in: base) else { return true }
+        return base[range].unicodeScalars.contains(where: digits.contains)
+            || edit.replacement.unicodeScalars.contains(where: digits.contains)
+            || base[..<range.lowerBound].unicodeScalars.last.map(digits.contains) == true
+            || base[range.upperBound...].unicodeScalars.first.map(digits.contains) == true
+    }
     private func candidateSupported(_ edit: TranscriptPolishEdit, base: String, request: TranscriptPolishRequest) -> Bool {
         let other = request.candidates.first { $0.text != base }?.text ?? ""
         guard let range = Range(NSRange(location: edit.startUTF16, length: edit.lengthUTF16), in: base) else { return false }
@@ -67,5 +76,5 @@ struct TranscriptPolishValidator {
         if range.upperBound == base.endIndex { return other.hasSuffix(fragment) }
         return other.contains(fragment)
     }
-    private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?<![\p{L}\p{N}_])[+\-−]?(?:\d+(?:[.,]\d+)*|[.,]\d+)(?![\p{L}\p{N}_])"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
+    private func immutableTextTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
 }
