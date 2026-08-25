@@ -49,4 +49,16 @@ final class TranscriptTerminologyTests: XCTestCase {
         XCTAssertEqual(result.text, "T S B, TypeScript and XTSY")
         XCTAssertEqual(result.edits.map(\.original), ["TSB", "TS"])
     }
+
+    func testCorrectorDoesNotReplaceMultiwordLatinAliasesInsideWords() {
+        let entries = [
+            TranscriptTerminologyEntry(canonical: "Keychain", aliases: ["key chain"]),
+            TranscriptTerminologyEntry(canonical: "TSB", aliases: ["T B"]),
+        ]
+
+        let result = TranscriptTerminologyCorrector().correct("monkey chainmail and XT Bx", entries: entries)
+
+        XCTAssertEqual(result.text, "monkey chainmail and XT Bx")
+        XCTAssertTrue(result.edits.isEmpty)
+    }
 }

@@ -65,9 +65,10 @@ struct TranscriptTerminologyCorrector: Sendable {
 
         for (alias, canonical) in aliases where !alias.isEmpty {
             let escaped = NSRegularExpression.escapedPattern(for: alias)
-            let pattern = alias.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) }
-                ? "(?<![[:alnum:]])\(escaped)(?![[:alnum:]])"
-                : escaped
+            let scalars = alias.unicodeScalars
+            let prefix = scalars.first.map { CharacterSet.alphanumerics.contains($0) } == true ? "(?<![[:alnum:]])" : ""
+            let suffix = scalars.last.map { CharacterSet.alphanumerics.contains($0) } == true ? "(?![[:alnum:]])" : ""
+            let pattern = prefix + escaped + suffix
             guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
             for range in expression.matches(in: text, range: NSRange(text.startIndex..., in: text)).map(\.range) {
                 guard !matches.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) else { continue }
