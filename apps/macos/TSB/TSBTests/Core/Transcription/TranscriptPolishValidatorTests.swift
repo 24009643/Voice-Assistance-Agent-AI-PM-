@@ -29,7 +29,9 @@ final class TranscriptPolishValidatorTests: XCTestCase {
         object["unexpected"] = true
         XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
         object.removeValue(forKey: "unexpected")
-        object["request_id"] = UUID().uuidString
+        var hashes = try XCTUnwrap(object["candidate_hashes"] as? [[String: Any]])
+        hashes[0]["text_sha256"] = String(repeating: "0", count: 64)
+        object["candidate_hashes"] = hashes
         XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
     }
 
@@ -72,6 +74,15 @@ final class TranscriptPolishValidatorTests: XCTestCase {
         let noSupport = makeRequest(offline: "hello world today and keep the rest", streaming: "different entirely")
         let review = try TranscriptPolishValidator().validate(response(for: noSupport, base: .offline, corrected: "hello earth today and keep the rest", edits: [edit(.candidateSupported, 6, 5, "world", "earth", "context")]), for: noSupport)
         guard case .reviewRequired = review else { return XCTFail("unsupported candidate change must require review") }
+    }
+
+    func testCandidateSupportRequiresPrefixAndSuffixAtTextBoundaries() throws {
+        let prefix = makeRequest(offline: "wrong tail long enough for stable evidence", streaming: "noise right tail long enough for stable evidence")
+        let prefixOutcome = try TranscriptPolishValidator().validate(response(for: prefix, base: .offline, corrected: "right tail long enough for stable evidence", edits: [edit(.candidateSupported, 0, 5, "wrong", "right", "boundary")]), for: prefix)
+        guard case .reviewRequired = prefixOutcome else { return XCTFail("replacement not at other prefix") }
+        let suffix = makeRequest(offline: "long enough start stays stable until wrong", streaming: "long enough start stays stable until right noise")
+        let suffixOutcome = try TranscriptPolishValidator().validate(response(for: suffix, base: .offline, corrected: "long enough start stays stable until right", edits: [edit(.candidateSupported, 37, 5, "wrong", "right", "boundary")]), for: suffix)
+        guard case .reviewRequired = suffixOutcome else { return XCTFail("replacement not at other suffix") }
     }
 
     func testRejectsInnerResponseOver48KiB() throws {

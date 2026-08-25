@@ -54,7 +54,10 @@ struct TranscriptPolishValidator {
         guard let range = Range(NSRange(location: edit.startUTF16, length: edit.lengthUTF16), in: base) else { return false }
         let left = String(base[..<range.lowerBound]).unicodeScalars.suffix(4), right = String(base[range.upperBound...]).unicodeScalars.prefix(4)
         guard range.lowerBound == base.startIndex || left.count == 4, range.upperBound == base.endIndex || right.count == 4 else { return false }
-        return other.unicodeScalars.elementsEqual((left + edit.replacement.unicodeScalars + right), by: ==) || other.contains(String(String.UnicodeScalarView(left + edit.replacement.unicodeScalars + right)))
+        let fragment = String(String.UnicodeScalarView(left + edit.replacement.unicodeScalars + right))
+        if range.lowerBound == base.startIndex { return other.hasPrefix(fragment) }
+        if range.upperBound == base.endIndex { return other.hasSuffix(fragment) }
+        return other.contains(fragment)
     }
     private func immutableTokens(in text: String) -> [String] { (try? NSRegularExpression(pattern: #"https?://[^\s]+|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\d+"#, options: [.caseInsensitive]))?.matches(in: text, range: NSRange(text.startIndex..., in: text)).map { (text as NSString).substring(with: $0.range) } ?? [] }
 }
