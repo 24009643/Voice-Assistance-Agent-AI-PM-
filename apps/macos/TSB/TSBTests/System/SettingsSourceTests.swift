@@ -46,10 +46,13 @@ final class SettingsSourceTests: XCTestCase {
             "撤销云端整理授权", "已撤销云端整理授权。",
             "文本润色授权", "查看润色授权范围", "撤销文本润色授权",
             "已确认，保存后启用", "音频、录音历史、文件路径和完整记忆库不会发送",
+            "允许发送本次当前转录文本用于校正",
             "最多会让剪贴板交付额外等待 1.5 秒", "无法撤回已发送的文本",
         ] {
             XCTAssertTrue(settingsSource.contains(required), "Missing settings boundary: \(required)")
         }
+        XCTAssertTrue(settingsSource.contains("Button(\"查看润色授权范围\") { showsPolishConsent = true }"))
+        XCTAssertTrue(settingsSource.contains(".sheet(isPresented: $showsPolishConsent)"))
         XCTAssertFalse(settingsSource.contains("state.snapshot"))
         XCTAssertFalse(settingsSource.contains("previewText"))
     }

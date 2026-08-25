@@ -35,3 +35,8 @@
 - GREEN: `delete()` now persists both remote purposes disabled before deleting the shared secret. The UI uses accurate organization-revoke and pre-save polish wording; source tests assert the separate polish sheet/actions and exact text-only, 1.5-second, exclusions, and non-retractability disclosures.
 - Focused baseline (signing disabled) passed 39 tests: `OrganizationSettingsStoreTests`, `SettingsBehaviorTests`, and `SettingsSourceTests`.
 - `git diff --check` clean. Fix committed as current HEAD.
+
+## Fix round 2
+
+- `SettingsSourceTests` now asserts the exact polish authorization sentence `允许发送本次当前转录文本用于校正` and the concrete polish sheet/action bindings.
+- Focused baseline (signing disabled) passed 39 tests; `git diff --check` clean.
