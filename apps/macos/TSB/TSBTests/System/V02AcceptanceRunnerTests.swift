@@ -509,19 +509,27 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertEqual(cycleKeys, [
             "copy_change_count_delta",
             "cycle_number",
+            "delivery_source",
             "delivery_status",
             "first_preview_milliseconds",
             "immediate_equals_local",
             "organization_did_not_recopy",
             "organization_terminal_category",
+            "polish_elapsed_ms",
+            "polish_state",
             "post_organization_equals_local",
             "record_delta",
             "result_category",
             "row_type",
             "session_id",
-            "stop_to_copy_milliseconds",
-            "stop_to_local_final_milliseconds"
+            "stop_to_copy_ms",
+            "stop_to_local_final_ms"
         ])
+
+        let encoded = try String(decoding: encoder.encode(makeCycle(number: 1)), as: UTF8.self)
+        for prohibited in ["submitted_text", "corrected_text", "local_cleaned_text", "polished_text"] {
+            XCTAssertFalse(encoded.contains(prohibited), "JSONL must not emit \(prohibited)")
+        }
 
         let summaryKeys = try encodedKeys(encoder.encode(V02AcceptanceMetrics.summarize(
             cycles: [makeCycle(number: 1)],
@@ -595,8 +603,11 @@ final class V02AcceptanceRunnerTests: XCTestCase {
             sessionID: sessionID,
             firstPreviewMilliseconds: firstPreviewMilliseconds,
             stopToLocalFinalMilliseconds: stopToLocalFinalMilliseconds,
+            polishElapsedMilliseconds: 0,
             stopToCopyMilliseconds: stopToCopyMilliseconds,
             deliveryStatus: "copied",
+            deliverySource: "local",
+            polishState: TranscriptPolishState.notRequested.rawValue,
             recordDelta: recordDelta,
             copyChangeCountDelta: copyChangeCountDelta,
             organizationTerminalCategory: "organized_local",

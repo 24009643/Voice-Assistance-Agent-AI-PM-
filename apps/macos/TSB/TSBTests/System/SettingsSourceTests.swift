@@ -67,6 +67,23 @@ final class SettingsSourceTests: XCTestCase {
         XCTAssertFalse(settingsSource.contains(".textContentType(.password)"))
     }
 
+    func testAppControllerWiresBoundedPolishWithCurrentTerminologyAndEndpointBoundSecret() throws {
+        let controllerSource = try source("TSB/App/AppController.swift")
+
+        for required in [
+            "currentTerminology: {",
+            "organizationSettingsStore.load().transcriptTerminology",
+            "polish: { request, localOnly, willDispatch in",
+            "Self.makePolishDispatchSnapshot(",
+            "loadAPIKey: { try organizationSecretStore.load(for: $0) }",
+            "willDispatch(dispatch.endpoint, dispatch.endpoint.isLoopback ? .local : .remote)",
+            "TranscriptPolishClient(endpoint:",
+            ").polish(request, apiKey: dispatch.apiKey)"
+        ] {
+            XCTAssertTrue(controllerSource.contains(required), "Missing polish runtime wiring: \(required)")
+        }
+    }
+
     private func source(_ relativePath: String) throws -> String {
         try String(contentsOf: sourceURL(relativePath), encoding: .utf8)
     }

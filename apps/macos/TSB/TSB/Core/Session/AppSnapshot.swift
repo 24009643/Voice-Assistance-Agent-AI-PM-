@@ -85,6 +85,8 @@ struct AppSnapshot: Equatable, Sendable {
     let organizationPhase: OrganizationPhase
     let organizationRequestID: UUID?
     let organizationReceipt: OrganizationPrivacyReceipt?
+    let polishState: TranscriptPolishState?
+    let deliverySource: TranscriptDeliverySource?
     let suggestedRecords: [SuggestedRecordSnapshot]
     let secondaryProcessing: [SecondaryProcessingSnapshot]
     let canStartRecording: Bool
@@ -101,6 +103,8 @@ struct AppSnapshot: Equatable, Sendable {
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
         organizationReceipt: OrganizationPrivacyReceipt? = nil,
+        polishState: TranscriptPolishState? = nil,
+        deliverySource: TranscriptDeliverySource? = nil,
         suggestedRecords: [SuggestedRecordSnapshot] = [],
         secondaryProcessing: [SecondaryProcessingSnapshot] = [],
         canStartRecording: Bool = true
@@ -116,6 +120,8 @@ struct AppSnapshot: Equatable, Sendable {
         self.organizationPhase = organizationPhase
         self.organizationRequestID = organizationRequestID
         self.organizationReceipt = organizationReceipt
+        self.polishState = polishState
+        self.deliverySource = deliverySource
         self.suggestedRecords = suggestedRecords
         self.secondaryProcessing = secondaryProcessing
         self.canStartRecording = canStartRecording

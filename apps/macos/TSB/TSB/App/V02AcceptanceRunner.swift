@@ -36,8 +36,11 @@ struct V02AcceptanceCycleEvidence: Encodable {
     let sessionID: UUID?
     let firstPreviewMilliseconds: Int?
     let stopToLocalFinalMilliseconds: Int?
+    let polishElapsedMilliseconds: Int?
     let stopToCopyMilliseconds: Int?
     let deliveryStatus: String
+    let deliverySource: String
+    let polishState: String
     let recordDelta: Int?
     let copyChangeCountDelta: Int?
     let organizationTerminalCategory: String
@@ -51,9 +54,12 @@ struct V02AcceptanceCycleEvidence: Encodable {
         case cycleNumber = "cycle_number"
         case sessionID = "session_id"
         case firstPreviewMilliseconds = "first_preview_milliseconds"
-        case stopToLocalFinalMilliseconds = "stop_to_local_final_milliseconds"
-        case stopToCopyMilliseconds = "stop_to_copy_milliseconds"
+        case stopToLocalFinalMilliseconds = "stop_to_local_final_ms"
+        case polishElapsedMilliseconds = "polish_elapsed_ms"
+        case stopToCopyMilliseconds = "stop_to_copy_ms"
         case deliveryStatus = "delivery_status"
+        case deliverySource = "delivery_source"
+        case polishState = "polish_state"
         case recordDelta = "record_delta"
         case copyChangeCountDelta = "copy_change_count_delta"
         case organizationTerminalCategory = "organization_terminal_category"
@@ -70,8 +76,11 @@ struct V02AcceptanceCycleEvidence: Encodable {
         try container.encode(sessionID, forKey: .sessionID)
         try container.encode(firstPreviewMilliseconds, forKey: .firstPreviewMilliseconds)
         try container.encode(stopToLocalFinalMilliseconds, forKey: .stopToLocalFinalMilliseconds)
+        try container.encode(polishElapsedMilliseconds, forKey: .polishElapsedMilliseconds)
         try container.encode(stopToCopyMilliseconds, forKey: .stopToCopyMilliseconds)
         try container.encode(deliveryStatus, forKey: .deliveryStatus)
+        try container.encode(deliverySource, forKey: .deliverySource)
+        try container.encode(polishState, forKey: .polishState)
         try container.encode(recordDelta, forKey: .recordDelta)
         try container.encode(copyChangeCountDelta, forKey: .copyChangeCountDelta)
         try container.encode(organizationTerminalCategory, forKey: .organizationTerminalCategory)
@@ -208,6 +217,9 @@ final class V02AcceptanceRunner {
         var deliveredPasteboardChangeCount: Int?
         var terminalPasteboardChangeCount: Int?
         var deliveryStatus = "missing"
+        var deliverySource = "missing"
+        var polishState = TranscriptPolishState.notRequested.rawValue
+        var polishElapsedMilliseconds: Int?
         var recordDelta: Int?
         var copyChangeCountDelta: Int?
         var terminalCategory = "missing"
@@ -440,6 +452,9 @@ final class V02AcceptanceRunner {
             let record = try store.load(id: sessionID)
             let initialRecordCount = capture?.initialRecordCount ?? 0
             capture?.deliveryStatus = record.deliveryStatus.rawValue
+            capture?.deliverySource = snapshot.deliverySource?.rawValue ?? "missing"
+            capture?.polishState = snapshot.polishState?.rawValue ?? TranscriptPolishState.notRequested.rawValue
+            capture?.polishElapsedMilliseconds = record.polish?.elapsedMilliseconds
             capture?.recordDelta = try store.list().count - initialRecordCount
         } catch {
             capture?.failureCategory = "record_lookup_failed"
@@ -453,8 +468,11 @@ final class V02AcceptanceRunner {
                 sessionID: nil,
                 firstPreviewMilliseconds: nil,
                 stopToLocalFinalMilliseconds: nil,
+                polishElapsedMilliseconds: nil,
                 stopToCopyMilliseconds: nil,
                 deliveryStatus: "missing",
+                deliverySource: "missing",
+                polishState: TranscriptPolishState.notRequested.rawValue,
                 recordDelta: nil,
                 copyChangeCountDelta: nil,
                 organizationTerminalCategory: "missing",
@@ -469,8 +487,11 @@ final class V02AcceptanceRunner {
             sessionID: capture.sessionID?.rawValue,
             firstPreviewMilliseconds: milliseconds(from: capture.recordingInstant, to: capture.firstPreviewInstant),
             stopToLocalFinalMilliseconds: milliseconds(from: capture.stopInstant, to: capture.localFinalInstant),
+            polishElapsedMilliseconds: capture.polishElapsedMilliseconds,
             stopToCopyMilliseconds: milliseconds(from: capture.stopInstant, to: capture.deliveredInstant),
             deliveryStatus: capture.deliveryStatus,
+            deliverySource: capture.deliverySource,
+            polishState: capture.polishState,
             recordDelta: capture.recordDelta,
             copyChangeCountDelta: capture.copyChangeCountDelta,
             organizationTerminalCategory: capture.terminalCategory,

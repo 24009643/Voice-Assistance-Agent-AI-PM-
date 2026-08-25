@@ -218,6 +218,21 @@ final class AppController: ObservableObject {
                 currentOrganizationSettings: {
                     organizationSettingsStore.load()
                 },
+                currentTerminology: {
+                    organizationSettingsStore.load().transcriptTerminology
+                },
+                polish: { request, localOnly, willDispatch in
+                    let dispatch = try Self.makePolishDispatchSnapshot(
+                        localOnly: localOnly,
+                        loadSettings: organizationSettingsStore.load,
+                        loadAPIKey: { try organizationSecretStore.load(for: $0) }
+                    )
+                    willDispatch(dispatch.endpoint, dispatch.endpoint.isLoopback ? .local : .remote)
+                    return try await TranscriptPolishClient(endpoint: TranscriptPolishEndpoint(
+                        baseURL: dispatch.endpoint.baseURL,
+                        model: dispatch.endpoint.model
+                    )).polish(request, apiKey: dispatch.apiKey)
+                },
                 historySuggestions: { sessionID in
                     try await Task.detached(priority: .userInitiated) {
                         let historyStore = TranscriptStore(directory: sessionsDirectory)
