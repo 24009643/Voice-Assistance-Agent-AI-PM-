@@ -28,3 +28,10 @@
 ## Commit
 
 - `feat(v0.2): authorize transcript polish independently` (current HEAD)
+
+## Fix round 1
+
+- RED: a dual-purpose delete with injected Keychain deletion failure left polish eligible; source assertions also found inaccurate organization-revoke and pre-save polish wording.
+- GREEN: `delete()` now persists both remote purposes disabled before deleting the shared secret. The UI uses accurate organization-revoke and pre-save polish wording; source tests assert the separate polish sheet/actions and exact text-only, 1.5-second, exclusions, and non-retractability disclosures.
+- Focused baseline (signing disabled) passed 39 tests: `OrganizationSettingsStoreTests`, `SettingsBehaviorTests`, and `SettingsSourceTests`.
+- `git diff --check` clean. Fix committed as current HEAD.

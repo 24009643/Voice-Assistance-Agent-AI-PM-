@@ -209,6 +209,38 @@ final class OrganizationSettingsStoreTests: XCTestCase {
         XCTAssertNil(try secretStore.load(for: endpoint))
     }
 
+    func testDeleteFailureDisablesBothRemotePurposesBeforeKeepingSharedSecretRetryable() throws {
+        let (defaults, suiteName) = makeDefaults()
+        let keychain = try TemporaryKeychain()
+        let secretStore = makeSecretStore(keychain: keychain.reference)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            keychain.delete()
+        }
+        let endpoint = try remoteEndpoint()
+        let settings = OrganizationSettings(
+            endpoint: endpoint,
+            cloudConsentVersion: OrganizationSettings.currentCloudConsentVersion,
+            polishEnabled: true,
+            polishConsentVersion: OrganizationSettings.currentPolishConsentVersion
+        )
+        try OrganizationSettingsStore(defaults: defaults, secretStore: secretStore).save(settings, apiKey: "synthetic-key")
+        let failingStore = OrganizationSettingsStore(
+            defaults: defaults,
+            secretStore: KeychainSecretStore(
+                service: "OrganizationSettingsStoreTests.delete-failure.\(UUID().uuidString)",
+                account: "api-key",
+                keychain: keychain.reference,
+                deleteItem: { _ in errSecAuthFailed }
+            )
+        )
+
+        XCTAssertThrowsError(try failingStore.delete())
+        XCTAssertFalse(failingStore.load().isRemoteDispatchEligible)
+        XCTAssertFalse(failingStore.load().isPolishDispatchEligible)
+        XCTAssertEqual(try secretStore.load(for: endpoint), "synthetic-key")
+    }
+
     func testRejectsNonLoopbackHTTPRemoteEndpoint() {
         XCTAssertThrowsError(
             try OrganizationEndpointSettings(

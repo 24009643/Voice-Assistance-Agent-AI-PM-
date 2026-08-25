@@ -65,6 +65,8 @@ final class OrganizationSettingsStore {
         var settings = load()
         settings.cloudConsentVersion = nil
         settings.allowUserSelectedHistorySummaries = false
+        settings.polishEnabled = false
+        settings.polishConsentVersion = nil
         defaults.set(try JSONEncoder().encode(settings), forKey: Self.storageKey)
         try secretStore.delete()
         defaults.removeObject(forKey: Self.storageKey)

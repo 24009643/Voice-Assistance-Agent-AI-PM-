@@ -224,7 +224,7 @@ struct SettingsView: View {
             }
 
             Section("文本润色") {
-                LabeledContent("当前状态", value: model.draft.polishConsent ? "已启用" : "仅本地")
+                LabeledContent("当前状态", value: model.draft.polishConsent ? "已确认，保存后启用" : "仅本地")
                 Button("查看润色授权范围") { showsPolishConsent = true }
                 Button("撤销文本润色授权", role: .destructive) {
                     destructiveAction = .revokePolish
@@ -259,7 +259,7 @@ struct SettingsView: View {
                 Button("取消", action: model.cancel)
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("撤销云端授权", role: .destructive) {
+                Button("撤销云端整理授权", role: .destructive) {
                     destructiveAction = .revoke
                 }
                 Button("删除配置与密钥", role: .destructive) {
@@ -283,7 +283,7 @@ struct SettingsView: View {
             )
         ) {
             if destructiveAction == .revoke {
-                Button("撤销云端授权并删除密钥", role: .destructive) {
+                Button("撤销云端整理授权", role: .destructive) {
                     model.revokeCloudAccess()
                     destructiveAction = nil
                 }
@@ -349,7 +349,7 @@ struct SettingsView: View {
     private func successMessage(for status: SettingsOperationStatus) -> String {
         switch status {
         case .saved: "已保存。"
-        case .revoked: "已撤销云端授权并删除密钥。"
+        case .revoked: "已撤销云端整理授权。"
         case .polishRevoked: "已撤销文本润色授权。"
         case .deleted: "已删除配置与密钥。"
         }

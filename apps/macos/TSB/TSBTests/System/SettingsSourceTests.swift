@@ -43,6 +43,10 @@ final class SettingsSourceTests: XCTestCase {
             "保存", "取消", "撤销云端授权", "删除配置与密钥", "出站预览",
             "当前文本", "TSB 历史摘要", "音频", "文件路径", "完整记忆库",
             "不会覆盖剪贴板", "仅本地", "另行授权",
+            "撤销云端整理授权", "已撤销云端整理授权。",
+            "文本润色授权", "查看润色授权范围", "撤销文本润色授权",
+            "已确认，保存后启用", "音频、录音历史、文件路径和完整记忆库不会发送",
+            "最多会让剪贴板交付额外等待 1.5 秒", "无法撤回已发送的文本",
         ] {
             XCTAssertTrue(settingsSource.contains(required), "Missing settings boundary: \(required)")
         }
