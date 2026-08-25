@@ -4,7 +4,7 @@ Status values: `passed-automated`, `passed-manual`, `partial-manual`, `pending-a
 
 Automated evidence does not pass a manual/device or content-quality gate. TSB 0.2 completion remains **blocked** until every manual row below passes.
 
-Current implementation commit: `12139cb0609da2f87ad6e89050bbddb4e9b8064e`. Lifecycle-correction review-record commit and exact post-review gate HEAD: `2cde5265ebde9bb856a0d7b52d2a704c9676c56f`.
+Current implementation commit: `882aec258ad3d1111d210ba11f6a1a740c535fc3`; its current unsigned full-suite gate is **386/386 passed, 0 failed, 0 skipped**. Lifecycle-correction review-record commit and historical exact post-review gate HEAD: `2cde5265ebde9bb856a0d7b52d2a704c9676c56f`.
 
 ## Automated gates
 
@@ -69,6 +69,17 @@ These final-fix results do not change the manual boundary. Normal signed test/bu
 
 V02-P12 supersedes the earlier blocked unsigned full-suite observations in V02-P02 and V02-P07. Normal signed test/build remains blocked on the copied `onnxruntime.framework` artifact and was not touched. Manual Provider, microphone, target-Mac timing, clipboard/disk, Figma/SwiftUI, Golden Set, M10, merge, and release gates remain pending or blocked.
 
+## Transcript-polish final architecture evidence (post-`551507e`)
+
+| ID | Requirement | Evidence | Current result | Status |
+|---|---|---|---|---|
+| V02-P14 | Conservative numeric-edit invariant | RED→GREEN validator regressions cover candidate-supported edits in `1e3` and `0x10`, punctuation directly before/after digits, signed and leading-decimal forms; punctuation away from digits remains eligible | Numeric-touching or digit-abutting edits require review; ordinary distant punctuation accepts | passed-automated |
+| V02-P15 | Extended-grapheme terminology boundary | RED→GREEN corrector, client, and validator regressions cover decomposed `e\u{301}TBé` and the left-adjacent decomposed form; standalone and Chinese-adjacent aliases remain eligible | Embedded decomposed-Latin alias is not replaced, submitted, or auto-accepted | passed-automated |
+| V02-P16 | Final architecture affected aggregate and static gate | `apps/macos/TSB/scripts/settings-static-gate.sh`; `/tmp/tsb-final-architecture-focused.xcresult` | Static gate passed; **229/229 passed, 0 failed, 0 skipped** | passed-automated |
+| V02-P17 | Final architecture full suite, build, and hygiene | Fresh bounded `CODE_SIGNING_ALLOWED=NO` run at `/tmp/tsb-final-architecture-full-2.xcresult`; unsigned Debug build at `/tmp/tsb-final-architecture-build`; clean diff and bounded privacy scan | **386/386 passed, 0 failed, 0 skipped**; unsigned Debug build and stated static checks passed | passed-automated (unsigned only) |
+
+V02-P17 is the current unsigned automated result for implementation commit `882aec2`. It does not change the release boundary: normal signed test/build remains blocked on the copied `onnxruntime.framework` artifact, and manual Provider, microphone, target-Mac timing, clipboard/disk, Figma/SwiftUI, Golden Set, M10, merge, and release gates remain pending or blocked.
+
 ## Exact-HEAD lifecycle-correction gate boundary
 
 The lifecycle-correction post-review automated gate at exact `2cde526` is `passed-automated` only. It does **not** pass the following user-present gates:
@@ -104,4 +115,4 @@ Meaning reversal and invented facts are valid JSON that can retain valid IDs, ha
 
 ## Completion decision
 
-`BLOCKED — manual acceptance is incomplete.` Exact post-review `2cde526` automated `318/318`, standalone Debug build, SenseVoice `7/7`, Paraformer `11/11`, tracked clean whole-correction review and zero current/additions scan counts do not promote target-Mac preview, microphone persistence, current resident-controls VoiceOver, Golden Set, M10, reachable-history owner disposition, merge or release authorization. Current resident-controls VoiceOver is `pending-manual`; historical broader M07 remains `partial-manual`. V02-M09 remains blocked at 22/30 paired records with no qualified semantic annotations; V02-M10 remains blocked at the failed/ineligible historical `100/1` run pending target-Mac validation of the installed Paraformer bundle and fresh authorization.
+`BLOCKED — manual acceptance is incomplete.` Current implementation `882aec2` has an unsigned automated result of `386/386`, a successful unsigned Debug build, and clean stated static checks; these do not promote target-Mac preview, microphone persistence, current resident-controls VoiceOver, Golden Set, M10, reachable-history owner disposition, normal signed build, merge, or release authorization. Current resident-controls VoiceOver is `pending-manual`; historical broader M07 remains `partial-manual`. V02-M09 remains blocked at 22/30 paired records with no qualified semantic annotations; V02-M10 remains blocked at the failed/ineligible historical `100/1` run pending target-Mac validation of the installed Paraformer bundle and fresh authorization.
