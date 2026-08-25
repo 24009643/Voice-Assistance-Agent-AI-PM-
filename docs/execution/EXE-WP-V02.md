@@ -4,9 +4,9 @@
 - Spec: `docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md`
 - Owner: Task 8 automated-evidence implementer
 - Reviewer: controller plus target-Mac manual operator
-- Status: exact source commit automated gate passed at `274/274`; M07/M08 passed-manual; release **BLOCKED / manual incomplete**
+- Status: exact source commit automated gate passed at `290/290`; release **BLOCKED / manual incomplete**
 - Branch: `codex/wp-04-alpha2`
-- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `d78f65f0fb49714fc451a6bc0b59732634c0bd97`.
+- Historical original execution-record commit: `647aef1`; prior documentation sync: `8d8a81d`; current source/validation commit: `109e93594299d8808d441ab2bf467263dd378cc5`.
 - Date: 2026-08-25
 
 ## 2026-08-25 adversarial remediation continuation
@@ -17,6 +17,14 @@
 - M08 passed with exactly one authorized DeepSeek-compatible request through the production client, strict decoder and validator. The existing Keychain item was reused without displaying, copying, saving, rotating or deleting the secret; only one non-sensitive segment and no history summaries were sent.
 - M09 remains blocked at 22 paired record/audio bundles without qualified semantic annotations. M10 remains blocked because a validated Paraformer bundle is absent and a fresh 100-cycle run requires explicit authorization.
 - The remediation is self-reviewed and automated-green. Independent re-review of `11f1d3d..d78f65f`, owner disposition of reachable-history diagnostics, M09 and M10 remain release gates.
+
+## 2026-08-25 recording-runtime exact-HEAD automated gate
+
+- Exact implementation commit: `109e93594299d8808d441ab2bf467263dd378cc5`. The Task 5 independent review fixes (six Important and two deferred Minor findings) received a clean scoped re-review.
+- One fresh full macOS suite wrote `/tmp/tsb-v02-recording-runtime-full.xcresult`: 290 passed, 0 failed, 0 skipped. `git diff --check` passed before and after the gate.
+- Local probe suites passed: SenseVoice 7/7 and Paraformer 11/11. The Task 5 brief did not run a separate standalone Debug-app build or any manual/device workflow.
+- Current changed-file and added-line count-only scans were all zero for provider-token, Bearer, AWS key, GitHub token, PEM private key, private absolute path, and `.env` patterns.
+- This automated gate does not pass target-Mac live preview, microphone recording/persistence, VoiceOver for the current resident controls, M09, M10, merge, or release. No real microphone, Provider, user Keychain, System Settings, recording, network, or process termination action was invoked by this automation.
 
 ## Original Task 8 files changed
 
