@@ -53,6 +53,11 @@ struct SecondaryProcessingSnapshot: Equatable, Sendable, Identifiable {
     }
 }
 
+enum LivePreviewAvailability: Equatable, Sendable {
+    case available
+    case unavailable
+}
+
 struct AppSnapshot: Equatable, Sendable {
     let sessionID: SessionID?
     let status: SessionStatus
@@ -61,6 +66,7 @@ struct AppSnapshot: Equatable, Sendable {
     let originalText: String
     let message: String?
     let audioLevel: Float
+    let livePreviewAvailability: LivePreviewAvailability
     let organizationPhase: OrganizationPhase
     let organizationRequestID: UUID?
     let suggestedRecords: [SuggestedRecordSnapshot]
@@ -75,6 +81,7 @@ struct AppSnapshot: Equatable, Sendable {
         originalText: String = "",
         message: String?,
         audioLevel: Float = 0,
+        livePreviewAvailability: LivePreviewAvailability = .available,
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
         suggestedRecords: [SuggestedRecordSnapshot] = [],
@@ -88,6 +95,7 @@ struct AppSnapshot: Equatable, Sendable {
         self.originalText = originalText
         self.message = message
         self.audioLevel = audioLevel
+        self.livePreviewAvailability = livePreviewAvailability
         self.organizationPhase = organizationPhase
         self.organizationRequestID = organizationRequestID
         self.suggestedRecords = suggestedRecords

@@ -78,6 +78,7 @@ final class SessionCoordinator {
     }
 
     private let dependencies: Dependencies
+    private let livePreviewAvailability: LivePreviewAvailability
     private let onSnapshot: (AppSnapshot) -> Void
     private var sessions: [SessionID: Session] = [:]
     private var mainSessionID: SessionID?
@@ -93,8 +94,13 @@ final class SessionCoordinator {
         didSet { onSnapshot(snapshot) }
     }
 
-    init(dependencies: Dependencies, onSnapshot: @escaping (AppSnapshot) -> Void) {
+    init(
+        dependencies: Dependencies,
+        livePreviewAvailability: LivePreviewAvailability = .available,
+        onSnapshot: @escaping (AppSnapshot) -> Void
+    ) {
         self.dependencies = dependencies
+        self.livePreviewAvailability = livePreviewAvailability
         self.onSnapshot = onSnapshot
     }
 
@@ -1048,6 +1054,7 @@ final class SessionCoordinator {
             originalText: main.transcript?.originalText ?? "",
             message: main.message,
             audioLevel: main.audioLevel,
+            livePreviewAvailability: livePreviewAvailability,
             organizationPhase: main.organizationPhase,
             organizationRequestID: main.organizationRequestID,
             suggestedRecords: main.suggestedRecords,

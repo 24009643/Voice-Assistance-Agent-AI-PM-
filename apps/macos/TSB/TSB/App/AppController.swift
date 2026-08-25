@@ -101,7 +101,15 @@ final class AppController: ObservableObject {
             modelError = "SenseVoice model is unavailable. Set TSB_SENSEVOICE_MODEL_DIR to a validated model directory."
         }
 
-        let previewModelLocation = try? ParaformerModelLocation.developmentLocation()
+        let previewModelLocation: ParaformerModelLocation?
+        let livePreviewAvailability: LivePreviewAvailability
+        do {
+            previewModelLocation = try ParaformerModelLocation.resolvedLocation()
+            livePreviewAvailability = .available
+        } catch {
+            previewModelLocation = nil
+            livePreviewAvailability = .unavailable
+        }
         let livePreview = LivePreviewPipeline(modelLocation: previewModelLocation)
 
         let coordinator = SessionCoordinator(
@@ -188,6 +196,7 @@ final class AppController: ObservableObject {
                     }
                 }
             ),
+            livePreviewAvailability: livePreviewAvailability,
             onSnapshot: { snapshot in
                 state.snapshot = snapshot
                 notchOverlay?.update(snapshot)

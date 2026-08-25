@@ -580,6 +580,21 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copiedTexts, ["SenseVoice only"])
     }
 
+    func testUnavailableLivePreviewRemainsVisibleWhileRecordingAndAudioCallbacksAreAccepted() async {
+        let harness = CoordinatorHarness(
+            transcript: "SenseVoice only",
+            livePreviewAvailability: .unavailable
+        )
+
+        await harness.coordinator.handle(.toggleRecording)
+        harness.publishAudioLevel(0.5)
+        await Task.yield()
+
+        XCTAssertEqual(harness.coordinator.snapshot.status, .recording)
+        XCTAssertEqual(harness.coordinator.snapshot.livePreviewAvailability, .unavailable)
+        XCTAssertEqual(harness.coordinator.snapshot.audioLevel, 0.5)
+    }
+
     func testOrganizationStartsAfterCopiedStatusAndReceivesOnlyCleanedText() async throws {
         let harness = CoordinatorHarness(
             transcript: "original secret source",
@@ -1458,6 +1473,7 @@ private final class CoordinatorHarness {
     private let historySuggestions: HistorySuggestions
     private let suspendsHistorySuggestions: Bool
     private let livePreviewPipeline: LivePreviewPipeline?
+    private let livePreviewAvailability: LivePreviewAvailability
     private var historySuggestionsError: Error?
     private var onFinished: [((RecordedAudio) -> Void)] = []
     private var onFailed: [((RecordedAudio) -> Void)] = []
@@ -1512,7 +1528,8 @@ private final class CoordinatorHarness {
         historySuggestions: HistorySuggestions = HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
         historySuggestionsError: Error? = nil,
         suspendsHistorySuggestions: Bool = false,
-        livePreviewPipeline: LivePreviewPipeline? = nil
+        livePreviewPipeline: LivePreviewPipeline? = nil,
+        livePreviewAvailability: LivePreviewAvailability = .available
     ) {
         self.transcript = transcript
         self.cleanedText = cleanedText
@@ -1534,6 +1551,7 @@ private final class CoordinatorHarness {
         self.historySuggestionsError = historySuggestionsError
         self.suspendsHistorySuggestions = suspendsHistorySuggestions
         self.livePreviewPipeline = livePreviewPipeline
+        self.livePreviewAvailability = livePreviewAvailability
     }
 
     private func makeCoordinator() -> SessionCoordinator {
@@ -1675,6 +1693,7 @@ private final class CoordinatorHarness {
                     self?.scheduledSecondaryRemovals.append((delay, action))
                 }
             ),
+            livePreviewAvailability: livePreviewAvailability,
             onSnapshot: { [weak self] snapshot in
                 self?.timeline.append("snapshot:\(snapshot.status.rawValue)")
             }

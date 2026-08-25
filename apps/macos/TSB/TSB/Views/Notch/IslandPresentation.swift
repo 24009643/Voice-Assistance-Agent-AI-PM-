@@ -133,6 +133,11 @@ struct IslandPresentation: Equatable, Sendable {
             layout: layout,
             hasLatestResult: hasLatestResult
         )
+        let draft = snapshot.status == .recording
+            && snapshot.previewText.isEmpty
+            && snapshot.livePreviewAvailability == .unavailable
+            ? "停止后仍会生成全文"
+            : snapshot.previewText
         return Self(
             mode: mode,
             size: CGSize(
@@ -144,7 +149,7 @@ struct IslandPresentation: Equatable, Sendable {
             tone: status.tone,
             systemImage: status.systemImage,
             accessibilityLabel: status.accessibilityLabel,
-            draft: snapshot.previewText,
+            draft: draft,
             audioLevel: snapshot.audioLevel,
             originalText: snapshot.originalText,
             numberedPoints: output?.numberedPoints ?? [],
@@ -240,6 +245,9 @@ struct IslandPresentation: Equatable, Sendable {
         case .idle:
             return ("Ready", .neutral, nil, "TSB ready")
         case .recording:
+            if snapshot.previewText.isEmpty, snapshot.livePreviewAvailability == .unavailable {
+                return ("实时草稿不可用", .neutral, "waveform", "实时草稿不可用，停止后仍会生成全文")
+            }
             let text = snapshot.previewText.isEmpty ? "正在录音" : "实时草稿"
             return (text, .neutral, "waveform", "正在录音，\(snapshot.previewText)")
         case .localDelivered:

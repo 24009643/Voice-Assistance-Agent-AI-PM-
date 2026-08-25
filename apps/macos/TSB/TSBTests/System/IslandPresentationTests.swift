@@ -38,6 +38,20 @@ final class IslandPresentationTests: XCTestCase {
         )
     }
 
+    func testUnavailableLivePreviewIsVisibleWithoutPretendingItIsTranscriptText() {
+        let value = snapshot(
+            status: .recording,
+            livePreviewAvailability: .unavailable
+        )
+        let presentation = IslandPresentation.make(for: value)
+
+        XCTAssertEqual(value.previewText, "")
+        XCTAssertEqual(presentation.statusText, "实时草稿不可用")
+        XCTAssertEqual(presentation.draft, "停止后仍会生成全文")
+        XCTAssertEqual(presentation.accessibilityLabel, "实时草稿不可用，停止后仍会生成全文")
+        XCTAssertTrue(presentation.controls.map(\.action).contains(.stopRecording))
+    }
+
     func testLocalDeliveryStaysCompactAndOrganizingNeverAutoHides() {
         let requestID = UUID()
         let presentation = IslandPresentation.make(
@@ -378,6 +392,7 @@ final class IslandPresentationTests: XCTestCase {
         originalText: String = "",
         message: String? = nil,
         audioLevel: Float = 0,
+        livePreviewAvailability: LivePreviewAvailability = .available,
         organizationPhase: OrganizationPhase = .notRequested,
         organizationRequestID: UUID? = nil,
         suggestedRecords: [SuggestedRecordSnapshot] = []
@@ -390,6 +405,7 @@ final class IslandPresentationTests: XCTestCase {
             originalText: originalText,
             message: message,
             audioLevel: audioLevel,
+            livePreviewAvailability: livePreviewAvailability,
             organizationPhase: organizationPhase,
             organizationRequestID: organizationRequestID,
             suggestedRecords: suggestedRecords

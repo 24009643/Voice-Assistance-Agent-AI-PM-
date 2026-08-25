@@ -73,7 +73,7 @@ struct IslandView: View {
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
                     .lineLimit(1)
-                    .accessibilityLabel(presentation.draft.isEmpty ? "等待实时草稿" : presentation.draft)
+                    .accessibilityLabel(presentation.accessibilityLabel)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
