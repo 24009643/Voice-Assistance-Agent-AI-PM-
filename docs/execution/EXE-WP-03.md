@@ -20,7 +20,7 @@
 - `xcodegen generate --spec apps/macos/TSB/project.yml`: exit 0.
 - `xcodebuild clean test -project apps/macos/TSB/TSB.xcodeproj -scheme TSB -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO`: clean succeeded; 44 tests passed, 0 failures, exit 0.
 - `swift test --package-path probes/sensevoice`: 7 tests passed, 0 failures, exit 0.
-- In `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8`, `shasum -a 256 -c manifest.sha256`: exit 0; `model.int8.onnx`, `tokens.txt` and `LICENSE` all reported `OK`.
+- In `$HOME/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8`, `shasum -a 256 -c manifest.sha256`: exit 0; `model.int8.onnx`, `tokens.txt` and `LICENSE` all reported `OK`.
 - `git diff --check`: exit 0. The evidence worktree was clean after verification.
 
 ## Acceptance criteria and evidence
@@ -54,7 +54,7 @@ The required human smoke — microphone → real ASR → JSON record → exactly
 
 ## Shortest next-morning manual acceptance
 
-1. Set `TSB_SENSEVOICE_MODEL_DIR` to `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8` and start the Debug app.
+1. Set `TSB_SENSEVOICE_MODEL_DIR` to `$HOME/Desktop/The Second Brain/.worktrees/wp-02-g0-run/artifacts/models/sensevoice-2024-07-17-int8` and start the Debug app.
 2. Grant microphone access, invoke Option-Space, dictate a short Mandarin, Cantonese or mixed Chinese-English phrase, then invoke Option-Space again to stop.
 3. Paste once into TextEdit with Command-V. Inspect the session JSON under `~/Library/Application Support/TSB/Sessions/`, and confirm the TSB process opens no external network connection during the run.
 

@@ -1,39 +1,75 @@
 # The Second Brain
 
-The Second Brain（TSB）是一款本地优先的 macOS 语音听写与灵感捕捉工具。
+很多想法说出来比打字快，麻烦往往出在后面。中英文混着说会听错，产品名容易变形，录完以后还要找文字、复制、整理。The Second Brain（TSB）想把这段过程收进 Mac 顶部的一块小界面里。
 
-当前 `0.1` 聚焦一条可靠闭环：快捷键录音、SenseVoiceSmall 本地分段转录、保守清理、原文留存与自动复制。生成式 LLM、语音唤醒、光标直接插入和个人知识库属于后续阶段。
+按下 `⌥ Space` 开始录音，讲话时会出现本地实时草稿。再次按下 `⌥ Space` 或点击“停止”，TSB 会保留录音，生成本地定稿，写入记录，再把文字复制一次。按 `Esc` 代表取消，本次未完成的录音会被丢弃。
 
-## 当前状态
+```text
+录音
+  -> 本地实时草稿
+  -> 停止后本地复核
+  -> 保存 audio.wav 和 record.json
+  -> 复制一次
+  -> 可选的文本润色与内容整理
+```
 
-- 阶段：0.1 工程准备
-- 目标设备：M5 Pro、48GB 内存的 MacBook
-- 数据边界：音频和听写文本在 0.1 全部留在本地
-- 发布边界：当前用于个人验证，不提供签名安装包
+本地处理始终先完成。网络不可用、API 没有配置或云端整理失败，都不会影响录音留存，也不能覆盖已经复制的本地文字。
+
+## 现在做到哪一步
+
+`0.2` 的产品代码和无签名自动化回归已经完成。当前分支是 `codex/wp-04-alpha2`，最新门禁记录为 394 项测试全部通过。
+
+一次当前版本的真实录音复核记录到以下结果。
+
+- 首次出现实时草稿用了 1,546 ms，暂时没有达到 800 ms 的目标。
+- 停止后 613 ms 写入本地定稿，618 ms 完成复制。
+- 本次录音留下了一份 `audio.wav` 和一份 `record.json`，剪贴板只改动一次。
+- 云端整理失败后，本地记录和剪贴板内容保持不变。
+
+这组结果能说明本地保存和复制已经跑通。当前版本仍是开发中的个人验证版本，暂时没有可直接安装的签名包。顶部界面的视觉与 VoiceOver 还要人工复核，真实 Provider 润色也没有通过本轮网络验收。
+
+完整状态放在 [0.2 验收矩阵](docs/testing/tsb-v0.2-acceptance-matrix.md)。测试通过、真机体验和正式发布在这里分开记录，避免把工程进度写成已经上线。
+
+## 文字为什么分层保存
+
+实时草稿适合让人知道系统听到了什么，本地离线结果负责停止后的定稿。可选的云端润色只处理经过授权的文字候选，返回结果还要经过本地规则检查。
+
+原始转写、本地清理结果、润色候选和整理结果分别保存。TSB 不会为了得到一段更顺的文字，悄悄覆盖最初听到了什么。
+
+## 隐私边界
+
+- 音频、文件路径、API Key 和整份历史记录不会进入云端请求。
+- 只有用户明确开启功能后，本次录音的文字候选和相关术语才可以发送。
+- 每次录音都可以选择“仅本地”。
+- API Key 保存在 macOS Keychain，仓库和日志不保存正文、录音或密钥。
+- 云端结果来得再晚，也不能再次修改剪贴板。
+
+## 当前没有做的事
+
+TSB 目前不做语音唤醒、自动粘贴、云端语音识别和模型训练，也不会扫描整台电脑建立知识库。这些能力没有提前搭空架子，后续只有在真实使用需要时才会进入设计。
 
 ## 文档入口
 
-- 设计规格：[docs/specs/tsb-v0.1-design.md](docs/specs/tsb-v0.1-design.md)
-- 实施计划：[docs/plans/](docs/plans/)
-- 架构决策：[docs/decisions/](docs/decisions/)
-- 工程标准：[docs/standards/engineering-standard.md](docs/standards/engineering-standard.md)
-- 执行记录：[docs/execution/](docs/execution/)
-- 验收证据：[evidence/](evidence/)
-- 外部参考：[references/README.md](references/README.md)
+- [0.2 第一性原理设计](docs/superpowers/specs/2026-08-20-tsb-v0.2-first-principles-design.md)
+- [0.2 转写润色设计](docs/superpowers/specs/2026-08-25-tsb-v0.2-transcript-polish-design.md)
+- [0.2 验收矩阵](docs/testing/tsb-v0.2-acceptance-matrix.md)
+- [Alpha 2 本地听写设计](docs/specs/tsb-v0.1-alpha2-design.md)
+- [架构决策](docs/decisions/)
+- [实际执行记录](docs/execution/)
+- [外部参考与来源](references/README.md)
 
-## 仓库边界
+## 仓库怎么读
 
 ```text
 The Second Brain/
-├── apps/macos/TSB/       # 正式 macOS 产品源码
-├── docs/specs/           # 已批准的设计事实源
-├── docs/plans/           # 尚未执行的实施计划
-├── docs/decisions/       # ADR：重要取舍、后果和回退
-├── docs/standards/       # 工程、隐私和质量规则
-├── docs/execution/       # 实际执行结果和偏差记录
-├── evidence/             # 可复核的测试与性能证据索引
-├── references/           # 外部项目和原始需求的来源登记
-└── artifacts/            # 可再生成的大文件，本地保留且不提交
+├── apps/macos/TSB/       # macOS 产品源码与测试
+├── docs/specs/           # 已确认的产品与技术设计
+├── docs/plans/           # 准备执行的计划
+├── docs/decisions/       # 关键取舍及其后果
+├── docs/execution/       # 实际做过的工作和偏差
+├── docs/testing/         # 自动化与人工验收边界
+├── evidence/             # 可复核的证据索引
+└── references/           # 外部项目及原始需求来源
 ```
 
-设计说明“为什么和做什么”，计划说明“准备怎样做”，执行记录说明“实际上做了什么”。三者不得互相覆盖。
+设计文档记录当时为什么这样选，执行记录说明后来实际做了什么。两者有冲突时，以带提交和测试证据的执行记录为准。

@@ -1,0 +1,247 @@
+import XCTest
+@testable import TSB
+
+final class TranscriptPolishValidatorTests: XCTestCase {
+    private let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000042")!
+
+    func testAcceptsFormattingAndTerminologyEditsThatReproduceText() throws {
+        let request = makeRequest(offline: "Use TB  now for this dictation", streaming: "Use TSB now for this dictation")
+        let data = response(for: request, base: .offline, corrected: "Use TSB now for this dictation", edits: [
+            edit(.terminology, 4, 2, "TB", "TSB", "approved alias"),
+            edit(.formatting, 6, 2, "  ", " ", "spacing")
+        ])
+        let outcome = try TranscriptPolishValidator().validate(data, for: request)
+        XCTAssertEqual(outcome, .accepted(baseCandidateID: .offline, text: "Use TSB now for this dictation", edits: [
+            edit(.terminology, 4, 2, "TB", "TSB", "approved alias"),
+            edit(.formatting, 6, 2, "  ", " ", "spacing")
+        ]))
+    }
+
+    func testContextOnlyRewriteRequiresReview() throws {
+        let request = makeRequest(offline: "清版内容保持原样而且不会丢失")
+        let outcome = try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "这一版内容保持原样而且不会丢失", edits: [edit(.candidateSupported, 0, 2, "清版", "这一版", "context")]), for: request)
+        guard case .reviewRequired = outcome else { return XCTFail("must not auto-accept") }
+    }
+
+    func testRejectsUnknownKeysAndHashMismatches() throws {
+        let request = makeRequest(offline: "alpha")
+        var object = try json(response(for: request, base: .offline, corrected: "alpha", edits: []))
+        object["unexpected"] = true
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
+        object.removeValue(forKey: "unexpected")
+        var hashes = try XCTUnwrap(object["candidate_hashes"] as? [[String: Any]])
+        hashes[0]["text_sha256"] = String(repeating: "0", count: 64)
+        object["candidate_hashes"] = hashes
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
+    }
+
+    func testRejectsOverlappingOrNonReproducibleEditsAndExcessiveChanges() throws {
+        let request = makeRequest(offline: "abcdefghij")
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "XYcdefghij", edits: [edit(.formatting, 0, 1, "a", "X", "x"), edit(.formatting, 0, 1, "a", "Y", "y")]), for: request))
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "xxxxxxxxxx", edits: [edit(.formatting, 0, 10, "abcdefghij", "xxxxxxxxxx", "not formatting")]), for: request))
+    }
+
+    func testNumericChangesRequireReviewWhileURLsAndEmailsRemainRejected() throws {
+        let numericRequest = makeRequest(offline: "Call 123 with sufficiently long surrounding text")
+        let numericOutcome = try TranscriptPolishValidator().validate(response(
+            for: numericRequest,
+            base: .offline,
+            corrected: "Call 124 with sufficiently long surrounding text",
+            edits: [edit(.formatting, 7, 1, "3", "4", "numeric change")]
+        ), for: numericRequest)
+        guard case .reviewRequired = numericOutcome else { return XCTFail("numeric edits must not auto-accept") }
+
+        for pair in [("https://example.test/a", "https://example.test/b"), ("me@example.test", "you@example.test")] {
+            let request = makeRequest(offline: pair.0)
+            XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: pair.1, edits: [edit(.formatting, 0, pair.0.utf16.count, pair.0, pair.1, "bad")]), for: request))
+        }
+    }
+
+    func testSmallNumericChangesRequireReviewAndBooleanOrOverflowedRangesReject() throws {
+        let request = makeRequest(offline: "call 12345 safely today")
+        let outcome = try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "call 12346 safely today", edits: [edit(.formatting, 9, 1, "5", "6", "bad")]), for: request)
+        guard case .reviewRequired = outcome else { return XCTFail("numeric edits must not auto-accept") }
+        var object = try json(response(for: request, base: .offline, corrected: "call 12345 safely today", edits: []))
+        object["edits"] = [["kind": "formatting", "start_utf16": true, "length_utf16": 0, "original": "", "replacement": "", "reason": "bad"]]
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
+        object["edits"] = [["kind": "formatting", "start_utf16": Int.max, "length_utf16": 1, "original": "", "replacement": "", "reason": "bad"]]
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(try encoded(object), for: request))
+    }
+
+    func testSignedAndDecimalPunctuationChangesRequireReviewInLongText() throws {
+        for (original, corrected, changed) in [
+            ("预算计划最终增加 +5 个百分点并保持其他所有内容完全不变", "预算计划最终增加 -5 个百分点并保持其他所有内容完全不变", "+"),
+            ("版本数值从 1.5 开始并保持后续所有说明内容完全不变", "版本数值从 1,5 开始并保持后续所有说明内容完全不变", "."),
+        ] {
+            let request = makeRequest(offline: original)
+            let range = (original as NSString).range(of: changed)
+            let replacement = (corrected as NSString).substring(with: range)
+            let outcome = try TranscriptPolishValidator().validate(
+                response(for: request, base: .offline, corrected: corrected, edits: [
+                    edit(.formatting, range.location, range.length, changed, replacement, "bad numeric formatting")
+                ]),
+                for: request
+            )
+            guard case .reviewRequired = outcome else { return XCTFail("numeric punctuation must not auto-accept") }
+        }
+    }
+
+    func testLeadingDecimalSeparatorAndSignChangesRequireReviewInLongText() throws {
+        for (originalNumber, correctedNumber, changed) in [
+            (".5", ",5", "."),
+            ("+.5", "-.5", "+"),
+            ("-.5", "-,5", "."),
+            ("−.5", "−,5", "."),
+        ] {
+            let suffix = " 是本次记录中的固定数值并且其余说明内容完全保持不变"
+            let original = originalNumber + suffix
+            let corrected = correctedNumber + suffix
+            let range = (original as NSString).range(of: changed)
+            let replacement = (corrected as NSString).substring(with: range)
+
+            let request = makeRequest(offline: original)
+            let outcome = try TranscriptPolishValidator().validate(
+                response(for: request, base: .offline, corrected: corrected, edits: [
+                    edit(.formatting, range.location, range.length, changed, replacement, "bad leading decimal formatting")
+                ]),
+                for: request
+            )
+            guard case .reviewRequired = outcome else { return XCTFail("must not auto-accept \(originalNumber)") }
+        }
+    }
+
+    func testCandidateSupportedExponentAndHexMarkersAbuttingDigitsRequireReview() throws {
+        for (offline, streaming, corrected, location, original, replacement) in [
+            ("Value 1e3 remains stable for this sufficiently long dictation", "Value 1E3 remains stable for this sufficiently long dictation", "Value 1E3 remains stable for this sufficiently long dictation", 7, "e", "E"),
+            ("Code 0x10 remains stable for this sufficiently long dictation", "Code 0X10 remains stable for this sufficiently long dictation", "Code 0X10 remains stable for this sufficiently long dictation", 6, "x", "X"),
+        ] {
+            let request = makeRequest(offline: offline, streaming: streaming)
+            let outcome = try TranscriptPolishValidator().validate(response(
+                for: request,
+                base: .offline,
+                corrected: corrected,
+                edits: [edit(.candidateSupported, location, 1, original, replacement, "other candidate")]
+            ), for: request)
+
+            guard case .reviewRequired = outcome else { return XCTFail("digit-abutting candidate edit must not auto-accept") }
+        }
+    }
+
+    func testFormattingDirectlyBeforeOrAfterDigitRequiresReview() throws {
+        let base = "Value 5 remains stable for this sufficiently long dictation"
+        for (corrected, location, replacement) in [
+            ("Value (5 remains stable for this sufficiently long dictation", 6, "("),
+            ("Value 5) remains stable for this sufficiently long dictation", 7, ")"),
+        ] {
+            let request = makeRequest(offline: base)
+            let outcome = try TranscriptPolishValidator().validate(response(
+                for: request,
+                base: .offline,
+                corrected: corrected,
+                edits: [edit(.formatting, location, 0, "", replacement, "digit-adjacent punctuation")]
+            ), for: request)
+
+            guard case .reviewRequired = outcome else { return XCTFail("digit-adjacent formatting must not auto-accept") }
+        }
+    }
+
+    func testOrdinaryPunctuationAwayFromDigitsStillAutoAccepts() throws {
+        let base = "Value 5 remains stable for this sufficiently long dictation"
+        let corrected = "Value 5 remains stable, for this sufficiently long dictation"
+        let request = makeRequest(offline: base)
+        let edit = edit(.formatting, 22, 0, "", ",", "ordinary punctuation")
+
+        let outcome = try TranscriptPolishValidator().validate(response(
+            for: request,
+            base: .offline,
+            corrected: corrected,
+            edits: [edit]
+        ), for: request)
+
+        XCTAssertEqual(outcome, .accepted(baseCandidateID: .offline, text: corrected, edits: [edit]))
+    }
+
+    func testRejectsZeroLengthInsertionBeyondChangeLimitAndUnanchoredCandidateEvidence() throws {
+        let request = makeRequest(offline: String(repeating: "a", count: 20), streaming: "xxxxEARTHyyyy")
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: String(repeating: "a", count: 20) + "abcdef", edits: [edit(.formatting, 20, 0, "", "abcdef", "insert")]), for: request))
+        let base = "left xxxx right and trailing content"
+        let unanchored = makeRequest(offline: base, streaming: "left earth elsewhere xxxx right")
+        let review = try TranscriptPolishValidator().validate(response(for: unanchored, base: .offline, corrected: "left earth right and trailing content", edits: [edit(.candidateSupported, 5, 4, "xxxx", "earth", "bad anchors")]), for: unanchored)
+        guard case .reviewRequired = review else { return XCTFail("must not accept separately occurring anchors") }
+    }
+
+    func testCandidateSupportedNeedsOtherCandidateAnchorEvidence() throws {
+        let request = makeRequest(offline: "hello world today and keep the rest", streaming: "hello earth today and keep the rest")
+        let accepted = try TranscriptPolishValidator().validate(response(for: request, base: .offline, corrected: "hello earth today and keep the rest", edits: [edit(.candidateSupported, 6, 5, "world", "earth", "other candidate")]), for: request)
+        guard case .accepted = accepted else { return XCTFail("anchored alternate must be accepted") }
+        let noSupport = makeRequest(offline: "hello world today and keep the rest", streaming: "different entirely")
+        let review = try TranscriptPolishValidator().validate(response(for: noSupport, base: .offline, corrected: "hello earth today and keep the rest", edits: [edit(.candidateSupported, 6, 5, "world", "earth", "context")]), for: noSupport)
+        guard case .reviewRequired = review else { return XCTFail("unsupported candidate change must require review") }
+    }
+
+    func testCandidateSupportRequiresPrefixAndSuffixAtTextBoundaries() throws {
+        let prefix = makeRequest(offline: "wrong tail long enough for stable evidence", streaming: "noise right tail long enough for stable evidence")
+        let prefixOutcome = try TranscriptPolishValidator().validate(response(for: prefix, base: .offline, corrected: "right tail long enough for stable evidence", edits: [edit(.candidateSupported, 0, 5, "wrong", "right", "boundary")]), for: prefix)
+        guard case .reviewRequired = prefixOutcome else { return XCTFail("replacement not at other prefix") }
+        let suffix = makeRequest(offline: "long enough start stays stable until wrong", streaming: "long enough start stays stable until right noise")
+        let suffixOutcome = try TranscriptPolishValidator().validate(response(for: suffix, base: .offline, corrected: "long enough start stays stable until right", edits: [edit(.candidateSupported, 37, 5, "wrong", "right", "boundary")]), for: suffix)
+        guard case .reviewRequired = suffixOutcome else { return XCTFail("replacement not at other suffix") }
+    }
+
+    func testTerminologyAliasInsideLargerLatinTokenIsNotAutoAccepted() throws {
+        let request = makeRequest(offline: "Use XTBx for this sufficiently long dictation")
+        let outcome = try TranscriptPolishValidator().validate(response(
+            for: request,
+            base: .offline,
+            corrected: "Use XTSBx for this sufficiently long dictation",
+            edits: [edit(.terminology, 5, 2, "TB", "TSB", "embedded alias")]
+        ), for: request)
+
+        guard case .reviewRequired = outcome else { return XCTFail("embedded alias must not auto-accept") }
+    }
+
+    func testTerminologyAliasInsideUnicodeLatinTokenIsNotAutoAccepted() throws {
+        let request = makeRequest(offline: "Use éTBé for this sufficiently long dictation")
+        let outcome = try TranscriptPolishValidator().validate(response(
+            for: request,
+            base: .offline,
+            corrected: "Use éTSBé for this sufficiently long dictation",
+            edits: [edit(.terminology, 5, 2, "TB", "TSB", "Unicode-Latin embedded alias")]
+        ), for: request)
+
+        guard case .reviewRequired = outcome else { return XCTFail("Unicode-Latin embedded alias must not auto-accept") }
+    }
+
+    func testTerminologyAliasAfterDecomposedLatinGraphemeIsNotAutoAccepted() throws {
+        for suffix in ["é", ""] {
+            let original = "Use e\u{301}TB\(suffix) for this sufficiently long dictation"
+            let corrected = "Use e\u{301}TSB\(suffix) for this sufficiently long dictation"
+            let request = makeRequest(offline: original)
+            let outcome = try TranscriptPolishValidator().validate(response(
+                for: request,
+                base: .offline,
+                corrected: corrected,
+                edits: [edit(.terminology, 6, 2, "TB", "TSB", "decomposed-Latin embedded alias")]
+            ), for: request)
+
+            guard case .reviewRequired = outcome else { return XCTFail("decomposed-Latin embedded alias must not auto-accept") }
+        }
+    }
+
+    func testRejectsInnerResponseOver48KiB() throws {
+        let request = makeRequest(offline: "a")
+        XCTAssertThrowsError(try TranscriptPolishValidator().validate(Data(repeating: 0x20, count: TranscriptPolishClient.maximumInnerBytes + 1), for: request))
+    }
+
+    private func makeRequest(offline: String, streaming: String? = nil) -> TranscriptPolishRequest {
+        TranscriptPolishRequest(requestID: requestID, candidates: [TranscriptCandidate(id: .offline, text: offline)] + (streaming.map { [TranscriptCandidate(id: .streaming, text: $0)] } ?? []), terminology: [TranscriptTerminologyEntry(canonical: "TSB", aliases: ["TB"])])
+    }
+
+    private func response(for request: TranscriptPolishRequest, base: TranscriptCandidate.ID, corrected: String, edits: [TranscriptPolishEdit]) -> Data {
+        try! encoded(["schema_version": "tsb.transcript_polish.response.v1", "request_id": request.requestID.uuidString.lowercased(), "candidate_hashes": request.candidates.map { ["candidate_id": $0.id.rawValue, "text_sha256": $0.textSHA256] }, "base_candidate_id": base.rawValue, "corrected_text": corrected, "edits": edits.map { ["kind": $0.kind.rawValue, "start_utf16": $0.startUTF16, "length_utf16": $0.lengthUTF16, "original": $0.original, "replacement": $0.replacement, "reason": $0.reason] }])
+    }
+
+    private func edit(_ kind: TranscriptPolishEditKind, _ start: Int, _ length: Int, _ original: String, _ replacement: String, _ reason: String) -> TranscriptPolishEdit { .init(kind: kind, startUTF16: start, lengthUTF16: length, original: original, replacement: replacement, reason: reason) }
+    private func json(_ data: Data) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any]) }
+    private func encoded(_ object: Any) throws -> Data { try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) }
+}

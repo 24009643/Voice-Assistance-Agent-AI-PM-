@@ -44,6 +44,54 @@ final class SenseVoiceTranscriberTests: XCTestCase {
         }
     }
 
+    func testResolvedLocationPrefersExplicitEnvironmentOverride() throws {
+        try withTemporaryDirectory { root in
+            let override = root.appendingPathComponent("override", isDirectory: true)
+            let appSupport = root.appendingPathComponent("Application Support", isDirectory: true)
+            try FileManager.default.createDirectory(at: override, withIntermediateDirectories: true)
+            try writeModelFiles(in: override)
+            try writeManifest(in: override)
+
+            let location = try SenseVoiceModelLocation.resolvedLocation(
+                environment: ["TSB_SENSEVOICE_MODEL_DIR": override.path],
+                applicationSupportDirectory: appSupport
+            )
+
+            XCTAssertEqual(
+                location.model.standardizedFileURL,
+                override.appendingPathComponent("model.int8.onnx").standardizedFileURL
+            )
+        }
+    }
+
+    func testResolvedLocationUsesCanonicalApplicationSupportBundle() throws {
+        try withTemporaryDirectory { root in
+            let appSupport = root.appendingPathComponent("Application Support", isDirectory: true)
+            let model = appSupport
+                .appendingPathComponent("TSB/Models", isDirectory: true)
+                .appendingPathComponent(SenseVoiceModelLocation.modelName, isDirectory: true)
+            try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+            try writeModelFiles(in: model)
+            try writeManifest(in: model)
+
+            let location = try SenseVoiceModelLocation.resolvedLocation(
+                environment: [:],
+                applicationSupportDirectory: appSupport
+            )
+
+            XCTAssertEqual(
+                location.tokens.standardizedFileURL,
+                model.appendingPathComponent("tokens.txt").standardizedFileURL
+            )
+        }
+    }
+
+    func testDevelopmentLocationWithoutOverrideKeepsStrictMissingDirectoryError() {
+        XCTAssertThrowsError(try SenseVoiceModelLocation.developmentLocation(environment: [:])) { error in
+            XCTAssertEqual(error as? SenseVoiceTranscriberError, .missingDevelopmentModelDirectory)
+        }
+    }
+
     func testUserTextDoesNotContainControlTags() {
         let parsed = SenseVoiceTranscriber.parse(
             text: "<|zh|><|Speech|>这是正文",

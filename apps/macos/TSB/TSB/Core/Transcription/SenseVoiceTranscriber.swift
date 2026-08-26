@@ -1,5 +1,4 @@
 import AVFoundation
-import CryptoKit
 import Foundation
 import SherpaOnnx
 
@@ -13,6 +12,7 @@ enum SenseVoiceTranscriberError: Error, Equatable {
 
 struct SenseVoiceModelLocation: Sendable {
     private static let requiredFileNames = ["model.int8.onnx", "tokens.txt", "LICENSE"]
+    static let modelName = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
 
     let model: URL
     let tokens: URL
@@ -25,10 +25,15 @@ struct SenseVoiceModelLocation: Sendable {
         license = directory.appendingPathComponent("LICENSE")
         manifest = directory.appendingPathComponent("manifest.sha256")
 
-        for url in [model, tokens, license, manifest] where !FileManager.default.fileExists(atPath: url.path) {
-            throw SenseVoiceTranscriberError.missingModelFile(url.lastPathComponent)
+        do {
+            try ModelManifestValidator.validate(directory: directory, requiredFileNames: Self.requiredFileNames)
+        } catch let error as ModelManifestValidationError {
+            switch error {
+            case let .missingFile(file): throw SenseVoiceTranscriberError.missingModelFile(file)
+            case .manifestTooLarge: throw SenseVoiceTranscriberError.modelManifestTooLarge
+            case .invalidManifest, .checksumMismatch: throw SenseVoiceTranscriberError.invalidModelManifest
+            }
         }
-        try Self.verifyManifest(at: manifest, in: directory)
     }
 
     static func developmentLocation(
@@ -40,43 +45,25 @@ struct SenseVoiceModelLocation: Sendable {
         return try SenseVoiceModelLocation(directory: URL(fileURLWithPath: path, isDirectory: true))
     }
 
-    private static func verifyManifest(at manifest: URL, in directory: URL) throws {
-        let attributes = try FileManager.default.attributesOfItem(atPath: manifest.path)
-        guard let size = attributes[.size] as? NSNumber, size.uint64Value <= 65_536 else {
-            throw SenseVoiceTranscriberError.modelManifestTooLarge
+    static func resolvedLocation(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        applicationSupportDirectory: URL? = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first
+    ) throws -> SenseVoiceModelLocation {
+        if let override = environment["TSB_SENSEVOICE_MODEL_DIR"], !override.isEmpty {
+            return try SenseVoiceModelLocation(directory: URL(fileURLWithPath: override, isDirectory: true))
         }
-        let contents = try String(contentsOf: manifest, encoding: .utf8)
-        var expectedDigests: [String: String] = [:]
-
-        for line in contents.split(whereSeparator: { $0.isNewline }) {
-            let fields = line.split(maxSplits: 1, omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace })
-            guard fields.count == 2,
-                  fields[0].count == 64,
-                  fields[0].allSatisfy({ $0.isHexDigit })
-            else {
-                throw SenseVoiceTranscriberError.invalidModelManifest
-            }
-
-            let fileName = String(fields[1]).trimmingCharacters(in: .whitespaces)
-            guard requiredFileNames.contains(fileName), expectedDigests[fileName] == nil else {
-                throw SenseVoiceTranscriberError.invalidModelManifest
-            }
-            expectedDigests[fileName] = String(fields[0]).lowercased()
+        guard let applicationSupportDirectory else {
+            throw SenseVoiceTranscriberError.missingDevelopmentModelDirectory
         }
-
-        guard expectedDigests.count == requiredFileNames.count else {
-            throw SenseVoiceTranscriberError.invalidModelManifest
-        }
-
-        for fileName in requiredFileNames {
-            let actualDigest = SHA256.hash(data: try Data(contentsOf: directory.appendingPathComponent(fileName)))
-                .map { String(format: "%02x", $0) }
-                .joined()
-            guard expectedDigests[fileName] == actualDigest else {
-                throw SenseVoiceTranscriberError.invalidModelManifest
-            }
-        }
+        let directory = applicationSupportDirectory
+            .appendingPathComponent("TSB/Models", isDirectory: true)
+            .appendingPathComponent(modelName, isDirectory: true)
+        return try SenseVoiceModelLocation(directory: directory)
     }
+
 }
 
 struct TranscriptionResult: Equatable, Sendable {

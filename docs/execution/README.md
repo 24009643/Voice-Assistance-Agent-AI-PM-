@@ -1,5 +1,13 @@
 # Execution Records
 
+Current Alpha 2 execution starts with [`EXE-WP-A2-00.md`](EXE-WP-A2-00.md) and
+continues through [`EXE-WP-A2-01.md`](EXE-WP-A2-01.md) and
+[`EXE-WP-A2-02.md`](EXE-WP-A2-02.md). A2-01 and A2-02 pass bounded technical
+gates only; their product acceptance criteria remain in progress.
+Each Alpha 2 record owns the single live
+`WP -> ADR -> REQ -> files -> tests -> AC -> evidence -> commit` mapping for its
+work package.
+
 Plans are frozen intent. Execution records are append-only accounts of what actually happened.
 
 One file is created per work package: `EXE-WP-xx.md`.

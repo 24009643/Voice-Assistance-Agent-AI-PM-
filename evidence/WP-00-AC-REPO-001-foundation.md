@@ -7,7 +7,7 @@
 
 ## Expected
 
-- One canonical repository at `/Users/zhuohengchi/Desktop/The Second Brain`.
+- One canonical repository at `$HOME/Desktop/The Second Brain`.
 - Current local-only 0.1 scope is the active source of truth.
 - Specs, plans, execution records and evidence have separate paths.
 - No nested Git repository, downloaded model, DMG, raw audio or secret enters the staged tree.
