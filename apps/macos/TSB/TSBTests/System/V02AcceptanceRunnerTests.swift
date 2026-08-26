@@ -283,7 +283,8 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
         let harness = RunnerFailureHarness(
-            recordsDirectory: directory.appendingPathComponent("records")
+            recordsDirectory: directory.appendingPathComponent("records"),
+            cancelRemovesSessionBundle: true
         )
         let outputURL = directory.appendingPathComponent("evidence.jsonl")
         let runner = V02AcceptanceRunner(
@@ -325,6 +326,10 @@ final class V02AcceptanceRunnerTests: XCTestCase {
 
         XCTAssertEqual(rows.first?["result_category"] as? String, "recording_ended_before_runner_stop")
         XCTAssertEqual(harness.stopCount, 0)
+        XCTAssertEqual(harness.cancelCount, 0)
+        let records = try harness.store.list()
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.deliveryStatus, .copied)
     }
 
     func testRunnerUsesExactDurableReceiptTimings() async throws {
@@ -366,6 +371,35 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertEqual(rows.first?["stop_to_copy_ms"] as? Int, 630)
         XCTAssertEqual(harness.stopCount, 1)
         XCTAssertEqual(rows.first?["result_category"] as? String, "passed")
+    }
+
+    func testRunnerRejectsInvalidDurableReceiptRowsWithSpecificCategories() async throws {
+        let cases: [(String, TranscriptDeliveryReceipt?, Bool, String)] = [
+            ("missing", nil, false, "delivery_receipt_missing"),
+            ("negative", TranscriptDeliveryReceipt(
+                source: .local,
+                stopToLocalFinalMilliseconds: -1,
+                stopToCopyMilliseconds: 2
+            ), true, "delivery_receipt_invalid"),
+            ("inverted", TranscriptDeliveryReceipt(
+                source: .local,
+                stopToLocalFinalMilliseconds: 3,
+                stopToCopyMilliseconds: 2
+            ), true, "delivery_receipt_invalid"),
+            ("source mismatch", TranscriptDeliveryReceipt(
+                source: .polished,
+                stopToLocalFinalMilliseconds: 1,
+                stopToCopyMilliseconds: 2
+            ), true, "delivery_receipt_source_mismatch"),
+        ]
+
+        for (name, receipt, persistsReceipt, expectedCategory) in cases {
+            let row = try await runReceiptCase(
+                receiptOverride: receipt,
+                persistsReceipt: persistsReceipt
+            )
+            XCTAssertEqual(row["result_category"] as? String, expectedCategory, name)
+        }
     }
 
     func testFailureCleanupAfterIntentionalStopInvalidatesLateOrganizationResultWithoutRecopy() async throws {
@@ -729,6 +763,25 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         }
     }
 
+    func testMissingAndNegativeFirstPreviewCannotPassRowsOrSummary() {
+        let cases: [(String, Int?)] = [
+            ("missing", nil),
+            ("negative", -1),
+        ]
+
+        for (name, firstPreview) in cases {
+            let invalid = makeCycle(number: 1, firstPreviewMilliseconds: firstPreview)
+            XCTAssertFalse(invalid.hasValidDeliveryEvidence, name)
+            let rows = (1...100).map { number in
+                number == 1 ? invalid : makeCycle(number: number, sessionID: sessionID(number))
+            }
+            XCTAssertFalse(
+                V02AcceptanceMetrics.summarize(cycles: rows, requestedCycles: 100).m10Passed,
+                name
+            )
+        }
+    }
+
     func testEvidenceEncodingContainsOnlyTheExplicitMetadataAllowlist() throws {
         let encoder = JSONEncoder()
         let cycleKeys = try encodedKeys(encoder.encode(makeCycle(number: 1)))
@@ -816,7 +869,7 @@ final class V02AcceptanceRunnerTests: XCTestCase {
     private func makeCycle(
         number: Int,
         sessionID: UUID = UUID(),
-        firstPreviewMilliseconds: Int = 800,
+        firstPreviewMilliseconds: Int? = 800,
         stopToLocalFinalMilliseconds: Int? = 1_500,
         stopToCopyMilliseconds: Int? = 2_000,
         deliverySource: TranscriptDeliverySource? = .local,
@@ -853,6 +906,41 @@ final class V02AcceptanceRunnerTests: XCTestCase {
     private func encodedKeys(_ data: Data) throws -> [String] {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         return object.keys.sorted()
+    }
+
+    private func runReceiptCase(
+        receiptOverride: TranscriptDeliveryReceipt?,
+        persistsReceipt: Bool
+    ) async throws -> [String: Any] {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = RunnerFailureHarness(
+            recordsDirectory: directory.appendingPathComponent("records"),
+            finishesOnStop: true,
+            deliveryReceiptOverride: receiptOverride,
+            persistsDeliveryReceipt: persistsReceipt
+        )
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        let runner = V02AcceptanceRunner(
+            configuration: V02AcceptanceConfiguration(
+                wavURL: directory.appendingPathComponent("unused.wav"),
+                outputURL: outputURL,
+                cycles: 1
+            ),
+            controller: harness.controller,
+            store: harness.store,
+            pasteboard: harness.pasteboard,
+            playbackOverride: {
+                harness.publishPreview("local preview")
+                return true
+            }
+        )
+
+        await runner.run()
+        let firstRow = try XCTUnwrap(String(contentsOf: outputURL, encoding: .utf8).split(separator: "\n").first)
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(firstRow.utf8)) as? [String: Any])
     }
 
     private func configuredRun(in directory: URL) throws -> ([String: String], URL) {
@@ -913,6 +1001,8 @@ private final class RunnerFailureHarness {
     private let finishesOnStop: Bool
     private let throwsOnRecordingStart: Bool
     private let deliveryReceiptOverride: TranscriptDeliveryReceipt?
+    private let persistsDeliveryReceipt: Bool
+    private let cancelRemovesSessionBundle: Bool
     private var organizationContinuation: UnsafeContinuation<OrganizationOutput, Never>?
     private var previewCancellationContinuation: UnsafeContinuation<Void, Never>?
     private(set) var stopCount = 0
@@ -947,6 +1037,9 @@ private final class RunnerFailureHarness {
                 guard let self, recorderSessionID == sessionID else { return false }
                 recorderSessionID = nil
                 cancelCount += 1
+                if cancelRemovesSessionBundle {
+                    try? store.removeSession(id: sessionID)
+                }
                 return true
             },
             finishPreview: { _ in "late local text" },
@@ -967,11 +1060,15 @@ private final class RunnerFailureHarness {
             },
             updateDelivery: { [weak self] sessionID, status, receipt in
                 guard let self else { return }
-                try store.updateDelivery(
-                    id: sessionID,
-                    status: status,
-                    receipt: deliveryReceiptOverride ?? receipt
-                )
+                if persistsDeliveryReceipt {
+                    try store.updateDelivery(
+                        id: sessionID,
+                        status: status,
+                        receipt: deliveryReceiptOverride ?? receipt
+                    )
+                } else {
+                    try store.updateDeliveryStatus(id: sessionID, to: status)
+                }
             },
             copy: { [weak self] text in
                 guard let self else { return false }
@@ -1023,7 +1120,9 @@ private final class RunnerFailureHarness {
         suspendsPreviewCancellation: Bool = false,
         finishesOnStop: Bool = false,
         throwsOnRecordingStart: Bool = false,
-        deliveryReceiptOverride: TranscriptDeliveryReceipt? = nil
+        deliveryReceiptOverride: TranscriptDeliveryReceipt? = nil,
+        persistsDeliveryReceipt: Bool = true,
+        cancelRemovesSessionBundle: Bool = false
     ) {
         store = TranscriptStore(directory: recordsDirectory)
         self.suspendsOrganization = suspendsOrganization
@@ -1031,6 +1130,8 @@ private final class RunnerFailureHarness {
         self.finishesOnStop = finishesOnStop
         self.throwsOnRecordingStart = throwsOnRecordingStart
         self.deliveryReceiptOverride = deliveryReceiptOverride
+        self.persistsDeliveryReceipt = persistsDeliveryReceipt
+        self.cancelRemovesSessionBundle = cancelRemovesSessionBundle
     }
 
     func deliverLateFinishedAudio() async {

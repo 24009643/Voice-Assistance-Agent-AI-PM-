@@ -91,7 +91,9 @@ struct V02AcceptanceCycleEvidence: Encodable {
     }
 
     var hasValidDeliveryEvidence: Bool {
-        guard let stopToLocalFinalMilliseconds,
+        guard let firstPreviewMilliseconds,
+              firstPreviewMilliseconds >= 0,
+              let stopToLocalFinalMilliseconds,
               let stopToCopyMilliseconds,
               stopToLocalFinalMilliseconds >= 0,
               stopToCopyMilliseconds >= stopToLocalFinalMilliseconds else { return false }
@@ -409,10 +411,13 @@ final class V02AcceptanceRunner {
         }
 
         let snapshot = controller.state.snapshot
+        if Self.hasDurableLocalFinal(sessionID: sessionID, store: store) {
+            failIfNeeded("recording_ended_before_runner_stop")
+            return evidence()
+        }
         guard snapshot.sessionID == sessionID,
               snapshot.status == .recording,
-              capture?.deliveredInstant == nil,
-              !Self.hasDurableLocalFinal(sessionID: sessionID, store: store) else {
+              capture?.deliveredInstant == nil else {
             return await failureEvidence("recording_ended_before_runner_stop")
         }
 
@@ -518,8 +523,18 @@ final class V02AcceptanceRunner {
             }
             capture?.stopToLocalFinalMilliseconds = deliveryReceipt.stopToLocalFinalMilliseconds
             capture?.stopToCopyMilliseconds = deliveryReceipt.stopToCopyMilliseconds
+            guard deliveryReceipt.stopToLocalFinalMilliseconds >= 0,
+                  deliveryReceipt.stopToCopyMilliseconds >= deliveryReceipt.stopToLocalFinalMilliseconds else {
+                capture?.failureCategory = "delivery_receipt_invalid"
+                return
+            }
             guard let deliverySource = snapshot.deliverySource else {
                 capture?.failureCategory = "delivery_source_missing"
+                return
+            }
+            capture?.deliverySource = deliverySource
+            guard deliveryReceipt.source == deliverySource else {
+                capture?.failureCategory = "delivery_receipt_source_mismatch"
                 return
             }
             guard let polishState = snapshot.polishState else {
@@ -533,7 +548,6 @@ final class V02AcceptanceRunner {
                 capture?.failureCategory = "delivery_polish_inconsistent"
                 return
             }
-            capture?.deliverySource = deliverySource
             capture?.polishState = polishState
             capture?.polishElapsedMilliseconds = record.polish?.elapsedMilliseconds
             capture?.recordDelta = try store.list().count - initialRecordCount
