@@ -91,7 +91,11 @@ struct V02AcceptanceCycleEvidence: Encodable {
     }
 
     var hasValidDeliveryEvidence: Bool {
-        Self.hasConsistentDeliveryEvidence(source: deliverySource, polishState: polishState)
+        guard let stopToLocalFinalMilliseconds,
+              let stopToCopyMilliseconds,
+              stopToLocalFinalMilliseconds >= 0,
+              stopToCopyMilliseconds >= stopToLocalFinalMilliseconds else { return false }
+        return Self.hasConsistentDeliveryEvidence(source: deliverySource, polishState: polishState)
     }
 
     static func hasConsistentDeliveryEvidence(
@@ -233,8 +237,9 @@ final class V02AcceptanceRunner {
         var recordingInstant: ContinuousClock.Instant?
         var firstPreviewInstant: ContinuousClock.Instant?
         var stopInstant: ContinuousClock.Instant?
-        var localFinalInstant: ContinuousClock.Instant?
         var deliveredInstant: ContinuousClock.Instant?
+        var stopToLocalFinalMilliseconds: Int?
+        var stopToCopyMilliseconds: Int?
         var deliveredPasteboardChangeCount: Int?
         var terminalPasteboardChangeCount: Int?
         var deliveryStatus = "missing"
@@ -403,6 +408,14 @@ final class V02AcceptanceRunner {
             return await failureEvidence("preview_missing")
         }
 
+        let snapshot = controller.state.snapshot
+        guard snapshot.sessionID == sessionID,
+              snapshot.status == .recording,
+              capture?.deliveredInstant == nil,
+              !Self.hasDurableLocalFinal(sessionID: sessionID, store: store) else {
+            return await failureEvidence("recording_ended_before_runner_stop")
+        }
+
         capture?.stopInstant = clock.now
         controller.stopRecordingForDevelopment(sessionID: sessionID)
         guard await wait(until: {
@@ -410,12 +423,9 @@ final class V02AcceptanceRunner {
                   Self.hasDurableLocalFinal(sessionID: sessionID, store: self.store) else {
                 return self.capture?.failureCategory != nil
             }
-            if self.capture?.localFinalInstant == nil {
-                self.capture?.localFinalInstant = self.clock.now
-            }
             return true
         }, seconds: 30),
-              capture?.localFinalInstant != nil else {
+              capture?.failureCategory == nil else {
             return await failureEvidence("local_final_timeout")
         }
         guard await wait(until: { self.capture?.deliveredInstant != nil || self.capture?.failureCategory != nil }, seconds: 30),
@@ -502,6 +512,12 @@ final class V02AcceptanceRunner {
             let record = try store.load(id: sessionID)
             let initialRecordCount = capture?.initialRecordCount ?? 0
             capture?.deliveryStatus = record.deliveryStatus.rawValue
+            guard let deliveryReceipt = record.deliveryReceipt else {
+                capture?.failureCategory = "delivery_receipt_missing"
+                return
+            }
+            capture?.stopToLocalFinalMilliseconds = deliveryReceipt.stopToLocalFinalMilliseconds
+            capture?.stopToCopyMilliseconds = deliveryReceipt.stopToCopyMilliseconds
             guard let deliverySource = snapshot.deliverySource else {
                 capture?.failureCategory = "delivery_source_missing"
                 return
@@ -551,9 +567,9 @@ final class V02AcceptanceRunner {
             cycleNumber: capture.cycleNumber,
             sessionID: capture.sessionID?.rawValue,
             firstPreviewMilliseconds: milliseconds(from: capture.recordingInstant, to: capture.firstPreviewInstant),
-            stopToLocalFinalMilliseconds: milliseconds(from: capture.stopInstant, to: capture.localFinalInstant),
+            stopToLocalFinalMilliseconds: capture.stopToLocalFinalMilliseconds,
             polishElapsedMilliseconds: capture.polishElapsedMilliseconds,
-            stopToCopyMilliseconds: milliseconds(from: capture.stopInstant, to: capture.deliveredInstant),
+            stopToCopyMilliseconds: capture.stopToCopyMilliseconds,
             deliveryStatus: capture.deliveryStatus,
             deliverySource: capture.deliverySource,
             polishState: capture.polishState,

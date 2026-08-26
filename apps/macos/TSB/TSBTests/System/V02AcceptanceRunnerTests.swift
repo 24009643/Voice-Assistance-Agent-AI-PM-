@@ -277,6 +277,97 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertEqual(harness.organizationDispatchCount, 0)
     }
 
+    func testRunnerFailsClosedWhenDurableDeliveryExistsBeforeItsControlledStop() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = RunnerFailureHarness(
+            recordsDirectory: directory.appendingPathComponent("records")
+        )
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        let runner = V02AcceptanceRunner(
+            configuration: V02AcceptanceConfiguration(
+                wavURL: directory.appendingPathComponent("unused.wav"),
+                outputURL: outputURL,
+                cycles: 1
+            ),
+            controller: harness.controller,
+            store: harness.store,
+            pasteboard: harness.pasteboard,
+            playbackOverride: {
+                harness.publishPreview("local preview")
+                let sessionID = harness.state.snapshot.sessionID!
+                try! harness.store.save(TranscriptRecord(
+                    id: sessionID,
+                    ordinal: SessionOrdinal(rawValue: 1),
+                    createdAt: Date(),
+                    durationMilliseconds: 1,
+                    detectedLanguages: ["zh"],
+                    originalText: "local final",
+                    localCleanedText: "local final",
+                    edits: [],
+                    deliveryStatus: .copied,
+                    deliveryReceipt: TranscriptDeliveryReceipt(
+                        source: .local,
+                        stopToLocalFinalMilliseconds: 1,
+                        stopToCopyMilliseconds: 2
+                    )
+                ))
+                return true
+            }
+        )
+
+        await runner.run()
+        let rows = try String(contentsOf: outputURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+
+        XCTAssertEqual(rows.first?["result_category"] as? String, "recording_ended_before_runner_stop")
+        XCTAssertEqual(harness.stopCount, 0)
+    }
+
+    func testRunnerUsesExactDurableReceiptTimings() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = RunnerFailureHarness(
+            recordsDirectory: directory.appendingPathComponent("records"),
+            finishesOnStop: true,
+            deliveryReceiptOverride: TranscriptDeliveryReceipt(
+                source: .local,
+                stopToLocalFinalMilliseconds: 626,
+                stopToCopyMilliseconds: 630
+            )
+        )
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        let runner = V02AcceptanceRunner(
+            configuration: V02AcceptanceConfiguration(
+                wavURL: directory.appendingPathComponent("unused.wav"),
+                outputURL: outputURL,
+                cycles: 1
+            ),
+            controller: harness.controller,
+            store: harness.store,
+            pasteboard: harness.pasteboard,
+            playbackOverride: {
+                harness.publishPreview("local preview")
+                return true
+            }
+        )
+
+        await runner.run()
+        let rows = try String(contentsOf: outputURL, encoding: .utf8)
+            .split(separator: "\n")
+            .map { try XCTUnwrap(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]) }
+
+        XCTAssertEqual(rows.first?["stop_to_local_final_ms"] as? Int, 626)
+        XCTAssertEqual(rows.first?["stop_to_copy_ms"] as? Int, 630)
+        XCTAssertEqual(harness.stopCount, 1)
+        XCTAssertEqual(rows.first?["result_category"] as? String, "passed")
+    }
+
     func testFailureCleanupAfterIntentionalStopInvalidatesLateOrganizationResultWithoutRecopy() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
@@ -612,6 +703,32 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         XCTAssertFalse(V02AcceptanceMetrics.summarize(cycles: rows, requestedCycles: 100).m10Passed)
     }
 
+    func testMissingNegativeAndInvertedReceiptTimingsCannotPassRowsOrSummary() {
+        let cases: [(String, Int?, Int?)] = [
+            ("missing local final", nil, 630),
+            ("missing copy", 626, nil),
+            ("negative local final", -1, 630),
+            ("negative copy", 0, -1),
+            ("copy before local final", 631, 630),
+        ]
+
+        for (name, localFinal, copy) in cases {
+            let invalid = makeCycle(
+                number: 1,
+                stopToLocalFinalMilliseconds: localFinal,
+                stopToCopyMilliseconds: copy
+            )
+            XCTAssertFalse(invalid.hasValidDeliveryEvidence, name)
+            let rows = (1...100).map { number in
+                number == 1 ? invalid : makeCycle(number: number, sessionID: sessionID(number))
+            }
+            XCTAssertFalse(
+                V02AcceptanceMetrics.summarize(cycles: rows, requestedCycles: 100).m10Passed,
+                name
+            )
+        }
+    }
+
     func testEvidenceEncodingContainsOnlyTheExplicitMetadataAllowlist() throws {
         let encoder = JSONEncoder()
         let cycleKeys = try encodedKeys(encoder.encode(makeCycle(number: 1)))
@@ -700,8 +817,8 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         number: Int,
         sessionID: UUID = UUID(),
         firstPreviewMilliseconds: Int = 800,
-        stopToLocalFinalMilliseconds: Int = 1_500,
-        stopToCopyMilliseconds: Int = 2_000,
+        stopToLocalFinalMilliseconds: Int? = 1_500,
+        stopToCopyMilliseconds: Int? = 2_000,
         deliverySource: TranscriptDeliverySource? = .local,
         polishState: TranscriptPolishState? = .notRequested,
         recordDelta: Int? = 1,
@@ -787,6 +904,7 @@ final class V02AcceptanceRunnerTests: XCTestCase {
 private final class RunnerFailureHarness {
     let state = AppState()
     let store: TranscriptStore
+    let pasteboard = NSPasteboard(name: .init("V02AcceptanceRunnerTests.\(UUID().uuidString)"))
     private var onFinished: ((RecordedAudio) -> Void)?
     private var onPreview: ((SessionID, String) -> Void)?
     private var recorderSessionID: SessionID?
@@ -794,6 +912,7 @@ private final class RunnerFailureHarness {
     private let suspendsPreviewCancellation: Bool
     private let finishesOnStop: Bool
     private let throwsOnRecordingStart: Bool
+    private let deliveryReceiptOverride: TranscriptDeliveryReceipt?
     private var organizationContinuation: UnsafeContinuation<OrganizationOutput, Never>?
     private var previewCancellationContinuation: UnsafeContinuation<Void, Never>?
     private(set) var stopCount = 0
@@ -846,8 +965,19 @@ private final class RunnerFailureHarness {
             updateDeliveryStatus: { [weak self] sessionID, status in
                 try self?.store.updateDeliveryStatus(id: sessionID, to: status)
             },
-            copy: { [weak self] _ in
-                self?.copyCount += 1
+            updateDelivery: { [weak self] sessionID, status, receipt in
+                guard let self else { return }
+                try store.updateDelivery(
+                    id: sessionID,
+                    status: status,
+                    receipt: deliveryReceiptOverride ?? receipt
+                )
+            },
+            copy: { [weak self] text in
+                guard let self else { return false }
+                copyCount += 1
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
                 return true
             },
             loadPersistedRecords: { [] },
@@ -892,13 +1022,15 @@ private final class RunnerFailureHarness {
         suspendsOrganization: Bool = false,
         suspendsPreviewCancellation: Bool = false,
         finishesOnStop: Bool = false,
-        throwsOnRecordingStart: Bool = false
+        throwsOnRecordingStart: Bool = false,
+        deliveryReceiptOverride: TranscriptDeliveryReceipt? = nil
     ) {
         store = TranscriptStore(directory: recordsDirectory)
         self.suspendsOrganization = suspendsOrganization
         self.suspendsPreviewCancellation = suspendsPreviewCancellation
         self.finishesOnStop = finishesOnStop
         self.throwsOnRecordingStart = throwsOnRecordingStart
+        self.deliveryReceiptOverride = deliveryReceiptOverride
     }
 
     func deliverLateFinishedAudio() async {
