@@ -270,15 +270,44 @@ final class V02AcceptanceRunner {
     static func startIfConfigured(
         controller: AppController,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        microphonePermissionGranted: () -> Bool = { MicrophonePermission.isGranted }
+        microphoneAuthorizationStatus: () -> AVAuthorizationStatus = {
+            AVCaptureDevice.authorizationStatus(for: .audio)
+        },
+        requestMicrophonePermission: (@escaping @MainActor (Bool) -> Void) -> Void = {
+            MicrophonePermission.request($0)
+        }
     ) {
         guard let configuration = V02AcceptanceConfiguration.parse(environment: environment),
-              microphonePermissionGranted(),
               (try? ParaformerModelLocation.developmentLocation(environment: environment)) != nil else { return }
+        switch MicrophonePermission.decision(for: microphoneAuthorizationStatus()) {
+        case .proceed:
+            start(configuration: configuration, controller: controller)
+        case .request:
+            requestMicrophonePermission { granted in
+                if granted {
+                    start(configuration: configuration, controller: controller)
+                } else {
+                    writePermissionSetupFailure(to: configuration.outputURL)
+                }
+            }
+        case .openSettings:
+            writePermissionSetupFailure(to: configuration.outputURL)
+        }
+    }
+
+    private static func start(configuration: V02AcceptanceConfiguration, controller: AppController) {
         let runner = V02AcceptanceRunner(configuration: configuration, controller: controller)
         Task { @MainActor in
             await runner.run()
         }
+    }
+
+    private static func writePermissionSetupFailure(to outputURL: URL) {
+        guard let writer = try? V02JSONLWriter(url: outputURL) else { return }
+        try? writer.append([
+            "row_type": "setup",
+            "result_category": "microphone_permission_denied",
+        ])
     }
 
     init(

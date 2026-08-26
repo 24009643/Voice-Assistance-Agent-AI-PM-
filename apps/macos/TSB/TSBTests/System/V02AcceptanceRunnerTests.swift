@@ -1,4 +1,6 @@
 import AppKit
+import AVFoundation
+import CryptoKit
 import Foundation
 import XCTest
 @testable import TSB
@@ -114,30 +116,98 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         }
     }
 
-    func testRunnerRequiresExistingMicrophoneAuthorizationBeforeAnySideEffect() throws {
+    func testAuthorizedRunnerStartsWithoutRequestingMicrophonePermission() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let wavURL = directory.appendingPathComponent("input.wav")
-        let outputURL = directory.appendingPathComponent("evidence.jsonl")
-        try Data().write(to: wavURL)
-        let controller = AppController()
+        let (environment, _) = try configuredRun(in: directory)
+        let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+        var permissionRequests = 0
 
         V02AcceptanceRunner.startIfConfigured(
-            controller: controller,
-            environment: [
-                "TSB_V02_ACCEPTANCE_RUN": "1",
-                "TSB_V02_ACCEPTANCE_WAV": wavURL.path,
-                "TSB_V02_ACCEPTANCE_OUTPUT": outputURL.path,
-                "TSB_V02_ACCEPTANCE_CYCLES": "1"
-            ],
-            microphonePermissionGranted: { false }
+            controller: harness.controller,
+            environment: environment,
+            microphoneAuthorizationStatus: { .authorized },
+            requestMicrophonePermission: { _ in permissionRequests += 1 }
         )
+        await harness.waitUntilRecordingStarts()
 
-        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
-        XCTAssertEqual(controller.state.snapshot.status, .idle)
-        XCTAssertNil(controller.state.snapshot.sessionID)
+        XCTAssertEqual(permissionRequests, 0)
+        XCTAssertEqual(harness.startCount, 1)
+    }
+
+    func testNotDeterminedRequestsOnceAndStartsAfterGrant() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (environment, _) = try configuredRun(in: directory)
+        let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+        var permissionRequests = 0
+
+        V02AcceptanceRunner.startIfConfigured(
+            controller: harness.controller,
+            environment: environment,
+            microphoneAuthorizationStatus: { .notDetermined },
+            requestMicrophonePermission: { completion in
+                permissionRequests += 1
+                completion(true)
+            }
+        )
+        await harness.waitUntilRecordingStarts()
+
+        XCTAssertEqual(permissionRequests, 1)
+        XCTAssertEqual(harness.startCount, 1)
+    }
+
+    func testNotDeterminedDenialWritesOnlyOneSetupFailure() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (environment, outputURL) = try configuredRun(in: directory)
+        let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+        var permissionRequests = 0
+
+        V02AcceptanceRunner.startIfConfigured(
+            controller: harness.controller,
+            environment: environment,
+            microphoneAuthorizationStatus: { .notDetermined },
+            requestMicrophonePermission: { completion in
+                permissionRequests += 1
+                completion(false)
+            }
+        )
+        await harness.drainCallbacks()
+
+        XCTAssertEqual(permissionRequests, 1)
+        try assertSinglePermissionSetupFailure(at: outputURL)
+        try assertNoAcceptanceRuntimeSideEffects(harness)
+    }
+
+    func testDeniedAndRestrictedWriteSetupFailureWithoutRequestingPermission() async throws {
+        for status in [AVAuthorizationStatus.denied, .restricted] {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("V02AcceptanceRunnerTests-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let (environment, outputURL) = try configuredRun(in: directory)
+            let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+            var permissionRequests = 0
+
+            V02AcceptanceRunner.startIfConfigured(
+                controller: harness.controller,
+                environment: environment,
+                microphoneAuthorizationStatus: { status },
+                requestMicrophonePermission: { _ in permissionRequests += 1 }
+            )
+            await harness.drainCallbacks()
+
+            XCTAssertEqual(permissionRequests, 0, "status: \(status.rawValue)")
+            try assertSinglePermissionSetupFailure(at: outputURL)
+            try assertNoAcceptanceRuntimeSideEffects(harness)
+        }
     }
 
     func testRunnerWithUnavailableParaformerModelStopsBeforeEvidenceAndRecording() async throws {
@@ -149,6 +219,8 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         let outputURL = directory.appendingPathComponent("evidence.jsonl")
         try Data().write(to: wavURL)
         let harness = RunnerFailureHarness(recordsDirectory: directory.appendingPathComponent("records"))
+        var permissionChecks = 0
+        var permissionRequests = 0
 
         V02AcceptanceRunner.startIfConfigured(
             controller: harness.controller,
@@ -158,10 +230,16 @@ final class V02AcceptanceRunnerTests: XCTestCase {
                 "TSB_V02_ACCEPTANCE_OUTPUT": outputURL.path,
                 "TSB_V02_ACCEPTANCE_CYCLES": "1"
             ],
-            microphonePermissionGranted: { true }
+            microphoneAuthorizationStatus: {
+                permissionChecks += 1
+                return .notDetermined
+            },
+            requestMicrophonePermission: { _ in permissionRequests += 1 }
         )
         await harness.drainCallbacks()
 
+        XCTAssertEqual(permissionChecks, 0)
+        XCTAssertEqual(permissionRequests, 0)
         XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertEqual(harness.startCount, 0)
         XCTAssertEqual(harness.controller.state.snapshot.status, .idle)
@@ -659,6 +737,50 @@ final class V02AcceptanceRunnerTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         return object.keys.sorted()
     }
+
+    private func configuredRun(in directory: URL) throws -> ([String: String], URL) {
+        let wavURL = directory.appendingPathComponent("input.wav")
+        let outputURL = directory.appendingPathComponent("evidence.jsonl")
+        let modelURL = directory.appendingPathComponent("paraformer", isDirectory: true)
+        try Data().write(to: wavURL)
+        try FileManager.default.createDirectory(at: modelURL, withIntermediateDirectories: false)
+        for file in ParaformerModelLocation.requiredFileNames {
+            try Data(file.utf8).write(to: modelURL.appendingPathComponent(file))
+        }
+        let manifest = try ParaformerModelLocation.requiredFileNames.map { file in
+            let data = try Data(contentsOf: modelURL.appendingPathComponent(file))
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            return "\(digest)  \(file)"
+        }.joined(separator: "\n") + "\n"
+        try manifest.write(to: modelURL.appendingPathComponent("manifest.sha256"), atomically: true, encoding: .utf8)
+        return ([
+            "TSB_V02_ACCEPTANCE_RUN": "1",
+            "TSB_V02_ACCEPTANCE_WAV": wavURL.path,
+            "TSB_V02_ACCEPTANCE_OUTPUT": outputURL.path,
+            "TSB_V02_ACCEPTANCE_CYCLES": "1",
+            "TSB_PARAFORMER_MODEL_DIR": modelURL.path,
+        ], outputURL)
+    }
+
+    private func assertSinglePermissionSetupFailure(at outputURL: URL) throws {
+        let rows = try String(contentsOf: outputURL, encoding: .utf8).split(separator: "\n")
+        XCTAssertEqual(rows.count, 1)
+        let row = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(rows.first).utf8)) as? [String: String])
+        XCTAssertEqual(row, [
+            "result_category": "microphone_permission_denied",
+            "row_type": "setup",
+        ])
+    }
+
+    private func assertNoAcceptanceRuntimeSideEffects(_ harness: RunnerFailureHarness) throws {
+        XCTAssertEqual(harness.startCount, 0)
+        XCTAssertEqual(harness.stopCount, 0)
+        XCTAssertEqual(harness.copyCount, 0)
+        XCTAssertEqual(harness.organizationDispatchCount, 0)
+        XCTAssertTrue(try harness.store.list().isEmpty)
+        XCTAssertEqual(harness.controller.state.snapshot.status, .idle)
+        XCTAssertNil(harness.controller.state.snapshot.sessionID)
+    }
 }
 
 @MainActor
@@ -815,6 +937,10 @@ private final class RunnerFailureHarness {
 
     func drainCallbacks() async {
         for _ in 0..<100 { await Task.yield() }
+    }
+
+    func waitUntilRecordingStarts() async {
+        await wait { self.startCount == 1 }
     }
 
     func waitUntilOrganizationCancelled() async {
