@@ -51,8 +51,15 @@ reject_text "recorder" "$menu_source"
 require_text "AppController" "$delegate_source"
 require_text "applicationDidFinishLaunching" "$delegate_source"
 require_text "controller.start()" "$delegate_source"
-require_text 'TSB_XCTEST_HOST: "1"' "$project_spec"
-require_text 'loadPersistedState: ProcessInfo.processInfo.environment["TSB_XCTEST_HOST"] != "1"' "$delegate_source"
+require_text '    test:
+      environmentVariables:
+        TSB_XCTEST_HOST: "1"
+      targets:
+        - TSBTests' "$project_spec"
+require_text '        let settingsModel = Self.makeSettingsModel(
+            loadPersistedState: ProcessInfo.processInfo.environment["TSB_XCTEST_HOST"] != "1",
+            cancelPendingPolish: { controller.cancelPendingPolishAfterRevoke() }
+        )' "$delegate_source"
 if [ -e "$tsb_root/TSB/Views/PlaceholderView.swift" ]; then
     echo "PlaceholderView.swift must remain absent" >&2
     exit 1
