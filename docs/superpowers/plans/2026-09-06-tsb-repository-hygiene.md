@@ -487,6 +487,62 @@
 
 ---
 
+### Task 6: Isolate the XCTest host from user settings and Keychain
+
+**Files:**
+- Modify: `apps/macos/TSB/project.yml`
+- Modify: `apps/macos/TSB/TSB/App/TSBAppDelegate.swift`
+- Modify: `apps/macos/TSB/TSB/Views/SettingsView.swift`
+- Modify: `apps/macos/TSB/TSBTests/System/SettingsSourceTests.swift`
+- Modify: `apps/macos/TSB/scripts/settings-static-gate.sh`
+
+**Interfaces:**
+- Consumes: the existing hosted XCTest scheme and `SettingsModel` dependency injection.
+- Produces: an explicit `TSB_XCTEST_HOST=1` Test-action boundary that prevents application startup from reading the user's standard defaults or login Keychain before XCTest attaches; normal Run and Release startup remain unchanged.
+
+- [ ] **Step 1: Write the failing test-host isolation check**
+
+  Add a focused Settings test that saves a remote endpoint and secret into its existing isolated fixture, creates the launch settings model with `loadPersistedState: false`, and asserts the model retains an empty draft, has no persisted-key flag, and has no error. Run that test before the implementation and observe a compile failure because the parameter does not exist.
+
+- [ ] **Step 2: Add the explicit Test-action marker**
+
+  In the `TSB` scheme's `test` action, set `TSB_XCTEST_HOST: "1"`. Do not use `CFFIXED_USER_HOME`, `XCTestConfigurationFilePath`, XCTest class probing, a test plan, or a second keychain.
+
+- [ ] **Step 3: Skip only launch-time persisted-state loading for the test host**
+
+  Add a defaulted `loadPersistedState: Bool = true` parameter to `SettingsModel.init` and guard only its initial `reloadPersistedState()` call. Thread the same defaulted parameter through `TSBAppDelegate.makeSettingsModel`. In the convenience initializer, pass `false` only when `ProcessInfo.processInfo.environment["TSB_XCTEST_HOST"] == "1"`. Production startup therefore keeps its existing default behavior, while all explicit settings operations and injected-store tests remain unchanged.
+
+- [ ] **Step 4: Guard the configuration before launching XCTest**
+
+  Extend `settings-static-gate.sh` to require the scheme marker and the AppDelegate launch branch. This gate must fail before `xcodebuild test` if either half of the isolation contract is removed.
+
+- [ ] **Step 5: Verify the isolated host twice**
+
+  Run:
+
+  ```bash
+  /bin/sh apps/macos/TSB/scripts/settings-static-gate.sh
+  /bin/sh scripts/test-verify-tsb.sh
+  /bin/sh scripts/verify-tsb.sh
+  /bin/sh scripts/verify-tsb.sh
+  git diff --check
+  ```
+
+  Expected: the static and orchestration checks pass; each full run completes with all app tests and the independent Debug build, without reading the user's login Keychain or leaving generated files in the checkout.
+
+- [ ] **Step 6: Commit**
+
+  ```bash
+  git add apps/macos/TSB/project.yml \
+    apps/macos/TSB/TSB/App/TSBAppDelegate.swift \
+    apps/macos/TSB/TSB/Views/SettingsView.swift \
+    apps/macos/TSB/TSBTests/System/SettingsSourceTests.swift \
+    apps/macos/TSB/scripts/settings-static-gate.sh
+  git commit -m "test(app): isolate the XCTest host from user state"
+  ```
+
+---
+
 ## Post-implementation GitHub and local operations
 
 These are integration operations, not implementation tasks:
