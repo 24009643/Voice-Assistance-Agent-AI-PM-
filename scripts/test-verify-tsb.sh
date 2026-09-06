@@ -14,7 +14,10 @@ esac
 cleanup() {
   find "$test_tmp" -depth -delete
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 repo="$test_tmp/repo"
 fake_bin="$test_tmp/bin"
@@ -48,6 +51,9 @@ cat >"$fake_bin/git" <<'EOF'
 if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "--show-toplevel" ]; then
   printf '%s\n' "$TSB_FAKE_REPO"
   exit 0
+fi
+if [ "${TSB_FAKE_SEND_INT:-0}" = "1" ]; then
+  kill -INT "$PPID"
 fi
 printf 'git' >>"$TSB_VERIFY_LOG"
 for argument in "$@"; do
@@ -137,6 +143,22 @@ PATH="$fake_bin:$PATH" TSB_FAKE_REPO="$repo" TSB_VERIFY_LOG="$log" TSB_VERIFY_AP
 diff -u "$expected" "$log"
 [ -f "$marker" ] || {
   echo "self-check expected build-created app" >&2
+  exit 1
+}
+
+: >"$log"
+if PATH="$fake_bin:$PATH" TSB_FAKE_REPO="$repo" TSB_VERIFY_LOG="$log" TSB_VERIFY_APP_MARKER="$marker" TSB_FAKE_SEND_INT=1 /bin/sh "$repo/scripts/verify-tsb.sh" >/dev/null 2>&1; then
+  echo "self-check expected INT to fail verification" >&2
+  exit 1
+else
+  signal_status=$?
+fi
+[ "$signal_status" -eq 130 ] || {
+  echo "self-check expected INT exit status 130, got $signal_status" >&2
+  exit 1
+}
+[ "$(cat "$log")" = "git diff HEAD --check" ] || {
+  echo "self-check expected INT to stop after git diff" >&2
   exit 1
 }
 
