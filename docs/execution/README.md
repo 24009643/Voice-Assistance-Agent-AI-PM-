@@ -1,5 +1,9 @@
 # Execution Records
 
+Repository-hygiene execution is recorded in
+[`EXE-WP-HYGIENE.md`](EXE-WP-HYGIENE.md); local gates passed, while remote CI
+and integration remain pending.
+
 Current Alpha 2 execution starts with [`EXE-WP-A2-00.md`](EXE-WP-A2-00.md) and
 continues through [`EXE-WP-A2-01.md`](EXE-WP-A2-01.md) and
 [`EXE-WP-A2-02.md`](EXE-WP-A2-02.md). A2-01 and A2-02 pass bounded technical
