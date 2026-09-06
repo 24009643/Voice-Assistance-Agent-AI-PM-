@@ -633,6 +633,8 @@
 **Files:**
 - Create: `docs/execution/EXE-WP-HYGIENE.md`
 - Modify: `docs/execution/README.md`
+- Create: `evidence/WP-HYGIENE-LOCAL-GATE.md`
+- Modify: `evidence/README.md`
 
 **Interfaces:**
 - Consumes: the final reviewed commit range and local validation results.
@@ -642,9 +644,9 @@
 
   Add one concise execution record containing owner/reviewer, branch/base/head, intended files, commit mapping, exact test commands and counts, local archive path, privacy scan result, test-host isolation deviation, dependency-lock deviation, rollback, and open risks. State explicitly that GitHub CI, branch protection, Ready, merge, signing/notarization, release, and product acceptance are not yet proven.
 
-- [ ] **Step 2: Index the record**
+- [ ] **Step 2: Index the record and its bounded evidence**
 
-  Link the new record from `docs/execution/README.md`. Keep detailed raw Agent reports ignored; do not track `.superpowers` again and do not duplicate the full plan.
+  Link the new record from `docs/execution/README.md`. Add one small evidence file with the tested environment/commits, reproduction commands, exact local results, privacy result and unproven remote/product boundaries; index it from `evidence/README.md` and link it from the execution record. Keep raw logs and detailed Agent reports ignored; do not track `.superpowers` again and do not duplicate the full plan or execution record.
 
 - [ ] **Step 3: Validate the record against Git**
 
@@ -653,8 +655,9 @@
 - [ ] **Step 4: Commit**
 
   ```bash
-  git add docs/execution/EXE-WP-HYGIENE.md docs/execution/README.md
-  git commit -m "docs(repo): record repository hygiene execution"
+  git add docs/execution/EXE-WP-HYGIENE.md docs/execution/README.md \
+    evidence/WP-HYGIENE-LOCAL-GATE.md evidence/README.md
+  git commit -m "docs(repo): publish repository hygiene evidence"
   ```
 
 ---
