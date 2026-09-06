@@ -19,7 +19,11 @@ struct TranscriptPolishClient: Sendable {
         guard endpoint.baseURL.scheme?.lowercased() == "https" || (endpoint.baseURL.scheme?.lowercased() == "http" && loopback) else { throw TranscriptPolishClientError.insecureEndpoint }
         let inner = try JSONSerialization.data(withJSONObject: ["schema_version": "tsb.transcript_polish.request.v1", "request_id": request.requestID.uuidString.lowercased(), "candidates": request.candidates.map { ["candidate_id": $0.id.rawValue, "text": $0.text, "text_sha256": $0.textSHA256] }, "terminology": request.terminology.map { ["canonical": $0.canonical, "aliases": $0.aliases] }], options: [.sortedKeys])
         guard inner.count <= Self.maximumInnerBytes else { throw TranscriptPolishClientError.invalidRequest }
-        let body = try JSONSerialization.data(withJSONObject: ["model": endpoint.model, "messages": [["role": "system", "content": Self.systemContract], ["role": "user", "content": String(decoding: inner, as: UTF8.self)]], "response_format": ["type": "json_object"]], options: [.sortedKeys])
+        var outer: [String: Any] = ["model": endpoint.model, "messages": [["role": "system", "content": Self.systemContract], ["role": "user", "content": String(decoding: inner, as: UTF8.self)]], "response_format": ["type": "json_object"]]
+        if host == "api.deepseek.com" {
+            outer["thinking"] = ["type": "disabled"]
+        }
+        let body = try JSONSerialization.data(withJSONObject: outer, options: [.sortedKeys])
         guard body.count <= Self.maximumOuterBytes else { throw TranscriptPolishClientError.invalidRequest }
         var urlRequest = URLRequest(url: endpoint.baseURL); urlRequest.httpMethod = "POST"; urlRequest.httpBody = body; urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type"); if !apiKey.isEmpty { urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
         try Task.checkCancellation()

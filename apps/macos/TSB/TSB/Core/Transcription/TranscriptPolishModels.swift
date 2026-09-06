@@ -20,7 +20,11 @@ struct TranscriptCandidate: Equatable, Sendable {
     }
 }
 
-enum TranscriptPolishEditKind: String, Codable, Sendable { case formatting, terminology, candidateSupported }
+enum TranscriptPolishEditKind: String, Codable, Sendable {
+    case formatting
+    case terminology
+    case candidateSupported = "candidate_supported"
+}
 
 struct TranscriptPolishEdit: Equatable, Codable, Sendable {
     let kind: TranscriptPolishEditKind

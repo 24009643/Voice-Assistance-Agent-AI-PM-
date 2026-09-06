@@ -27,6 +27,26 @@ final class TranscriptPolishClientTests: XCTestCase {
         guard case .accepted = result else { return XCTFail("expected accepted") }
     }
 
+    func testDeepSeekDisablesThinkingWithoutChangingOtherProviders() async throws {
+        let request = fixtureRequest()
+        PolishURLProtocol.handler = { urlRequest in
+            let body = try XCTUnwrap(urlRequest.httpBody ?? readBody(urlRequest.httpBodyStream))
+            let outer = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            if urlRequest.url?.host == "api.deepseek.com" {
+                XCTAssertEqual((outer["thinking"] as? [String: String])?["type"], "disabled")
+                XCTAssertEqual(Array(outer.keys).sorted(), ["messages", "model", "response_format", "thinking"])
+            } else {
+                XCTAssertNil(outer["thinking"])
+                XCTAssertEqual(Array(outer.keys).sorted(), ["messages", "model", "response_format"])
+            }
+            return .response(self.makeOuterResponse(content: self.makeInnerResponse(for: request)))
+        }
+
+        _ = try await client(url: "https://api.deepseek.com/chat/completions")
+            .polish(request, apiKey: "synthetic-key")
+        _ = try await client().polish(request, apiKey: "synthetic-key")
+    }
+
     func testRejectsInsecureEndpointOuterUnknownKeysAndMoreThanOneChoice() async throws {
         await XCTAssertThrowsErrorAsync { try await self.client(url: "http://example.test/chat").polish(self.fixtureRequest(), apiKey: "key") }
         for response in [Data("{\"choices\":[],\"leak\":true}".utf8), Data("{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"{}\"}},{\"message\":{\"role\":\"assistant\",\"content\":\"{}\"}}]}".utf8)] {

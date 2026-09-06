@@ -2,6 +2,10 @@ import XCTest
 @testable import TSB
 
 final class TranscriptPolishModelsTests: XCTestCase {
+    func testCandidateSupportedUsesTheProviderContractSpelling() {
+        XCTAssertEqual(TranscriptPolishEditKind.candidateSupported.rawValue, "candidate_supported")
+    }
+
     func testCandidateHashesItsTextAndPolishArtifactsRoundTrip() throws {
         let candidate = TranscriptCandidate(id: .offline, text: "local text")
         XCTAssertEqual(candidate.textSHA256, "3712bb0528399f0bd659fc77a737e23fb1bd8c4b6bf00735493c2a9186b61dcd")
