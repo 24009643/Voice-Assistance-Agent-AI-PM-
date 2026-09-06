@@ -458,7 +458,7 @@
 
 - [ ] **Step 2: Make the one formal absolute path portable**
 
-  In the 2026-08-25 transcript-polish implementation plan, replace `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-04-alpha2` with `.worktrees/wp-04-alpha2`.
+  In the 2026-08-25 transcript-polish implementation plan, replace its sole developer-absolute worktree path with `.worktrees/wp-04-alpha2`.
 
 - [ ] **Step 3: Verify the current tree contract**
 
@@ -466,7 +466,10 @@
 
   ```bash
   test -z "$(git ls-files .superpowers)"
-  test -z "$(git grep -Il -E '/Users/zhuohengchi|zhuohengchi@ZohedeMacBook-Pro\.local|wxid_' -- .)"
+  developer_path="/Users""/$(id -un)"
+  developer_mail="$(id -un)@$(hostname -s)"".local"
+  wechat_prefix="wxid""_"
+  test -z "$(git grep -Il -F -e "$developer_path" -e "$developer_mail" -e "$wechat_prefix" -- .)"
   /bin/sh scripts/test-verify-tsb.sh
   git diff --check
   git diff --cached --check
