@@ -441,11 +441,11 @@ final class SessionCoordinator {
         guard sessions[sessionID] != nil else { return }
 
         async let completedStreamingText = dependencies.finishPreview(sessionID)
-        let senseVoiceResult: Result<TranscriptionResult, Error>
+        let finalTranscriptionResult: Result<TranscriptionResult, Error>
         do {
-            senseVoiceResult = .success(try await dependencies.transcribe(audio.url))
+            finalTranscriptionResult = .success(try await dependencies.transcribe(audio.url))
         } catch {
-            senseVoiceResult = .failure(error)
+            finalTranscriptionResult = .failure(error)
         }
         let streamingText = nonempty(await completedStreamingText)
         guard ownsProcessing(sessionID) else { return }
@@ -454,13 +454,15 @@ final class SessionCoordinator {
         let detectedLanguages: [String]
         let finalSource: TranscriptFinalSource
         let senseVoiceText: String?
-        switch senseVoiceResult {
+        let funASRText: String?
+        switch finalTranscriptionResult {
         case let .success(result):
-            senseVoiceText = result.text
-            if let senseVoiceText = nonempty(result.text) {
-                selectedText = senseVoiceText
+            senseVoiceText = result.finalSource == .senseVoice ? result.text : nil
+            funASRText = result.finalSource == .funASR ? result.text : nil
+            if let finalText = nonempty(result.text) {
+                selectedText = finalText
                 detectedLanguages = result.detectedLanguage.map { [$0] } ?? []
-                finalSource = .senseVoice
+                finalSource = result.finalSource
             } else if let streamingText {
                 selectedText = streamingText
                 detectedLanguages = []
@@ -468,7 +470,7 @@ final class SessionCoordinator {
             } else {
                 selectedText = result.text
                 detectedLanguages = result.detectedLanguage.map { [$0] } ?? []
-                finalSource = .senseVoice
+                finalSource = result.finalSource
             }
         case .failure:
             guard let streamingText else {
@@ -496,6 +498,7 @@ final class SessionCoordinator {
             detectedLanguages = []
             finalSource = .streamingFallback
             senseVoiceText = nil
+            funASRText = nil
         }
 
         let cleaned: CleanResult
@@ -523,6 +526,7 @@ final class SessionCoordinator {
             finalSource: finalSource,
             streamingText: streamingText,
             senseVoiceText: senseVoiceText,
+            funASRText: funASRText,
             terminologyEdits: corrected.edits
         )
 
@@ -606,10 +610,12 @@ final class SessionCoordinator {
 
     private func polishCandidates(for record: TranscriptRecord) -> [TranscriptCandidate] {
         var candidates: [TranscriptCandidate] = []
-        if let offline = nonempty(record.senseVoiceText ?? "") {
+        if let offline = nonempty(record.funASRText ?? record.senseVoiceText ?? "") {
             candidates.append(TranscriptCandidate(
                 id: .offline,
-                text: record.finalSource == .senseVoice ? record.localCleanedText : offline
+                text: record.finalSource == .senseVoice || record.finalSource == .funASR
+                    ? record.localCleanedText
+                    : offline
             ))
         }
         if let streaming = nonempty(record.streamingText ?? "") {

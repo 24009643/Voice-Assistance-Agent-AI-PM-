@@ -75,6 +75,23 @@ final class AppController: ObservableObject {
         return OrganizationDispatchSnapshot(endpoint: endpoint, apiKey: apiKey)
     }
 
+    static func transcribeFinal(
+        url: URL,
+        primary: ((URL) async throws -> TranscriptionResult)?,
+        fallback: (URL) async throws -> TranscriptionResult
+    ) async throws -> TranscriptionResult {
+        if let primary {
+            do {
+                return try await primary(url)
+            } catch let error as CancellationError {
+                throw error
+            } catch {
+                return try await fallback(url)
+            }
+        }
+        return try await fallback(url)
+    }
+
     static func makePolishDispatchSnapshot(
         localOnly: Bool = false,
         loadSettings: () -> OrganizationSettings,
@@ -151,15 +168,26 @@ final class AppController: ObservableObject {
             eventSource: CarbonHotkeyEventSource(keyCode: UInt32(kVK_Escape), modifiers: 0)
         )
 
-        let transcriber: SenseVoiceTranscriber?
-        let modelError: String?
+        let senseVoiceTranscriber: SenseVoiceTranscriber?
         do {
-            transcriber = try SenseVoiceTranscriber(location: try SenseVoiceModelLocation.resolvedLocation())
-            modelError = nil
+            senseVoiceTranscriber = try SenseVoiceTranscriber(location: try SenseVoiceModelLocation.resolvedLocation())
         } catch {
-            transcriber = nil
-            modelError = "SenseVoice model is unavailable. Set TSB_SENSEVOICE_MODEL_DIR to a validated model directory."
+            senseVoiceTranscriber = nil
         }
+
+        let funASRTranscriber: FunASRTranscriber?
+#if DEBUG
+        do {
+            funASRTranscriber = FunASRTranscriber(location: try FunASRRuntimeLocation.resolvedLocation())
+        } catch {
+            funASRTranscriber = nil
+        }
+#else
+        funASRTranscriber = nil
+#endif
+        let modelError = senseVoiceTranscriber == nil
+            ? "SenseVoice model is unavailable. Set TSB_SENSEVOICE_MODEL_DIR to a validated model directory."
+            : nil
 
         let livePreviewRuntime = Self.makeLivePreviewRuntime()
         let livePreview = livePreviewRuntime.pipeline
@@ -193,8 +221,16 @@ final class AppController: ObservableObject {
                     await livePreview.cancel(sessionID: sessionID)
                 },
                 transcribe: { url in
-                    guard let transcriber else { throw AppControllerError.modelUnavailable }
-                    return try await transcriber.transcribe(wavURL: url)
+                    let primary: ((URL) async throws -> TranscriptionResult)?
+                    if let funASRTranscriber {
+                        primary = { try await funASRTranscriber.transcribe(wavURL: $0) }
+                    } else {
+                        primary = nil
+                    }
+                    return try await Self.transcribeFinal(url: url, primary: primary) { url in
+                        guard let senseVoiceTranscriber else { throw AppControllerError.modelUnavailable }
+                        return try await senseVoiceTranscriber.transcribe(wavURL: url)
+                    }
                 },
                 clean: { source in
                     ConservativeCleaner().clean(source)

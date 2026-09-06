@@ -44,6 +44,28 @@ final class SessionModelsTests: XCTestCase {
         XCTAssertEqual(decoded.senseVoiceText, "SenseVoice final")
     }
 
+    func testTranscriptRecordRoundTripsFunASRProvenance() throws {
+        let record = TranscriptRecord(
+            id: SessionID(rawValue: UUID()),
+            ordinal: SessionOrdinal(rawValue: 4),
+            createdAt: Date(timeIntervalSince1970: 1_700_000_400),
+            durationMilliseconds: 700,
+            detectedLanguages: [],
+            originalText: "Fun-ASR final",
+            localCleanedText: "Fun-ASR final",
+            edits: [],
+            deliveryStatus: .pending,
+            finalSource: .funASR,
+            funASRText: "Fun-ASR final"
+        )
+
+        let decoded = try JSONDecoder().decode(TranscriptRecord.self, from: JSONEncoder().encode(record))
+
+        XCTAssertEqual(decoded.finalSource, .funASR)
+        XCTAssertEqual(decoded.funASRText, "Fun-ASR final")
+        XCTAssertNil(decoded.senseVoiceText)
+    }
+
     func testTranscriptRecordEncodesRetainedSessionDefaultsAndDecodesLegacyRecords() throws {
         let record = TranscriptRecord(
             id: SessionID(rawValue: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!),
@@ -72,10 +94,12 @@ final class SessionModelsTests: XCTestCase {
         var legacyFields = try XCTUnwrap(fields)
         legacyFields.removeValue(forKey: "streamingText")
         legacyFields.removeValue(forKey: "senseVoiceText")
+        legacyFields.removeValue(forKey: "funASRText")
         let legacy = try JSONSerialization.data(withJSONObject: legacyFields)
         let decodedLegacy = try JSONDecoder().decode(TranscriptRecord.self, from: legacy)
         XCTAssertNil(decodedLegacy.streamingText)
         XCTAssertNil(decodedLegacy.senseVoiceText)
+        XCTAssertNil(decodedLegacy.funASRText)
         XCTAssertNil(decodedLegacy.organization)
     }
 
