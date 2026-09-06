@@ -13,7 +13,8 @@
 - Implementation range: `9f95c40..6e3cb80`
 - Initial execution-record commit: `0fa783c`
 - Evidence-publication plan correction: `532a792`
-- Latest evidence/link commit: resolve with `git log -1 --format='%H %s' -- evidence/WP-HYGIENE-LOCAL-GATE.md docs/execution/EXE-WP-HYGIENE.md`
+- Initial evidence-publication commit: `60dedc4`
+- Latest evidence/link correction: resolve with `git log -1 --format='%H %s' -- evidence/WP-HYGIENE-LOCAL-GATE.md docs/execution/EXE-WP-HYGIENE.md`
 - Started: 2026-09-06
 - Finished: 2026-09-06 (local implementation only)
 
@@ -56,7 +57,8 @@ explicit. Documentation follow-ups are listed after the implementation range.
 | `6e3cb80` | Corrected the plan to describe the direct ownership assertion. |
 | `0fa783c` | Added the initial execution record and its execution index link. |
 | `532a792` | Corrected Task 9 to require a bounded, tracked and indexed local-gate evidence page. |
-| Latest evidence/link commit | Resolve through the file-history command in the metadata; it adds the evidence page/index link without self-referential hash churn. |
+| `60dedc4` | Added the local-gate evidence page and its evidence-index link. |
+| Latest evidence/link correction | Resolve through the file-history command in the metadata; it records later evidence wording corrections without self-referential hash churn. |
 
 ## Commands and results
 

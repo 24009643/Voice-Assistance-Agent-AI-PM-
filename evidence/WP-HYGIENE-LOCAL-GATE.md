@@ -47,7 +47,8 @@ At `056d120`, 31 of 4,100 focused repetitions failed only because `copyCount`
 was observed before child-task delivery completed; saved state and the newer
 session's ownership state passed. In a temporary source copy, the `deaf650`
 test false-passed 1/1 against an all-processing-task-removal mutant, while the
-strengthened test failed 0/1. The tracked real source was not mutated.
+strengthened test produced 0 passed and 1 failed, as expected. The tracked real
+source was not mutated.
 
 ## Current documentation-tree checks
 
