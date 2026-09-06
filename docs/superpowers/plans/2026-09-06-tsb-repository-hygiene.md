@@ -604,9 +604,9 @@
 
   At `056d120`, the focused test failed 31 times across 4,100 repetitions. Every failure was only `copyCount` actual 0 versus expected 1; ASR events, saved record count, and the new main session's `.transcribing` status remained correct. This establishes a scheduling-dependent RED without mutating production code.
 
-- [ ] **Step 2: Replace the scheduler guess with the existing condition**
+- [ ] **Step 2: Replace the scheduler guess and assert ownership directly**
 
-  In `testOlderASRCompletionCannotClearTheNewSessionProcessingOwnership`, replace the single `await Task.yield()` after completing the older transcription with `await harness.waitForDelivery()`. Keep the subsequent repeated new-session audio callback and all ownership assertions unchanged. Do not edit production code or add a new helper.
+  In `testOlderASRCompletionCannotClearTheNewSessionProcessingOwnership`, replace the single `await Task.yield()` after completing the older transcription with `await harness.waitForDelivery()`. Capture the newer session's existing Debug work identity before completing the older transcription, directly assert that it is not drained afterward, and remove the duplicate audio callback because `recordingSessionID` rejects it before it can observe `processingTasks`. Keep the existing event, save, copy and snapshot assertions. Do not edit production code or add a new helper.
 
 - [ ] **Step 3: Verify repeatability and the full gate**
 
@@ -617,7 +617,7 @@
   git diff --check
   ```
 
-  Expected: 100/100 focused repetitions pass; the full gate reports app XCTest 395/395 and the independent Debug build succeeds.
+  Before GREEN, prove in a validated temporary source copy that the prior test accepts a `completeProcessing` mutant that removes all processing tasks and the strengthened test rejects it. Expected on real source: 100/100 focused repetitions pass; the full gate reports app XCTest 395/395 and the independent Debug build succeeds.
 
 - [ ] **Step 4: Commit**
 
