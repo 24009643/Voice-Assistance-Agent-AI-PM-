@@ -357,9 +357,10 @@
     macos:
       name: macos-xcode-26.6
       runs-on: macos-26
-      timeout-minutes: 30
+      timeout-minutes: 60
       env:
         DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+        HOMEBREW_NO_AUTO_UPDATE: "1"
         XCODEGEN_VERSION: "2.46.0"
         XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
       steps:
@@ -372,6 +373,19 @@
             test -d "$DEVELOPER_DIR"
             xcodebuild -version | grep -F "Xcode 26.6"
             swift --version
+        - name: Install deterministic-test prerequisites
+          shell: bash
+          run: |
+            set -euo pipefail
+            missing=()
+            command -v ffmpeg >/dev/null 2>&1 || missing+=(ffmpeg)
+            command -v rg >/dev/null 2>&1 || missing+=(ripgrep)
+            if (( ${#missing[@]} )); then
+              brew install "${missing[@]}"
+            fi
+            for tool in python3 ffmpeg rg curl tar shasum awk; do
+              command -v "$tool"
+            done
         - name: Install XcodeGen
           run: |
             set -euo pipefail
@@ -392,7 +406,7 @@
           run: /bin/sh scripts/verify-tsb.sh
   ```
 
-  Do not add dependency caching in the first version.
+  Do not add dependency caching in the first version. `ffmpeg` and `rg` are not part of the documented `macos-26` runner contract, so install only whichever command is absent; disable Homebrew auto-update to avoid an unrelated update step. Use 60 minutes until two or three cold-run observations justify a lower limit.
 
 - [ ] **Step 2: Parse the YAML and run local workflow-equivalent checks**
 
