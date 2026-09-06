@@ -3,7 +3,18 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/test-verify-tsb.XXXXXX")
-trap 'rm -rf "$test_tmp"' EXIT HUP INT TERM
+case "$(basename "$test_tmp")" in
+  test-verify-tsb.*) ;;
+  *)
+    echo "test-verify-tsb: refusing unexpected temporary directory: $test_tmp" >&2
+    exit 1
+    ;;
+esac
+
+cleanup() {
+  find "$test_tmp" -depth -delete
+}
+trap cleanup EXIT HUP INT TERM
 
 repo="$test_tmp/repo"
 fake_bin="$test_tmp/bin"
@@ -51,6 +62,15 @@ if [ "$1" = "--version" ]; then
   printf 'Version: %s\n' "${TSB_FAKE_XCODEGEN_VERSION:-2.46.0}"
   exit 0
 fi
+project=
+previous=
+for argument in "$@"; do
+  if [ "$previous" = "--project" ]; then
+    project=$argument
+  fi
+  previous=$argument
+done
+[ -d "$project" ] || exit 1
 printf 'xcodegen generate\n' >>"$TSB_VERIFY_LOG"
 EOF
 

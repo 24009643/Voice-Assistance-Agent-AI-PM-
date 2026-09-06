@@ -50,7 +50,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 TMPDIR="$verify_tmp/tmp"
-mkdir -p "$TMPDIR"
+mkdir -p "$TMPDIR" "$verify_tmp/project"
 export TMPDIR
 
 cd "$repo_root"
