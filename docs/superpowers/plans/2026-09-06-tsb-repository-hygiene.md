@@ -15,6 +15,7 @@
 - Start from `origin/main@9f95c40a63bb9fee3fa409981d24a133a47c01eb` on `codex/tsb-repo-hygiene` in `.worktrees/tsb-repo-hygiene`.
 - Do not move or refactor files under `apps/macos/TSB/TSB` or `apps/macos/TSB/TSBTests`.
 - The checked-in Xcode source of truth remains `apps/macos/TSB/project.yml`; generated `TSB.xcodeproj` remains ignored.
+- The canonical app SwiftPM lock remains tracked at `apps/macos/TSB/Package.resolved`; verification seeds it into the generated project and forbids automatic package resolution.
 - The reproducible toolchain is macOS 26.5.2 arm64, Xcode 26.6, Swift 6.3.3, and XcodeGen 2.46.0.
 - CI runs on `macos-26`, sets `DEVELOPER_DIR=/Applications/Xcode_26.6.app/Contents/Developer`, and installs the XcodeGen 2.46.0 release zip only after matching SHA-256 `4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806`.
 - `actions/checkout` is pinned to commit `3d3c42e5aac5ba805825da76410c181273ba90b1` (`v7.0.1`) with `persist-credentials: false` and workflow permission `contents: read`.
@@ -539,6 +540,84 @@
     apps/macos/TSB/TSBTests/System/SettingsSourceTests.swift \
     apps/macos/TSB/scripts/settings-static-gate.sh
   git commit -m "test(app): isolate the XCTest host from user state"
+  ```
+
+---
+
+### Task 7: Lock the generated app's SwiftPM graph
+
+**Files:**
+- Create: `apps/macos/TSB/Package.resolved`
+- Modify: `scripts/verify-tsb.sh`
+- Modify: `scripts/test-verify-tsb.sh`
+
+**Interfaces:**
+- Consumes: `project.yml` and the current resolved `sherpa-onnx` 1.13.6 dependency graph.
+- Produces: one tracked app-specific SwiftPM lock that is copied into the generated project's workspace before Xcode runs; both test and build reject dependency versions outside that lock.
+
+- [ ] **Step 1: Write the failing orchestration check**
+
+  Extend the miniature repository with a fake canonical `apps/macos/TSB/Package.resolved`. Make fake `xcodebuild` fail unless the lock has been copied to `TSB.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` and both `-onlyUsePackageVersionsFromResolvedFile` and `-disableAutomaticPackageResolution` are present. Run the self-check before production changes and observe RED.
+
+- [ ] **Step 2: Create the canonical app lock**
+
+  Generate a temporary Xcode project from the current `project.yml`, resolve its package graph, and copy only the resulting app-specific `Package.resolved` into `apps/macos/TSB/Package.resolved`. It must pin:
+
+  - `sherpa-onnx` 1.13.6 at revision `1cb484af5e69d3c7803c1eb0b3b5ab8041e0e911`.
+  - `onnxruntime-libs` 1.27.1 at revision `1fbef5f2a1b5c2691fe9411243f3a8afe9a0b169`.
+
+- [ ] **Step 3: Seed and enforce the lock in the one verification path**
+
+  After XcodeGen creates the temporary project, create its SwiftPM workspace directory and copy the canonical lock into it. Pass `-onlyUsePackageVersionsFromResolvedFile` and `-disableAutomaticPackageResolution` to both Xcode test and build invocations. Do not add a package manager, cache action, or second build script.
+
+- [ ] **Step 4: Verify RED to GREEN and the real locked build**
+
+  Run:
+
+  ```bash
+  /bin/sh scripts/test-verify-tsb.sh
+  /bin/sh scripts/verify-tsb.sh
+  git diff --check
+  ```
+
+  Expected: orchestration self-check passes; the real test/build graph resolves only from the tracked lock; app XCTest remains 395/395 and the independent Debug build succeeds.
+
+- [ ] **Step 5: Commit**
+
+  ```bash
+  git add apps/macos/TSB/Package.resolved scripts/verify-tsb.sh scripts/test-verify-tsb.sh
+  git commit -m "build(deps): lock the generated app package graph"
+  ```
+
+---
+
+### Task 8: Publish the execution record
+
+**Files:**
+- Create: `docs/execution/EXE-WP-HYGIENE.md`
+- Modify: `docs/execution/README.md`
+
+**Interfaces:**
+- Consumes: the final reviewed commit range and local validation results.
+- Produces: the tracked `WP -> requirements -> files -> tests -> evidence -> commits` record required by the engineering standard, with remote CI and merge status explicitly pending.
+
+- [ ] **Step 1: Record actual work and deviations**
+
+  Add one concise execution record containing owner/reviewer, branch/base/head, intended files, commit mapping, exact test commands and counts, local archive path, privacy scan result, test-host isolation deviation, dependency-lock deviation, rollback, and open risks. State explicitly that GitHub CI, branch protection, Ready, merge, signing/notarization, release, and product acceptance are not yet proven.
+
+- [ ] **Step 2: Index the record**
+
+  Link the new record from `docs/execution/README.md`. Keep detailed raw Agent reports ignored; do not track `.superpowers` again and do not duplicate the full plan.
+
+- [ ] **Step 3: Validate the record against Git**
+
+  Run `git diff --check`, verify every named commit resolves, verify the tree contains no tracked `.superpowers` path or developer-specific absolute path, and leave the worktree clean after commit.
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add docs/execution/EXE-WP-HYGIENE.md docs/execution/README.md
+  git commit -m "docs(repo): record repository hygiene execution"
   ```
 
 ---
