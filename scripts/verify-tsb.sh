@@ -20,6 +20,9 @@ done
 
 [ "$(xcodegen --version)" = "Version: 2.46.0" ] || die "XcodeGen 2.46.0 is required"
 
+package_lock="$app_root/Package.resolved"
+[ -f "$package_lock" ] || die "app Package.resolved is required: $package_lock"
+
 funasr_source="$app_root/TSB/Core/Transcription/FunASRTranscriber.swift"
 funasr_installer="$repo_root/scripts/install-funasr-runtime.sh"
 if [ -e "$funasr_source" ] || [ -e "$funasr_installer" ]; then
@@ -76,6 +79,9 @@ xcodegen generate --quiet \
   --project "$verify_tmp/project" \
   --project-root "$app_root" \
   --cache-path "$verify_tmp/xcodegen-cache"
+generated_package_dir="$verify_tmp/project/TSB.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
+mkdir -p "$generated_package_dir"
+cp "$package_lock" "$generated_package_dir/Package.resolved"
 xcodebuild -quiet \
   -project "$verify_tmp/project/TSB.xcodeproj" \
   -scheme TSB \
@@ -84,6 +90,8 @@ xcodebuild -quiet \
   -derivedDataPath "$verify_tmp/TestData" \
   -clonedSourcePackagesDirPath "$verify_tmp/SourcePackages" \
   -resultBundlePath "$verify_tmp/TSBTests.xcresult" \
+  -onlyUsePackageVersionsFromResolvedFile \
+  -disableAutomaticPackageResolution \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO "CODE_SIGN_IDENTITY=" test
 xcrun xcresulttool get test-results summary \
   --compact --path "$verify_tmp/TSBTests.xcresult"
@@ -94,6 +102,8 @@ xcodebuild -quiet \
   -destination 'platform=macOS' \
   -derivedDataPath "$verify_tmp/BuildData" \
   -clonedSourcePackagesDirPath "$verify_tmp/SourcePackages" \
+  -onlyUsePackageVersionsFromResolvedFile \
+  -disableAutomaticPackageResolution \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO "CODE_SIGN_IDENTITY=" build
 
 built_app="$verify_tmp/BuildData/Build/Products/Debug/TSB.app"

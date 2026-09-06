@@ -27,6 +27,7 @@ mkdir -p "$repo/scripts" "$repo/apps/macos/TSB/scripts" "$fake_bin"
 cp "$script_dir/verify-tsb.sh" "$repo/scripts/verify-tsb.sh"
 chmod +x "$repo/scripts/verify-tsb.sh"
 printf 'name: TSB\n' >"$repo/apps/macos/TSB/project.yml"
+printf '{"fake":"app lock"}\n' >"$repo/apps/macos/TSB/Package.resolved"
 
 for path in \
   "$repo/apps/macos/TSB/scripts/settings-static-gate.sh" \
@@ -77,6 +78,7 @@ for argument in "$@"; do
   previous=$argument
 done
 [ -d "$project" ] || exit 1
+mkdir -p "$project/TSB.xcodeproj/project.xcworkspace/xcshareddata/swiftpm"
 printf 'xcodegen generate\n' >>"$TSB_VERIFY_LOG"
 EOF
 
@@ -84,16 +86,37 @@ cat >"$fake_bin/xcodebuild" <<'EOF'
 #!/bin/sh
 operation=
 derived_data=
+project=
+only_resolved=0
+automatic_disabled=0
 previous=
 for argument in "$@"; do
   if [ "$previous" = "-derivedDataPath" ]; then
     derived_data=$argument
   fi
+  if [ "$previous" = "-project" ]; then
+    project=$argument
+  fi
   case "$argument" in
     test|build) operation=$argument ;;
+    -onlyUsePackageVersionsFromResolvedFile) only_resolved=1 ;;
+    -disableAutomaticPackageResolution) automatic_disabled=1 ;;
   esac
   previous=$argument
 done
+[ "$only_resolved" -eq 1 ] || {
+  echo "xcodebuild $operation missing -onlyUsePackageVersionsFromResolvedFile" >&2
+  exit 1
+}
+[ "$automatic_disabled" -eq 1 ] || {
+  echo "xcodebuild $operation missing -disableAutomaticPackageResolution" >&2
+  exit 1
+}
+copied_lock="$project/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+cmp -s "$TSB_FAKE_REPO/apps/macos/TSB/Package.resolved" "$copied_lock" || {
+  echo "xcodebuild $operation missing matching app Package.resolved" >&2
+  exit 1
+}
 printf 'xcodebuild %s\n' "$operation" >>"$TSB_VERIFY_LOG"
 if [ "$operation" = "build" ]; then
   app="$derived_data/Build/Products/Debug/TSB.app"
