@@ -3,6 +3,7 @@ set -eu
 
 MODEL_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
 MODEL_ARCHIVE="sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2"
+MODEL_ARCHIVE_SHA256="7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e"
 MODEL_SOURCE_DIR="sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17"
 DEFAULT_TARGET="artifacts/models/sensevoice-2024-07-17-int8"
 REQUIRED_FILES="model.int8.onnx tokens.txt LICENSE"
@@ -76,6 +77,14 @@ write_manifest() {
   (cd "$dir" && shasum -a 256 model.int8.onnx tokens.txt LICENSE >manifest.sha256)
 }
 
+verify_sha256() {
+  file=$1
+  expected=$2
+  label=$3
+  actual=$(shasum -a 256 "$file" | awk 'NR == 1 { print $1; exit }')
+  [ "$actual" = "$expected" ] || die "$label SHA-256 mismatch"
+}
+
 bootstrap_model() {
   target=$1
 
@@ -97,6 +106,7 @@ bootstrap_model() {
   mkdir -p "$stage"
 
   curl -fL "$MODEL_URL" -o "$archive"
+  verify_sha256 "$archive" "$MODEL_ARCHIVE_SHA256" "model archive"
   tar -xjf "$archive" -C "$stage"
 
   source_dir="$stage/$MODEL_SOURCE_DIR"
@@ -164,6 +174,52 @@ self_check() {
   fi
   if [ "$(readlink "$broken_link")" != "$missing_target" ]; then
     die "self-check expected dangling symlink destination to remain untouched"
+  fi
+
+  tampered_source="$tmp_dir/tampered-source/$MODEL_SOURCE_DIR"
+  mkdir -p "$tampered_source"
+  echo model >"$tampered_source/model.int8.onnx"
+  echo tokens >"$tampered_source/tokens.txt"
+  echo license >"$tampered_source/LICENSE"
+  tampered_archive="$tmp_dir/$MODEL_ARCHIVE"
+  (cd "$tmp_dir/tampered-source" && tar -cjf "$tampered_archive" "$MODEL_SOURCE_DIR")
+
+  fake_bin="$tmp_dir/fake-bin"
+  mkdir -p "$fake_bin"
+  real_shasum=$(command -v shasum)
+  cat >"$fake_bin/curl" <<'EOF'
+#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      output=$2
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+cp "$SENSEVOICE_TEST_ARCHIVE" "$output"
+EOF
+  cat >"$fake_bin/shasum" <<'EOF'
+#!/bin/sh
+case "${1:-}:${2:-}:${3:-}" in
+  -a:256:*/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2)
+    printf '%064d  %s\n' 0 "$3"
+    ;;
+  *)
+    exec "$SENSEVOICE_REAL_SHASUM" "$@"
+    ;;
+esac
+EOF
+  chmod +x "$fake_bin/curl" "$fake_bin/shasum"
+
+  if SENSEVOICE_TEST_ARCHIVE="$tampered_archive" \
+      SENSEVOICE_REAL_SHASUM="$real_shasum" \
+      PATH="$fake_bin:$PATH" \
+      /bin/sh "$0" --target "$tmp_dir/tampered-target" >/dev/null 2>&1; then
+    die "self-check expected tampered archive to fail"
   fi
 
   echo "self-check passed"
