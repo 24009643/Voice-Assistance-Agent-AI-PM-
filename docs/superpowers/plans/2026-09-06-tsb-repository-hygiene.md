@@ -591,7 +591,44 @@
 
 ---
 
-### Task 8: Publish the execution record
+### Task 8: Make the session-ownership regression deterministic
+
+**Files:**
+- Modify: `apps/macos/TSB/TSBTests/Core/Session/SessionCoordinatorTests.swift`
+
+**Interfaces:**
+- Consumes: the existing suspended-transcription harness and `waitForDelivery()` observation.
+- Produces: the same ownership regression assertion without depending on a single cooperative scheduler yield.
+
+- [ ] **Step 1: Preserve the observed RED evidence**
+
+  At `056d120`, the focused test failed 31 times across 4,100 repetitions. Every failure was only `copyCount` actual 0 versus expected 1; ASR events, saved record count, and the new main session's `.transcribing` status remained correct. This establishes a scheduling-dependent RED without mutating production code.
+
+- [ ] **Step 2: Replace the scheduler guess with the existing condition**
+
+  In `testOlderASRCompletionCannotClearTheNewSessionProcessingOwnership`, replace the single `await Task.yield()` after completing the older transcription with `await harness.waitForDelivery()`. Keep the subsequent repeated new-session audio callback and all ownership assertions unchanged. Do not edit production code or add a new helper.
+
+- [ ] **Step 3: Verify repeatability and the full gate**
+
+  Run the focused test for 100 iterations from a generated temporary project using the tracked package lock and immutable-resolution flags, then run:
+
+  ```bash
+  /bin/sh scripts/verify-tsb.sh
+  git diff --check
+  ```
+
+  Expected: 100/100 focused repetitions pass; the full gate reports app XCTest 395/395 and the independent Debug build succeeds.
+
+- [ ] **Step 4: Commit**
+
+  ```bash
+  git add apps/macos/TSB/TSBTests/Core/Session/SessionCoordinatorTests.swift
+  git commit -m "test(session): wait for delivery before ownership assertion"
+  ```
+
+---
+
+### Task 9: Publish the execution record
 
 **Files:**
 - Create: `docs/execution/EXE-WP-HYGIENE.md`
