@@ -901,7 +901,7 @@ final class SessionCoordinatorTests: XCTestCase {
         await harness.finishRecording(at: 1)
         await harness.waitUntilTranscriptionStarts(count: 2)
         harness.completeTranscription(at: 0)
-        await Task.yield()
+        await harness.waitForDelivery()
         await harness.finishRecording(at: 1)
 
         XCTAssertEqual(harness.events.filter { $0 == .transcribed }.count, 2)
