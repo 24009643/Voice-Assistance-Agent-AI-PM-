@@ -5,6 +5,10 @@ DerivedData/
 .superpowers/
 artifacts/
 evidence/raw/
+
+# Local workspace notes
+/.local/
+
 *.xcuserstate
 xcuserdata/
 .swiftpm/

@@ -17,7 +17,7 @@
 
 ## 现在做到哪一步
 
-`0.2` 的产品代码和无签名自动化回归已经完成。当前分支是 `codex/wp-04-alpha2`，最新门禁记录为 394 项测试全部通过。
+`main` 是经过评审的基线；进行中的改动只在 Draft PR 中推进。自动化门禁的准确数量以 GitHub Checks 和 [0.2 验收矩阵](docs/testing/tsb-v0.2-acceptance-matrix.md) 为准。
 
 一次当前版本的真实录音复核记录到以下结果。
 
@@ -26,9 +26,36 @@
 - 本次录音留下了一份 `audio.wav` 和一份 `record.json`，剪贴板只改动一次。
 - 云端整理失败后，本地记录和剪贴板内容保持不变。
 
-这组结果能说明本地保存和复制已经跑通。当前版本仍是开发中的个人验证版本，暂时没有可直接安装的签名包。顶部界面的视觉与 VoiceOver 还要人工复核，真实 Provider 润色也没有通过本轮网络验收。
+这组结果能说明本地保存和复制已经跑通。当前版本仍是开发中的个人验证版本；尚无已验证的签名、公证的公开发布。顶部界面的视觉与 VoiceOver 还要人工复核，真实 Provider 润色也没有通过本轮网络验收。
 
-完整状态放在 [0.2 验收矩阵](docs/testing/tsb-v0.2-acceptance-matrix.md)。测试通过、真机体验和正式发布在这里分开记录，避免把工程进度写成已经上线。
+完整状态放在 [0.2 验收矩阵](docs/testing/tsb-v0.2-acceptance-matrix.md)。自动化、真机体验和正式发布在这里分开记录，避免把工程进度写成已经上线。
+
+## 本地生成与验证
+
+当前工具链为 macOS 26.5.2 arm64、Xcode 26.6、Swift 6.3.3 和 XcodeGen 2.46.0。完整本地门禁只使用：
+
+```bash
+./scripts/verify-tsb.sh
+```
+
+该命令会生成被忽略的 Xcode 工程，运行静态与 bootstrap 检查、完整无签名测试，以及无签名 Debug 构建。
+
+## Git 主链
+
+```text
+origin/main
+  -> codex/<scope> isolated worktree
+  -> ./scripts/verify-tsb.sh
+  -> Draft PR
+  -> independent review + GitHub required check
+  -> Ready for review
+  -> merge to main
+  -> remove merged worktree and branch
+```
+
+## 许可证与来源
+
+仓库代码和文档采用 [MIT License](LICENSE)；移植的 OpenDictation 归属说明见 [UPSTREAM.md](apps/macos/TSB/UPSTREAM.md)，外部参考见 [references/README.md](references/README.md)。模型权重和公开语料各自遵循原有许可证，不会因仓库的 MIT 授权而被重新授权。
 
 ## 文字为什么分层保存
 

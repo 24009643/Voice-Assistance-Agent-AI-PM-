@@ -24,7 +24,9 @@ If these sources conflict, execution stops until the spec or implementation is c
 ## 3. Git and review
 
 - `main` must remain reviewable and buildable after code exists.
-- Working branches use `codex/<scope>`.
+- The root checkout tracks `origin/main`; each active `codex/<scope>` branch has one isolated worktree.
+- A change starts as a Draft PR. It becomes Ready for review only after the required checks and independent review are complete, then may merge to `main`.
+- Remove a merged worktree and branch pointer only after its commits are reachable from `main`. Removing a merged branch pointer does not remove Git history.
 - Commits use `type(scope): summary` and express one independently reversible intent.
 - Every work package has one code owner and one reviewer; shared orchestrator and build files have one writer at a time.
 - Stage only explicit paths. Never use a blind `git add .` before publication.
