@@ -55,5 +55,7 @@ schemes:
         TSB: all
         TSBTests: [test]
     test:
+      environmentVariables:
+        TSB_XCTEST_HOST: "1"
       targets:
         - TSBTests

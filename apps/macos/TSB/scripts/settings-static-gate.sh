@@ -3,6 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 tsb_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
+project_spec="$tsb_root/project.yml"
 app_source="$tsb_root/TSB/App/TSBApp.swift"
 delegate_source="$tsb_root/TSB/App/TSBAppDelegate.swift"
 menu_source="$tsb_root/TSB/Views/MenuBarView.swift"
@@ -50,6 +51,8 @@ reject_text "recorder" "$menu_source"
 require_text "AppController" "$delegate_source"
 require_text "applicationDidFinishLaunching" "$delegate_source"
 require_text "controller.start()" "$delegate_source"
+require_text 'TSB_XCTEST_HOST: "1"' "$project_spec"
+require_text 'loadPersistedState: ProcessInfo.processInfo.environment["TSB_XCTEST_HOST"] != "1"' "$delegate_source"
 if [ -e "$tsb_root/TSB/Views/PlaceholderView.swift" ]; then
     echo "PlaceholderView.swift must remain absent" >&2
     exit 1
