@@ -5,8 +5,18 @@
 - Tested toolchain: Xcode 26.6 (17F113), Swift 6.3.3, XcodeGen 2.46.0
 - Scope: bounded local repository, test and unsigned Debug-build evidence; no
   raw logs, generated project, model, audio or private user data is tracked
+- Linked raw artifact hash: N/A. Raw Xcode/generated logs were intentionally
+  not retained or tracked; reproduction is bounded by the tested commit and
+  command.
 
-## Tested commits and results
+## Expected result
+
+An accepted full gate exits 0 with Python 5/5, SenseVoice 7/7, Paraformer
+11/11, app XCTest 395/395, a successful independent unsigned Debug build and
+temporary-directory cleanup. The strengthened ownership test passes 100/100;
+documentation-tree checks exit 0 without tracked private or generated data.
+
+## Actual results
 
 | Tested commit | Reproduction command | Actual result |
 |---|---|---|
