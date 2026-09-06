@@ -52,7 +52,7 @@ final class PCMStreamProcessor: @unchecked Sendable {
     init(
         inputFormat: AVAudioFormat,
         outputURL: URL,
-        chunkFrameCount: Int = 3_200,
+        chunkFrameCount: Int = 1_600,
         maximumFrameCount: Int = 9_600_000,
         onPCMChunk: @escaping ([Float]) -> Void,
         onLevel: @escaping (Float) -> Void,

@@ -56,6 +56,13 @@ final class IslandPresentationTests: XCTestCase {
         )
     }
 
+    func testRecordingExplainsTheRealPreviewWarmupBeforeFirstDraft() {
+        let presentation = IslandPresentation.make(for: snapshot(status: .recording))
+
+        XCTAssertEqual(presentation.statusText, "正在听")
+        XCTAssertEqual(presentation.draft, "开口后约 1 秒显示实时文字")
+    }
+
     func testElapsedTimeCapsAtTenMinutes() {
         XCTAssertEqual(
             IslandPresentation.make(for: snapshot(status: .recording, elapsedMilliseconds: 600_000)).elapsedText,
@@ -132,6 +139,20 @@ final class IslandPresentationTests: XCTestCase {
             XCTAssertNotEqual(presentation.tone, .success)
             XCTAssertNil(presentation.autoHideDelay)
         }
+    }
+
+    func testOrganizationFailureKeepsTheLocalCopyReceiptVisible() {
+        let presentation = IslandPresentation.make(for: snapshot(
+            status: .delivered,
+            previewText: "本地转写",
+            originalText: "本地原文",
+            message: "已复制 · 按 ⌘V 粘贴",
+            organizationPhase: .failed("Organization failed.")
+        ))
+
+        XCTAssertEqual(presentation.statusText, "本地稿已复制 · 整理失败")
+        XCTAssertEqual(presentation.draft, "本地转写")
+        XCTAssertEqual(presentation.tone, .warning)
     }
 
     @MainActor
