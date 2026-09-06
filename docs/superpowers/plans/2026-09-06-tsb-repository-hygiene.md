@@ -442,6 +442,48 @@
 
 ---
 
+### Task 5: Stop tracking local agent scratch
+
+**Files:**
+- Stop tracking: the 10 existing files under `.superpowers/sdd/`
+- Modify: `docs/superpowers/plans/2026-08-25-tsb-v0.2-transcript-polish-implementation.md`
+
+**Interfaces:**
+- Consumes: the existing `.superpowers/` ignore rule and historical process files.
+- Produces: a current Git tree without local Agent scratch or workstation-absolute paths; local files and Git history remain intact.
+
+- [ ] **Step 1: Preserve local data while removing it from the current index**
+
+  Confirm the tracked set with `git ls-files .superpowers`. Use `git rm --cached` on exactly those 10 paths so the ignored local files remain on disk. Do not delete their content and do not rewrite history.
+
+- [ ] **Step 2: Make the one formal absolute path portable**
+
+  In the 2026-08-25 transcript-polish implementation plan, replace `/Users/zhuohengchi/Desktop/The Second Brain/.worktrees/wp-04-alpha2` with `.worktrees/wp-04-alpha2`.
+
+- [ ] **Step 3: Verify the current tree contract**
+
+  Run:
+
+  ```bash
+  test -z "$(git ls-files .superpowers)"
+  test -z "$(git grep -Il -E '/Users/zhuohengchi|zhuohengchi@ZohedeMacBook-Pro\.local|wxid_' -- .)"
+  /bin/sh scripts/test-verify-tsb.sh
+  git diff --check
+  git diff --cached --check
+  ```
+
+  Confirm all 10 local scratch files still exist on disk.
+
+- [ ] **Step 4: Commit**
+
+  Commit only the staged removals and the one formal plan edit:
+
+  ```bash
+  git commit -m "chore(repo): untrack local agent scratch"
+  ```
+
+---
+
 ## Post-implementation GitHub and local operations
 
 These are integration operations, not implementation tasks:
