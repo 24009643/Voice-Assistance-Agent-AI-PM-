@@ -1,6 +1,7 @@
 # EXE-WP-HYGIENE: Repository hygiene
 
 - Plan: [`docs/superpowers/plans/2026-09-06-tsb-repository-hygiene.md`](../superpowers/plans/2026-09-06-tsb-repository-hygiene.md)
+- Evidence: [`evidence/WP-HYGIENE-LOCAL-GATE.md`](../../evidence/WP-HYGIENE-LOCAL-GATE.md)
 - Engineering standard: sections 2, 3, 5, 6, 7 and 8 of [`docs/standards/engineering-standard.md`](../standards/engineering-standard.md)
 - Decision: no new ADR; this work applies the existing repository standard
 - Owner: Sol controller with task-scoped implementation owners
@@ -10,7 +11,9 @@
 - Repository comparison base: `9f95c40`
 - Current pre-record head: `6e3cb80`
 - Implementation range: `9f95c40..6e3cb80`
-- Execution-record commit: resolve with `git log -1 --format='%H %s' -- docs/execution/EXE-WP-HYGIENE.md`
+- Initial execution-record commit: `0fa783c`
+- Evidence-publication plan correction: `532a792`
+- Latest evidence/link commit: resolve with `git log -1 --format='%H %s' -- evidence/WP-HYGIENE-LOCAL-GATE.md docs/execution/EXE-WP-HYGIENE.md`
 - Started: 2026-09-06
 - Finished: 2026-09-06 (local implementation only)
 
@@ -18,7 +21,7 @@
 
 | WP / requirement | Files | Tests and evidence | Commits |
 |---|---|---|---|
-| WP-HYGIENE / one verification entrypoint and hermetic orchestration self-test | `scripts/verify-tsb.sh`; `scripts/test-verify-tsb.sh` | Self-test passed; full gates below exercised the same entrypoint | `79cccc7`, `c277332`, `d59c131` |
+| WP-HYGIENE / one verification entrypoint and hermetic orchestration self-test | `scripts/verify-tsb.sh`; `scripts/test-verify-tsb.sh` | [Local-gate evidence](../../evidence/WP-HYGIENE-LOCAL-GATE.md): self-test passed; full gates exercised the same entrypoint | `79cccc7`, `c277332`, `d59c131` |
 | WP-HYGIENE / authenticate SenseVoice before extraction | `scripts/bootstrap-sensevoice-model.sh` | Tampered-archive RED; SenseVoice self-check GREEN | `35d1597` |
 | WP-HYGIENE / MIT, repository chain and version `0.2.0 (1)` | `LICENSE`; `.gitignore`; root `README.md`; `apps/macos/TSB/project.yml`; engineering standard | Generated build settings and documentation diff passed review | `bae426f` |
 | WP-HYGIENE / pinned CI calling the one local gate | `.github/workflows/ci.yml` | Workflow YAML parse and orchestration self-check passed locally | `6233ac7` |
@@ -26,12 +29,13 @@
 | WP-HYGIENE / isolate the XCTest host from standard defaults and login Keychain | app scheme/composition root, settings model, focused settings test and static gate | RED compile check; focused 1/1; static gate; two consecutive full gates | `26005b1`, `593a058` |
 | WP-HYGIENE / lock the generated app package graph | `apps/macos/TSB/Package.resolved`; both verification scripts | Orchestration RED/GREEN and one locked full gate | `056d120` |
 | WP-HYGIENE / deterministic processing-ownership regression | `SessionCoordinatorTests.swift` only | 31/4,100 historical RED; mutant proof; real-source 100/100; full gate | `deaf650`, `21dcb32` |
-| WP-HYGIENE / plan, reviewed corrections and this record | hygiene plan; this file; execution index | Commit resolution, diff and privacy checks | `e1c9df7`, `8ad6bf8`, `fef9eb6`, `31bf58b`, `095801c`, `9e04513`, `7e82fd8`, `6e3cb80`; record commit resolved by the command above |
+| WP-HYGIENE / plan, reviewed corrections, record and indexed evidence | hygiene plan; this file; execution/evidence indexes; local-gate evidence | Commit resolution, indexed links, diff and privacy checks | `e1c9df7`, `8ad6bf8`, `fef9eb6`, `31bf58b`, `095801c`, `9e04513`, `7e82fd8`, `6e3cb80`, `0fa783c`, `532a792`; latest evidence/link commit resolved by the command above |
 
 ## Commit map
 
-Every commit in `9f95c40..6e3cb80` is accounted for. Plan and review corrections
-are grouped; build, security and test changes remain explicit.
+Every implementation commit in `9f95c40..6e3cb80` is accounted for. Plan and
+review corrections are grouped; build, security and test changes remain
+explicit. Documentation follow-ups are listed after the implementation range.
 
 | Commits | Actual change |
 |---|---|
@@ -50,6 +54,9 @@ are grouped; build, security and test changes remain explicit.
 | `7e82fd8` | Recorded the deterministic ownership-regression plan. |
 | `deaf650`, `21dcb32` | Replaced a scheduler guess with delivery completion, then directly asserted processing ownership after mutant review. |
 | `6e3cb80` | Corrected the plan to describe the direct ownership assertion. |
+| `0fa783c` | Added the initial execution record and its execution index link. |
+| `532a792` | Corrected Task 9 to require a bounded, tracked and indexed local-gate evidence page. |
+| Latest evidence/link commit | Resolve through the file-history command in the metadata; it adds the evidence page/index link without self-referential hash churn. |
 
 ## Commands and results
 
