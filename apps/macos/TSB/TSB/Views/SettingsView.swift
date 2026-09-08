@@ -36,10 +36,12 @@ final class SettingsModel: ObservableObject {
 
     init(
         store: OrganizationSettingsStore = OrganizationSettingsStore(),
+        loadPersistedState: Bool = true,
         onPolishAccessRevoked: @escaping @MainActor () -> Void = {}
     ) {
         self.store = store
         self.onPolishAccessRevoked = onPolishAccessRevoked
+        guard loadPersistedState else { return }
         do {
             try reloadPersistedState()
         } catch {

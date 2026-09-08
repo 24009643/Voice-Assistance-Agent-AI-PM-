@@ -6,6 +6,21 @@ import XCTest
 
 @MainActor
 final class SettingsBehaviorTests: XCTestCase {
+    func testLaunchModelCanSkipPersistedUserState() throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        try fixture.store.save(
+            try remoteSettings(model: "persisted-model"),
+            apiKey: UUID().uuidString
+        )
+
+        let model = SettingsModel(store: fixture.store, loadPersistedState: false)
+
+        XCTAssertEqual(model.draft, SettingsDraft())
+        XCTAssertFalse(model.hasPersistedAPIKey)
+        XCTAssertNil(model.errorMessage)
+    }
+
     func testSuccessfulPolishRevokeInvokesPendingDeliveryCancellationOnce() throws {
         let fixture = try makeFixture()
         defer { fixture.cleanup() }

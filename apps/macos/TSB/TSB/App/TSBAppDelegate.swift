@@ -11,14 +11,20 @@ final class TSBAppDelegate: NSObject, NSApplicationDelegate {
 
     static func makeSettingsModel(
         store: OrganizationSettingsStore = OrganizationSettingsStore(),
+        loadPersistedState: Bool = true,
         cancelPendingPolish: @escaping @MainActor () -> Void
     ) -> SettingsModel {
-        SettingsModel(store: store, onPolishAccessRevoked: cancelPendingPolish)
+        SettingsModel(
+            store: store,
+            loadPersistedState: loadPersistedState,
+            onPolishAccessRevoked: cancelPendingPolish
+        )
     }
 
     override convenience init() {
         let controller = AppController()
         let settingsModel = Self.makeSettingsModel(
+            loadPersistedState: ProcessInfo.processInfo.environment["TSB_XCTEST_HOST"] != "1",
             cancelPendingPolish: { controller.cancelPendingPolishAfterRevoke() }
         )
 #if DEBUG
