@@ -6,10 +6,10 @@
 - Decision: no new ADR; this work applies the existing repository standard
 - Owner: Sol controller with task-scoped implementation owners
 - Independent reviewers: separate read-only spec/code reviewers for Tasks 1-8 and whole-branch Git/privacy reviewers
-- Status: local verification and the first remote CI run passed; external review and integration remain pending
+- Status: external review of `25a551e` found no Critical/Important findings and five Minor follow-ups; see the follow-up record below and PR #12 for current checks and integration state
 - Branch: `codex/tsb-repo-hygiene`
 - Repository comparison base: `9f95c40`
-- Current pre-record head: `6e3cb80`
+- Initial pre-record head: `6e3cb80`
 - Implementation range: `9f95c40..6e3cb80`
 - Initial execution-record commit: `0fa783c`
 - Evidence-publication plan correction: `532a792`
@@ -103,7 +103,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO "CODE_SIGN_IDENTITY=" test
 ```
 
-The current documentation-only head reran no full build gate. These bounded
+The initial documentation-only publication reran no full build gate. These bounded
 checks passed: `/bin/sh scripts/test-verify-tsb.sh`, workflow parsing with Ruby
 `YAML.load_file`, `/bin/sh apps/macos/TSB/scripts/settings-static-gate.sh`,
 `git diff --check`, commit resolution and the current-tree privacy checks.
@@ -130,16 +130,56 @@ checks passed: `/bin/sh scripts/test-verify-tsb.sh`, workflow parsing with Ruby
 `git ls-files .superpowers` is empty. A dynamic scan constructed the current
 developer path and local-machine email from `id -un` and `hostname -s`; neither
 it nor the WeChat identifier prefix occurred in tracked text. The only
-email-like matches were reserved `example.test` fixtures, not real addresses.
+email-like matches were reserved test-domain fixtures, not real addresses.
 Recognized secret/private key patterns were absent. Tracked-path and Git-mode
 scans found no runtime audio, model weight, database, signing/build artifact,
 generated Xcode project, symlink, or submodule.
 
+## External review and single-maintainer integration (2026-09-08)
+
+External review covered `9f95c40..25a551e` and reported review clean with five
+Minor findings. Local reproduction confirmed the shell preflight omission,
+committed-diff omission and Python cache side effect; probe lock drift was a
+conditional risk, and two indexes repeated stale remote-CI status.
+
+The follow-up fixes in `ed9a46a` check each shell script separately, compare committed
+changes against an explicit base, disable Python bytecode output and make both
+probe tests fail on outdated locks. CI fetches full history and passes the PR
+base SHA or the pre-push main SHA. The two indexes retain scope and links
+without duplicating changing status. No product behavior is changed.
+
+The orchestration regression uses isolated real Git and Python fixtures.
+It rejected intentionally committed whitespace even when a mutation kept the
+diff command present but compared HEAD with itself. Missing/invalid bases,
+later-file syntax errors and bytecode-cache creation also failed as expected;
+the corrected implementation passed. Swift/Xcode remain boundary substitutes
+in that small self-test; full application results are recorded separately in
+the linked local-gate evidence.
+
+A fresh full local gate at `ed9a46a` passed on 2026-09-08: Python 5/5,
+SenseVoice 7/7, Paraformer 11/11, app XCTest 395/395 (zero failed/skipped)
+and independent unsigned Debug build. The temporary build directory was
+removed and no Python bytecode cache remained in `scripts/`. Concurrent
+uncommitted changes were limited to the six documentation follow-ups.
+
+The owner authorized a single-maintainer workflow: required PRs and the
+up-to-date GitHub Actions check `macos-xcode-26.6`, enforced for administrators,
+no force pushes/deletion, and resolved conversations. Required approvals are
+zero; independent review remains recorded evidence and the maintainer owns the
+merge decision. This updates the original plan's external-approval assumption.
+Use a merge commit to preserve reviewed SHAs, then synchronize main into the
+daily branch and verify that combined tree before further product review.
+
+The live integration record is [PR #12](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/pull/12).
+Its Checks and merge event identify the exact tested and integrated commits;
+they are not inferred from an earlier local test count.
+
 ## Open boundaries
 
-- `codex/tsb-repo-hygiene` is pushed as Draft PR #12. Its first GitHub CI run
-  passed on `69c5783`; `main` protection is not configured, and the branch is
-  neither Ready nor merged.
+- Initial remote evidence: CI passed on `69c5783` and
+  [the follow-up `25a551e` run](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/actions/runs/34185744688).
+  Current protection and integration are GitHub settings and PR #12 state;
+  those historical passes do not approve later commits.
 - PR #11 remains a separate open Draft from `codex/v02-local-daily` to `main`.
 - No signing, notarization, release, user-product acceptance, Golden Set, M09 or
   M10 is proven by this repository-hygiene work.

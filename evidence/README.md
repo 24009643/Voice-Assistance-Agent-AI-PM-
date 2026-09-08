@@ -1,8 +1,8 @@
 # Evidence Index
 
-- [`WP-HYGIENE-LOCAL-GATE.md`](WP-HYGIENE-LOCAL-GATE.md): bounded local
-  repository, test, privacy and unsigned Debug-build evidence; remote and
-  product/release gates remain unproven.
+- [`WP-HYGIENE-LOCAL-GATE.md`](WP-HYGIENE-LOCAL-GATE.md): repository, test,
+  privacy and unsigned Debug-build evidence, with local commands, remote CI
+  links and product/release boundaries.
 - [`WP-A2-00-DESIGN-FREEZE.md`](WP-A2-00-DESIGN-FREEZE.md): Alpha 2 decision,
   requirements, plans and acceptance mapping freeze. It proves documentation
   consistency only, not runtime completion.

@@ -2,9 +2,10 @@
 
 - Date: 2026-09-06, Asia/Shanghai
 - Remote evidence updated: 2026-09-08, Asia/Shanghai
-- Target host: Apple silicon, arm64, macOS 26.5.2 (25F84)
+- Initial local target host (2026-09-06): Apple silicon, arm64, macOS 26.5.2 (25F84)
 - Tested toolchain: Xcode 26.6 (17F113), Swift 6.3.3, XcodeGen 2.46.0
-- Scope: bounded local repository, test and unsigned Debug-build evidence; no
+- Scope: bounded repository, test and unsigned Debug-build evidence, with
+  explicit local and remote runs; no
   raw logs, generated project, model, audio or private user data is tracked
 - Linked raw artifact hash: N/A. Raw Xcode/generated logs were intentionally
   not retained or tracked; reproduction is bounded by the tested commit and
@@ -25,6 +26,8 @@ documentation-tree checks exit 0 without tracked private or generated data.
 | `056d120` | `/bin/sh scripts/verify-tsb.sh` | One locked run passed with the same 5/5, 7/7, 11/11 and 395/395 counts plus independent Debug build. A later same-head run exited 65 only at the scheduler-dependent ownership test. |
 | `21dcb32` | Focused command below with `ITERATIONS=100`, then `/bin/sh scripts/verify-tsb.sh` | Real source passed focused 100/100; the full locked gate passed 5/5, 7/7, 11/11 and 395/395 plus independent Debug build. |
 | `69c5783` | `/bin/sh scripts/verify-tsb.sh` locally, then [GitHub Actions CI](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/actions/runs/34185394794) | Fresh local and remote runs passed the shared entrypoint: Python 5/5, SenseVoice 7/7, Paraformer 11/11, app XCTest 395/395 and independent unsigned Debug build. The remote job completed in 3m34s. |
+| `25a551e` | [GitHub Actions CI](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/actions/runs/34185744688) | 5/5, 7/7, 11/11 and 395/395, zero failed/skipped app tests, plus independent unsigned Debug build on macOS 26.6.2; the job completed in 4m34s. |
+| `ed9a46a` | `TSB_VERIFY_BASE=9f95c40a63bb9fee3fa409981d24a133a47c01eb /bin/sh scripts/verify-tsb.sh` locally on 2026-09-08 | Exit 0; 5/5, 7/7, 11/11 and 395/395, zero failed/skipped app tests; independent unsigned Debug build. macOS 26.6.2 (25G83), same Xcode/Swift/XcodeGen. Six documentation follow-ups were uncommitted; production code and test scripts matched this commit. Temporary directory removed; no Python bytecode caches left under `scripts/`. Independent orchestration self-test also passed. |
 
 The focused ownership command ran against a generated temporary project seeded
 from `apps/macos/TSB/Package.resolved`:
@@ -54,7 +57,7 @@ source was not mutated.
 
 ## Current documentation-tree checks
 
-The evidence publication did not rerun the full build command. These bounded
+The initial evidence publication did not rerun the full build command. These bounded
 commands passed on the documentation head:
 
 ```sh
@@ -70,16 +73,16 @@ yaml parsed`, and `TSB settings static gate passed`; the diff check exited 0
 and the final command returned no paths. A dynamic tracked-content scan
 constructed the current developer path and local-machine email from `id -un`
 and `hostname -s`; neither it nor the WeChat identifier prefix occurred. The
-only email-like matches were reserved `example.test` fixtures. Recognized
+only email-like matches were reserved test-domain fixtures. Recognized
 secret/private-key patterns were absent. Tracked path and Git-mode scans found
 no runtime audio, model weight, database, signing/build artifact, generated
 Xcode project, symlink or submodule.
 
 ## Evidence boundary
 
-- The hygiene branch is pushed as Draft PR #12, and its first GitHub CI run
-  passed on `69c5783`. No branch-protection rule, Ready transition or merge is
-  proven here.
+- Each result above applies only to its named commit. [PR #12](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/pull/12)
+  and its Checks provide the live review/merge state and results for later commits;
+  branch protection is verified separately from GitHub settings.
 - PR #11 remains separate from this work.
 - This evidence proves no signing, notarization, release, user-product
   acceptance, Golden Set, M09 or M10 result.

@@ -32,13 +32,15 @@
 
 ## 本地生成与验证
 
-当前工具链为 macOS 26.5.2 arm64、Xcode 26.6、Swift 6.3.3 和 XcodeGen 2.46.0。完整本地门禁只使用：
+2026-09-08 本地验证工具链为 macOS 26.6.2 arm64、Xcode 26.6、Swift 6.3.3 和 XcodeGen 2.46.0。完整本地门禁只使用：
 
 ```bash
 ./scripts/verify-tsb.sh
 ```
 
 该命令会生成被忽略的 Xcode 工程，运行静态与 bootstrap 检查、完整无签名测试，以及无签名 Debug 构建。
+
+提交差异默认相对本地的 `origin/main` 检查；可用 `TSB_VERIFY_BASE=<commit>` 指定审查基线。CI 会获取完整 Git 历史，并传入本次 PR 的 base SHA 或主干 push 前的 SHA。
 
 ## Git 主链
 
@@ -52,6 +54,8 @@ origin/main
   -> merge to main
   -> remove merged worktree and branch
 ```
+
+仓库按单人维护执行：主干要求通过 PR、最新基线上的 CI 和已解决的审查讨论，规则同样约束管理员；不要求其他 GitHub 用户批准。独立审查及问题处理结论由维护者记录，合并时保留原提交历史。
 
 ## 许可证与来源
 
