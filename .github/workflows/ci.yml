@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macos-xcode-26.6
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      XCODEGEN_VERSION: "2.46.0"
+      XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify Xcode
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version | grep -F "Xcode 26.6"
+          swift --version
+      - name: Install deterministic-test prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          command -v ffmpeg >/dev/null 2>&1 || missing+=(ffmpeg)
+          command -v rg >/dev/null 2>&1 || missing+=(ripgrep)
+          if (( ${#missing[@]} )); then
+            brew install "${missing[@]}"
+          fi
+          for tool in python3 ffmpeg rg curl tar shasum awk; do
+            command -v "$tool"
+          done
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}.zip"
+          install_dir="$RUNNER_TEMP/xcodegen-${XCODEGEN_VERSION}"
+          curl -fsSL \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/${XCODEGEN_VERSION}/xcodegen.zip" \
+            -o "$archive"
+          echo "${XCODEGEN_SHA256}  ${archive}" | shasum -a 256 -c -
+          mkdir -p "$install_dir"
+          ditto -x -k "$archive" "$install_dir"
+          echo "$install_dir/xcodegen/bin" >> "$GITHUB_PATH"
+          "$install_dir/xcodegen/bin/xcodegen" --version \
+            | grep -Fx "Version: ${XCODEGEN_VERSION}"
+      - name: Verify orchestration contract
+        run: /bin/sh scripts/test-verify-tsb.sh
+      - name: Verify TSB
+        env:
+          TSB_VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: /bin/sh scripts/verify-tsb.sh
