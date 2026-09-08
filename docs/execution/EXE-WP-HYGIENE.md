@@ -6,7 +6,7 @@
 - Decision: no new ADR; this work applies the existing repository standard
 - Owner: Sol controller with task-scoped implementation owners
 - Independent reviewers: separate read-only spec/code reviewers for Tasks 1-8 and whole-branch Git/privacy reviewers
-- Status: passed locally through the pre-record head; record review and remote integration remain pending
+- Status: local verification and the first remote CI run passed; external review and integration remain pending
 - Branch: `codex/tsb-repo-hygiene`
 - Repository comparison base: `9f95c40`
 - Current pre-record head: `6e3cb80`
@@ -16,7 +16,8 @@
 - Initial evidence-publication commit: `60dedc4`
 - Latest evidence/link correction: resolve with `git log -1 --format='%H %s' -- evidence/WP-HYGIENE-LOCAL-GATE.md docs/execution/EXE-WP-HYGIENE.md`
 - Started: 2026-09-06
-- Finished: 2026-09-06 (local implementation only)
+- Local implementation finished: 2026-09-06
+- First remote CI: 2026-09-08
 
 ## Traceability
 
@@ -25,7 +26,7 @@
 | WP-HYGIENE / one verification entrypoint and hermetic orchestration self-test | `scripts/verify-tsb.sh`; `scripts/test-verify-tsb.sh` | [Local-gate evidence](../../evidence/WP-HYGIENE-LOCAL-GATE.md): self-test passed; full gates exercised the same entrypoint | `79cccc7`, `c277332`, `d59c131` |
 | WP-HYGIENE / authenticate SenseVoice before extraction | `scripts/bootstrap-sensevoice-model.sh` | Tampered-archive RED; SenseVoice self-check GREEN | `35d1597` |
 | WP-HYGIENE / MIT, repository chain and version `0.2.0 (1)` | `LICENSE`; `.gitignore`; root `README.md`; `apps/macos/TSB/project.yml`; engineering standard | Generated build settings and documentation diff passed review | `bae426f` |
-| WP-HYGIENE / pinned CI calling the one local gate | `.github/workflows/ci.yml` | Workflow YAML parse and orchestration self-check passed locally | `6233ac7` |
+| WP-HYGIENE / pinned CI calling the one local gate | `.github/workflows/ci.yml` | Workflow YAML parse and orchestration self-check passed locally; [first remote run](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/actions/runs/34185394794) passed on `69c5783` | `6233ac7` |
 | WP-HYGIENE / stop tracking Agent scratch and remove the workstation path | ten `.superpowers/sdd/` index removals; one formal plan path | Local files preserved; current-tree privacy checks below passed | `c9c166b` |
 | WP-HYGIENE / isolate the XCTest host from standard defaults and login Keychain | app scheme/composition root, settings model, focused settings test and static gate | RED compile check; focused 1/1; static gate; two consecutive full gates | `26005b1`, `593a058` |
 | WP-HYGIENE / lock the generated app package graph | `apps/macos/TSB/Package.resolved`; both verification scripts | Orchestration RED/GREEN and one locked full gate | `056d120` |
@@ -136,8 +137,9 @@ generated Xcode project, symlink, or submodule.
 
 ## Open boundaries
 
-- `codex/tsb-repo-hygiene` is not pushed; there is no hygiene Draft PR or GitHub
-  CI run, and `main` protection is not configured. The branch is not merged.
+- `codex/tsb-repo-hygiene` is pushed as Draft PR #12. Its first GitHub CI run
+  passed on `69c5783`; `main` protection is not configured, and the branch is
+  neither Ready nor merged.
 - PR #11 remains a separate open Draft from `codex/v02-local-daily` to `main`.
 - No signing, notarization, release, user-product acceptance, Golden Set, M09 or
   M10 is proven by this repository-hygiene work.

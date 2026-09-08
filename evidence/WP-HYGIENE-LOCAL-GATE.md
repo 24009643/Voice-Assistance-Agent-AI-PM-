@@ -1,6 +1,7 @@
 # WP-HYGIENE local-gate evidence
 
 - Date: 2026-09-06, Asia/Shanghai
+- Remote evidence updated: 2026-09-08, Asia/Shanghai
 - Target host: Apple silicon, arm64, macOS 26.5.2 (25F84)
 - Tested toolchain: Xcode 26.6 (17F113), Swift 6.3.3, XcodeGen 2.46.0
 - Scope: bounded local repository, test and unsigned Debug-build evidence; no
@@ -23,6 +24,7 @@ documentation-tree checks exit 0 without tracked private or generated data.
 | `593a058` | `/bin/sh scripts/verify-tsb.sh` twice consecutively | Both runs passed on the same head: Python 5/5, SenseVoice 7/7, Paraformer 11/11, app XCTest 395/395 and independent unsigned Debug build. Both crossed the former Keychain wait and cleaned their temporary directories. |
 | `056d120` | `/bin/sh scripts/verify-tsb.sh` | One locked run passed with the same 5/5, 7/7, 11/11 and 395/395 counts plus independent Debug build. A later same-head run exited 65 only at the scheduler-dependent ownership test. |
 | `21dcb32` | Focused command below with `ITERATIONS=100`, then `/bin/sh scripts/verify-tsb.sh` | Real source passed focused 100/100; the full locked gate passed 5/5, 7/7, 11/11 and 395/395 plus independent Debug build. |
+| `69c5783` | `/bin/sh scripts/verify-tsb.sh` locally, then [GitHub Actions CI](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/actions/runs/34185394794) | Fresh local and remote runs passed the shared entrypoint: Python 5/5, SenseVoice 7/7, Paraformer 11/11, app XCTest 395/395 and independent unsigned Debug build. The remote job completed in 3m34s. |
 
 The focused ownership command ran against a generated temporary project seeded
 from `apps/macos/TSB/Package.resolved`:
@@ -75,8 +77,9 @@ Xcode project, symlink or submodule.
 
 ## Evidence boundary
 
-- The hygiene branch is not pushed. No hygiene Draft PR, GitHub CI result,
-  branch-protection rule, Ready transition or merge is proven here.
+- The hygiene branch is pushed as Draft PR #12, and its first GitHub CI run
+  passed on `69c5783`. No branch-protection rule, Ready transition or merge is
+  proven here.
 - PR #11 remains separate from this work.
 - This evidence proves no signing, notarization, release, user-product
   acceptance, Golden Set, M09 or M10 result.
