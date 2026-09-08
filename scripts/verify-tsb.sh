@@ -62,18 +62,25 @@ export TMPDIR
 cd "$repo_root"
 
 git diff HEAD --check
-sh -n scripts/verify-tsb.sh \
+verify_base=${TSB_VERIFY_BASE-origin/main}
+[ -n "$verify_base" ] || die "TSB_VERIFY_BASE must not be empty"
+verify_base=$(git rev-parse --verify --end-of-options "$verify_base^{commit}") || die "comparison base is not an available commit"
+git diff --check "$verify_base" HEAD
+for shell_file in scripts/verify-tsb.sh \
   apps/macos/TSB/scripts/settings-static-gate.sh \
   scripts/bootstrap-sensevoice-model.sh \
   scripts/bootstrap-paraformer-model.sh \
   scripts/probe-retained-audio.sh
+do
+  sh -n "$shell_file"
+done
 apps/macos/TSB/scripts/settings-static-gate.sh
 scripts/bootstrap-sensevoice-model.sh --self-check
 scripts/bootstrap-paraformer-model.sh --self-check
 scripts/probe-retained-audio.sh --self-check
-python3 -m unittest scripts/tests/test_prepare_g0_corpus.py
-swift test --package-path probes/sensevoice --scratch-path "$verify_tmp/sensevoice-build"
-swift test --package-path probes/paraformer --scratch-path "$verify_tmp/paraformer-build"
+python3 -B -m unittest scripts/tests/test_prepare_g0_corpus.py
+swift test --package-path probes/sensevoice --scratch-path "$verify_tmp/sensevoice-build" --force-resolved-versions
+swift test --package-path probes/paraformer --scratch-path "$verify_tmp/paraformer-build" --force-resolved-versions
 xcodegen generate --quiet \
   --spec "$app_root/project.yml" \
   --project "$verify_tmp/project" \

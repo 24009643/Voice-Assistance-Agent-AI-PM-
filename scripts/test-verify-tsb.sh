@@ -23,8 +23,13 @@ repo="$test_tmp/repo"
 fake_bin="$test_tmp/bin"
 log="$test_tmp/verify.log"
 marker="$test_tmp/built-app"
-mkdir -p "$repo/scripts" "$repo/apps/macos/TSB/scripts" "$fake_bin"
+TSB_REAL_GIT=$(command -v git)
+TSB_REAL_PYTHON=$(command -v python3)
+export TSB_REAL_GIT TSB_REAL_PYTHON
+mkdir -p "$repo/scripts/tests" "$repo/apps/macos/TSB/scripts" "$fake_bin"
 cp "$script_dir/verify-tsb.sh" "$repo/scripts/verify-tsb.sh"
+cp "$script_dir/prepare_g0_corpus.py" "$repo/scripts/prepare_g0_corpus.py"
+cp "$script_dir/tests/test_prepare_g0_corpus.py" "$repo/scripts/tests/test_prepare_g0_corpus.py"
 chmod +x "$repo/scripts/verify-tsb.sh"
 printf 'name: TSB\n' >"$repo/apps/macos/TSB/project.yml"
 printf '{"fake":"app lock"}\n' >"$repo/apps/macos/TSB/Package.resolved"
@@ -50,17 +55,19 @@ done
 cat >"$fake_bin/git" <<'EOF'
 #!/bin/sh
 if [ "$1" = "-C" ] && [ "$3" = "rev-parse" ] && [ "$4" = "--show-toplevel" ]; then
-  printf '%s\n' "$TSB_FAKE_REPO"
-  exit 0
+  exec "$TSB_REAL_GIT" "$@"
 fi
 if [ "${TSB_FAKE_SEND_INT:-0}" = "1" ]; then
   kill -INT "$PPID"
 fi
-printf 'git' >>"$TSB_VERIFY_LOG"
-for argument in "$@"; do
-  printf ' %s' "$argument" >>"$TSB_VERIFY_LOG"
-done
-printf '\n' >>"$TSB_VERIFY_LOG"
+if [ "$1" = "diff" ]; then
+  if [ "$2" = "HEAD" ]; then
+    printf 'git diff HEAD --check\n' >>"$TSB_VERIFY_LOG"
+  else
+    printf 'git committed diff --check\n' >>"$TSB_VERIFY_LOG"
+  fi
+fi
+exec "$TSB_REAL_GIT" "$@"
 EOF
 
 cat >"$fake_bin/xcodegen" <<'EOF'
@@ -136,12 +143,17 @@ EOF
 
 cat >"$fake_bin/swift" <<'EOF'
 #!/bin/sh
+case " $* " in
+  *' --force-resolved-versions '*) ;;
+  *) echo "swift test missing --force-resolved-versions" >&2; exit 1 ;;
+esac
 printf 'swift test --package-path %s\n' "$3" >>"$TSB_VERIFY_LOG"
 EOF
 
 cat >"$fake_bin/python3" <<'EOF'
 #!/bin/sh
 printf 'python3 -m unittest scripts/tests/test_prepare_g0_corpus.py\n' >>"$TSB_VERIFY_LOG"
+exec "$TSB_REAL_PYTHON" "$@"
 EOF
 
 chmod +x "$fake_bin/git" "$fake_bin/xcodegen" "$fake_bin/xcodebuild" "$fake_bin/xcrun" "$fake_bin/swift" "$fake_bin/python3"
@@ -149,6 +161,7 @@ chmod +x "$fake_bin/git" "$fake_bin/xcodegen" "$fake_bin/xcodebuild" "$fake_bin/
 expected="$test_tmp/expected.log"
 cat >"$expected" <<'EOF'
 git diff HEAD --check
+git committed diff --check
 settings-static-gate
 bootstrap-sensevoice-model --self-check
 bootstrap-paraformer-model --self-check
@@ -162,12 +175,71 @@ xcrun xcresulttool get test-results summary
 xcodebuild build
 EOF
 
+# Keep Git and Python real: committed whitespace and bytecode are side effects
+# that command-only fakes cannot detect. All data remains in this test directory.
+git -C "$repo" init --quiet
+git -C "$repo" config user.name "TSB Verification Test"
+git -C "$repo" config user.email "tsb-test@example.invalid"
+git -C "$repo" config commit.gpgsign false
+git -C "$repo" config core.hooksPath /dev/null
+git -C "$repo" config core.whitespace trailing-space
+git -C "$repo" add .
+git -C "$repo" commit --quiet -m "test fixture"
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+# A caller's real CI base must not leak into the isolated fixture repository.
+unset TSB_VERIFY_BASE
+unset PYTHONDONTWRITEBYTECODE PYTHONPYCACHEPREFIX
+
 PATH="$fake_bin:$PATH" TSB_FAKE_REPO="$repo" TSB_VERIFY_LOG="$log" TSB_VERIFY_APP_MARKER="$marker" /bin/sh "$repo/scripts/verify-tsb.sh" >/dev/null
 diff -u "$expected" "$log"
 [ -f "$marker" ] || {
   echo "self-check expected build-created app" >&2
   exit 1
 }
+[ -z "$(find "$repo" -name __pycache__ -print)" ] || {
+  echo "self-check expected Python tests not to leave bytecode caches" >&2
+  exit 1
+}
+
+expect_verification_failure() {
+  : >"$log"
+  if PATH="$fake_bin:$PATH" TSB_FAKE_REPO="$repo" TSB_VERIFY_LOG="$log" TSB_VERIFY_APP_MARKER="$marker" /bin/sh "$repo/scripts/verify-tsb.sh" >"$test_tmp/failure.log" 2>&1; then
+    echo "self-check expected $1 to fail verification" >&2
+    exit 1
+  fi
+  if rg -q '^settings-static-gate$' "$log"; then
+    echo "self-check expected $1 to stop before repository gates" >&2
+    exit 1
+  fi
+}
+
+# An early exit hides syntax errors at runtime; sh -n must catch every file.
+syntax_fixture="$repo/scripts/probe-retained-audio.sh"
+cp "$syntax_fixture" "$test_tmp/valid-gate.sh"
+printf '\nexit 0\nif\n' >>"$syntax_fixture"
+expect_verification_failure "a later shell file's syntax error"
+cp "$test_tmp/valid-gate.sh" "$syntax_fixture"
+
+printf 'committed whitespace \n' >"$repo/whitespace.txt"
+git -C "$repo" add whitespace.txt
+git -C "$repo" commit --quiet -m "fixture with committed whitespace"
+expect_verification_failure "committed whitespace"
+# A distinct explicit base must be honored even though origin/main still differs.
+PATH="$fake_bin:$PATH" TSB_FAKE_REPO="$repo" TSB_VERIFY_LOG="$log" TSB_VERIFY_APP_MARKER="$marker" TSB_VERIFY_BASE=HEAD /bin/sh "$repo/scripts/verify-tsb.sh" >/dev/null
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
+printf 'uncommitted whitespace \n' >>"$repo/whitespace.txt"
+expect_verification_failure "uncommitted whitespace"
+git -C "$repo" show HEAD:whitespace.txt >"$repo/whitespace.txt"
+
+for invalid_base in '' nonexistent-base; do
+  TSB_VERIFY_BASE=$invalid_base
+  export TSB_VERIFY_BASE
+  expect_verification_failure "an empty or unknown comparison base"
+done
+unset TSB_VERIFY_BASE
+git -C "$repo" update-ref -d refs/remotes/origin/main
+expect_verification_failure "a missing default comparison base"
+git -C "$repo" update-ref refs/remotes/origin/main HEAD
 
 : >"$log"
 if PATH="$fake_bin:$PATH" TSB_FAKE_REPO="$repo" TSB_VERIFY_LOG="$log" TSB_VERIFY_APP_MARKER="$marker" TSB_FAKE_SEND_INT=1 /bin/sh "$repo/scripts/verify-tsb.sh" >/dev/null 2>&1; then
