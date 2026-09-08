@@ -76,7 +76,10 @@ struct OrganizationClient: Sendable {
                 .init(role: "system", content: Self.systemContract),
                 .init(role: "user", content: userContent)
             ],
-            responseFormat: .init(type: "json_object")
+            responseFormat: .init(type: "json_object"),
+            thinking: endpoint.baseURL.host?.lowercased() == "api.deepseek.com"
+                ? .init(type: "disabled")
+                : nil
         )
         var request = URLRequest(url: endpoint.baseURL)
         request.httpMethod = "POST"
@@ -215,12 +218,18 @@ private struct ChatRequestDTO: Encodable {
     let model: String
     let messages: [ChatMessageDTO]
     let responseFormat: ResponseFormatDTO
+    let thinking: ThinkingDTO?
 
     enum CodingKeys: String, CodingKey {
         case model
         case messages
         case responseFormat = "response_format"
+        case thinking
     }
+}
+
+private struct ThinkingDTO: Encodable {
+    let type: String
 }
 
 private struct ChatMessageDTO: Codable {

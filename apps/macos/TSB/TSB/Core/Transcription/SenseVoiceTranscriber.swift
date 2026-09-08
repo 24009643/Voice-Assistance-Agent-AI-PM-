@@ -71,6 +71,21 @@ struct TranscriptionResult: Equatable, Sendable {
     let detectedLanguage: String?
     let eventTags: [String]
     let latencyMilliseconds: Int
+    let finalSource: TranscriptFinalSource
+
+    init(
+        text: String,
+        detectedLanguage: String?,
+        eventTags: [String],
+        latencyMilliseconds: Int,
+        finalSource: TranscriptFinalSource = .senseVoice
+    ) {
+        self.text = text
+        self.detectedLanguage = detectedLanguage
+        self.eventTags = eventTags
+        self.latencyMilliseconds = latencyMilliseconds
+        self.finalSource = finalSource
+    }
 }
 
 actor SenseVoiceTranscriber {

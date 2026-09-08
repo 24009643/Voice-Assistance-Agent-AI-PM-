@@ -139,10 +139,15 @@ struct IslandPresentation: Equatable, Sendable {
             layout: layout,
             hasLatestResult: hasLatestResult
         )
-        let draft = snapshot.status == .recording
-            && snapshot.livePreviewAvailability == .unavailable
-            ? "停止后仍会生成全文"
-            : snapshot.previewText
+        let draft: String
+        if snapshot.status == .recording,
+           snapshot.livePreviewAvailability == .unavailable {
+            draft = "停止后仍会生成全文"
+        } else if snapshot.status == .recording, snapshot.previewText.isEmpty {
+            draft = "开口后约 1 秒显示实时文字"
+        } else {
+            draft = snapshot.previewText
+        }
         let elapsedText = formattedElapsedTime(snapshot.elapsedMilliseconds)
         let recordingHelpText = mode == .recording ? "⌥Space 停止 · Esc 取消 · 最长 10 分钟" : ""
         return Self(
@@ -260,8 +265,8 @@ struct IslandPresentation: Equatable, Sendable {
             if snapshot.livePreviewAvailability == .unavailable {
                 return ("实时草稿不可用", .neutral, "waveform", "实时草稿不可用，停止后仍会生成全文")
             }
-            let text = snapshot.previewText.isEmpty ? "正在录音" : "实时草稿"
-            return (text, .neutral, "waveform", "正在录音，\(snapshot.previewText)")
+            let text = snapshot.previewText.isEmpty ? "正在听" : "实时草稿"
+            return (text, .neutral, "waveform", "\(text)，\(snapshot.previewText)")
         case .localDelivered:
             let text = snapshot.message ?? snapshot.previewText
             if snapshot.message == localCopySuccessMessage {
@@ -275,6 +280,16 @@ struct IslandPresentation: Equatable, Sendable {
         case .organized:
             return ("整理完成", .success, "checkmark.circle.fill", "整理完成，原文、要点、关联")
         case .failed:
+            if snapshot.status == .delivered,
+               snapshot.message == localCopySuccessMessage,
+               case let .failed(message) = snapshot.organizationPhase {
+                return (
+                    "本地稿已复制 · 整理失败",
+                    .warning,
+                    "exclamationmark.triangle.fill",
+                    "本地稿已复制，整理失败，\(message)"
+                )
+            }
             let text: String
             if case let .failed(message) = snapshot.organizationPhase {
                 text = message

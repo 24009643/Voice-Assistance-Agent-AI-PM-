@@ -38,7 +38,7 @@ private struct TimingLine: Encodable {
 private let helpText = """
 Usage: ParaformerProbe --model-dir <dir> --wav <16k-mono.wav> [--repeat <count>]
 
-Runs the local online Paraformer recognizer in 200 ms PCM chunks and writes
+Runs the local online Paraformer recognizer in 100 ms PCM chunks and writes
 JSONL timing and recognition-result events to stdout.
 """
 
@@ -70,7 +70,7 @@ private func runSession(
     }
     guard let buffer = AVAudioPCMBuffer(
         pcmFormat: format,
-        frameCapacity: 3_200
+        frameCapacity: 1_600
     ) else {
         throw ProbeError.unsupportedAudio("could not allocate PCM buffer")
     }

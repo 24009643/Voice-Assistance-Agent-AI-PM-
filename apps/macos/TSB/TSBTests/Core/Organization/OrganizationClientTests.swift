@@ -110,6 +110,35 @@ final class OrganizationClientTests: XCTestCase {
         )
     }
 
+    func testDeepSeekDisablesThinkingWithoutChangingTheTextOnlyPayload() async throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
+        URLProtocolStub.handler = { request in
+            let body = try requestBody(request)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(Set(json.keys), ["model", "messages", "response_format", "thinking"])
+            XCTAssertEqual((json["thinking"] as? [String: String])?["type"], "disabled")
+            return .response(200, makeValidChatResponse(requestID: requestID, includeLinks: false))
+        }
+        let client = OrganizationClient(
+            endpoint: OrganizationEndpoint(
+                baseURL: URL(string: "https://api.deepseek.com/chat/completions")!,
+                model: "deepseek-v4-flash"
+            ),
+            session: makeSession()
+        )
+
+        _ = try await client.organize(
+            requestID: requestID,
+            segments: [
+                try TextSegment(id: "c1", text: "alpha"),
+                try TextSegment(id: "c2", text: "beta"),
+            ],
+            historySuggestions: HistorySuggestions(suggestedSummaries: [], localRecordByCandidateID: [:]),
+            userSelectedCandidateIDs: [],
+            apiKey: "synthetic-key"
+        )
+    }
+
     func testRejectsInvalidJSONAndInsecureNonLoopbackHTTP() async throws {
         URLProtocolStub.handler = { _ in .response(200, Data("not-json".utf8)) }
         let invalidJSONClient = OrganizationClient(

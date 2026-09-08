@@ -189,6 +189,45 @@ they are not inferred from an earlier local test count.
   now-documented commit standard. Their reviewed SHAs are preserved; later
   commits use scopes.
 
+## Main-to-daily integration (2026-09-08)
+
+PR #12 merged with commit `5651bed70895b17278caae260a91e3c7f0145c4b`,
+preserving reviewed head `d3ba293` and its original commits. The main tree is
+identical to that reviewed head. Local main was fast-forwarded to origin/main.
+The authorized GitHub email-privacy setting was enabled before merging; the
+merge author uses the account's noreply address. Existing history was not rewritten.
+
+The integration combines daily parent `6ca8523` with main parent `5651bed`.
+Git merged without conflicts, including the shared SessionCoordinator test
+file. No product change beyond either parent was added. This section records
+the integration; [PR #11](https://github.com/24009643/Voice-Assistance-Agent-AI-PM-/pull/11)
+provides the exact resulting commit and current CI state.
+
+Before committing that merge, the full local command
+`TSB_VERIFY_BASE=5651bed70895b17278caae260a91e3c7f0145c4b /bin/sh scripts/verify-tsb.sh`
+exited 0: Python 5/5, SenseVoice 7/7, Paraformer 11/11, macOS XCTest 416/416
+(zero failed/skipped), and independent Debug build. The daily-only Fun-ASR
+installer self-check and ad-hoc signing/self-check also passed against the
+temporary built app. The temporary directory was removed; the installed app
+was not changed. During this gate, code matched the automatic merge of the
+two named parents and only this execution-record follow-up was edited.
+
+Independent read-only integration review found no Critical, Important or Minor
+issues in the synchronization: both shared-test changes survived, parent-only
+files stayed identical to their respective parent, and daily conditional gates
+were connected. Separate orchestration self-test, shell syntax, Settings static
+gate and staged/working-tree whitespace checks also passed. This reviews the
+integration only, not product release readiness.
+
+PR #11 remains Draft. A fixed-source review of `6ca8523` reconfirmed F02
+(cross-candidate polish validation), F03 (late older-session clipboard
+delivery), F04 (destructive shutdown cancellation) and F05 (AppKit clipboard
+rollback). Comparison with `9f95c40` confirmed all four were inherited from
+the old main, not introduced by daily or fixed by hygiene. F02 and F05 had
+isolated execution reproductions; F03 and F04 were traced through their real
+call paths. No microphone, network Provider or system general pasteboard was
+used for those checks. Engineering CI does not close these product risks.
+
 ## Rollback
 
 Revert the atomic commits in reverse order or revert the branch range. Local

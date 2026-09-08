@@ -105,6 +105,28 @@ final class AudioRecordingServiceTests: XCTestCase {
         XCTAssertTrue(levels.allSatisfy { (0 ... 1).contains($0) })
     }
 
+    func testDefaultPreviewChunkIsOneHundredMilliseconds() throws {
+        let directory = temporaryDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let format = try XCTUnwrap(
+            AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)
+        )
+        var chunks: [[Float]] = []
+        let processor = try PCMStreamProcessor(
+            inputFormat: format,
+            outputURL: directory.appendingPathComponent("audio.wav"),
+            onPCMChunk: { chunks.append($0) },
+            onLevel: { _ in },
+            onTerminal: { _ in }
+        )
+
+        try processor.consume(makeSineBuffer(format: format, frameCount: 6_000))
+        _ = try processor.finish()
+
+        XCTAssertEqual(chunks.first?.count, 1_600)
+    }
+
     func testCaptureLifecycleReleasesResourcesOnceForStopCancelAndLimit() {
         for reason in AudioCaptureLifecycle.EndReason.allCases {
             var lifecycle = AudioCaptureLifecycle()

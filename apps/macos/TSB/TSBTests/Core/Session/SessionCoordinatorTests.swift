@@ -954,6 +954,21 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(harness.copiedTexts, ["SenseVoice final"])
     }
 
+    func testFunASRSuccessPersistsTruthfulSource() async throws {
+        let harness = CoordinatorHarness(
+            transcript: "Fun-ASR final",
+            streamingText: "Paraformer draft",
+            transcriptionSource: .funASR
+        )
+
+        await harness.runOneSession()
+
+        XCTAssertEqual(harness.savedRecords.single?.funASRText, "Fun-ASR final")
+        XCTAssertNil(harness.savedRecords.single?.senseVoiceText)
+        XCTAssertEqual(harness.savedRecords.single?.finalSource, .funASR)
+        XCTAssertEqual(harness.copiedTexts, ["Fun-ASR final"])
+    }
+
     func testSenseVoiceFailureUsesNonemptyCompletedStreamingFallback() async throws {
         let harness = CoordinatorHarness(
             transcript: "ignored",
@@ -2848,6 +2863,7 @@ private final class CoordinatorHarness {
     private let cleanedText: String?
     private let streamingText: String
     private let transcriptionError: Error?
+    private let transcriptionSource: TranscriptFinalSource
     private let saveError: Error?
     private let saveFailures: Set<Int>
     private let statusWriteError: Error?
@@ -2927,6 +2943,7 @@ private final class CoordinatorHarness {
         cleanedText: String? = nil,
         streamingText: String = "",
         transcriptionError: Error? = nil,
+        transcriptionSource: TranscriptFinalSource = .senseVoice,
         saveError: Error? = nil,
         saveFailures: Set<Int> = [],
         statusWriteError: Error? = nil,
@@ -2961,6 +2978,7 @@ private final class CoordinatorHarness {
         self.cleanedText = cleanedText
         self.streamingText = streamingText
         self.transcriptionError = transcriptionError
+        self.transcriptionSource = transcriptionSource
         self.saveError = saveError
         self.saveFailures = saveFailures
         self.statusWriteError = statusWriteError
@@ -3060,7 +3078,13 @@ private final class CoordinatorHarness {
                             self.transcriptionContinuations.append(continuation)
                         }
                     }
-                    return TranscriptionResult(text: self.transcript, detectedLanguage: "zh", eventTags: [], latencyMilliseconds: 12)
+                    return TranscriptionResult(
+                        text: self.transcript,
+                        detectedLanguage: "zh",
+                        eventTags: [],
+                        latencyMilliseconds: 12,
+                        finalSource: self.transcriptionSource
+                    )
                 },
                 clean: { [weak self] source in
                     guard let self else { throw TestError.deallocated }
